@@ -1,5 +1,5 @@
 {
-  "startedAt": "2026-10-02T16:19:36.904Z",
+  "startedAt": "2026-10-02T16:57:36.582Z",
   "port": 5193,
   "dataDir": "/home/user/Atlas/.audit-test-data/final-validation-data",
   "checks": [
@@ -10,12 +10,12 @@
     {
       "name": "production server startup",
       "status": "pass",
-      "logs": "(node:3223) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
+      "logs": "(node:2879) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
     },
     {
       "name": "health endpoint",
       "status": "pass",
-      "ms": 3
+      "ms": 2
     },
     {
       "name": "production first-run has no demo credentials",
@@ -30,7 +30,7 @@
     {
       "name": "production HTML served",
       "status": "pass",
-      "ms": 15
+      "ms": 5
     },
     {
       "name": "invalid setup password rejected",
@@ -63,12 +63,12 @@
     {
       "name": "backup creation",
       "status": "pass",
-      "backup": "atlas-db-2026-10-02T16-19-37-315Z-admin.sqlite"
+      "backup": "atlas-db-2026-10-02T16-57-36-940Z-admin.sqlite"
     },
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:3236) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:2891) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "backup restoration and restart persistence",
@@ -95,6 +95,14 @@
       "status": "pass"
     },
     {
+      "name": "project detail loads the complete linked task portfolio from SQLite",
+      "status": "pass"
+    },
+    {
+      "name": "database-backed exports select allowlisted fields and enforce dataset permissions",
+      "status": "pass"
+    },
+    {
       "name": "developer task/activity journey and protected project mutation",
       "status": "pass"
     },
@@ -109,10 +117,10 @@
     {
       "name": "realistic data volume performance",
       "status": "pass",
-      "create160TasksMs": 2412,
-      "bootstrapMs": 6,
-      "weeklyReportMs": 4,
-      "monthlyActivityReportMs": 30
+      "create160TasksMs": 1845,
+      "bootstrapMs": 7,
+      "weeklyReportMs": 3,
+      "monthlyActivityReportMs": 39
     },
     {
       "name": "system integrity and audit log",
@@ -134,7 +142,7 @@
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:3244) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:2899) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "final restart data/settings and per-user filters persistence",
@@ -143,7 +151,7 @@
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:3251) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:2907) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "legacy work-log migration removes generated rows and preserves explicit minutes",
@@ -152,25 +160,25 @@
     {
       "name": "legacy JSON import server startup",
       "status": "pass",
-      "logs": "Imported legacy JSON store into SQLite and archived the source at /home/user/Atlas/.audit-test-data/legacy-json-import-data/legacy/atlas-store-imported-2026-10-02T16-19-59-687Z.json\n(node:3258) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
+      "logs": "Imported legacy JSON store into SQLite and archived the source at /home/user/Atlas/.audit-test-data/legacy-json-import-data/legacy/atlas-store-imported-2026-10-02T16-57-58-480Z.json\n(node:2914) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
     },
     {
       "name": "legacy SQLite restart server startup",
       "status": "pass",
-      "logs": "(node:3265) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:2921) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "one-time legacy JSON import, SQL restart persistence, content preservation, and source archival",
       "status": "pass",
-      "archivedFile": "atlas-store-imported-2026-10-02T16-19-59-687Z.json"
+      "archivedFile": "atlas-store-imported-2026-10-02T16-57-58-480Z.json"
     }
   ],
   "metrics": {
-    "create160TasksMs": 2412,
-    "bootstrapMs": 6,
-    "weeklyReportMs": 4,
-    "monthlyActivityReportMs": 30
+    "create160TasksMs": 1845,
+    "bootstrapMs": 7,
+    "weeklyReportMs": 3,
+    "monthlyActivityReportMs": 39
   },
   "knownLimitations": [],
-  "finishedAt": "2026-10-02T16:20:06.066Z"
+  "finishedAt": "2026-10-02T16:58:04.858Z"
 }

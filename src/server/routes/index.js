@@ -4,6 +4,7 @@ import { registerDirectoryRoutes } from './directory.routes.js'
 import { registerActivityAlertRoutes } from './activity-alerts.routes.js'
 import { registerUserRoutes } from './users.routes.js'
 import { registerPreferencesRoutes } from './preferences.routes.js'
+import { registerExportRoutes } from './exports.routes.js'
 
 export function registerRoutes(app, services) {
   registerSystemRoutes(app, services)
@@ -12,5 +13,6 @@ export function registerRoutes(app, services) {
   registerActivityAlertRoutes(app, services)
   registerUserRoutes(app, services)
   registerPreferencesRoutes(app, services)
+  registerExportRoutes(app, services)
   app.use('/api', (_req, res) => services.sendError(res, 404, 'API route not found'))
 }

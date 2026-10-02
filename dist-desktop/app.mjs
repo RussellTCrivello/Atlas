@@ -951,7 +951,16 @@ function registerSystemRoutes(app2, services) {
 
 // src/server/routes/tasks-projects.routes.js
 function registerTaskProjectRoutes(app2, services) {
-  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validOptionalDate: validOptionalDate2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, nextProjectId: nextProjectId2, nextTaskId: nextTaskId2, id: id2, taskPublic: taskPublic2, projectPublic: projectPublic2, projectById: projectById2, taskById: taskById2, taskWorkflowStates: taskWorkflowStates2, terminalTaskStates: terminalTaskStates2, isDone: isDone2, logWorkEvent: logWorkEvent2, auditLog: auditLog2, persist: persist2, can: can2, taskReferenceExists: taskReferenceExists2, validDateValue: validDateValue2, personById: personById2, dueTone: dueTone2 } = services;
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validOptionalDate: validOptionalDate2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, nextProjectId: nextProjectId2, nextTaskId: nextTaskId2, id: id2, taskPublic: taskPublic2, projectPublic: projectPublic2, projectById: projectById2, taskById: taskById2, taskWorkflowStates: taskWorkflowStates2, terminalTaskStates: terminalTaskStates2, isDone: isDone2, logWorkEvent: logWorkEvent2, auditLog: auditLog2, persist: persist2, can: can2, taskReferenceExists: taskReferenceExists2, validDateValue: validDateValue2, personById: personById2, dueTone: dueTone2, createDatabaseExportContext: createDatabaseExportContext2, auditRead: auditRead2 } = services;
+  app2.get("/api/projects/:id/tasks", requireUser2, (req, res) => {
+    const context = createDatabaseExportContext2();
+    const project = context.snapshot.projects.find((row) => String(row.id) === String(req.params.id));
+    if (!project) return sendError2(res, 404, "Project not found");
+    const tasks = context.snapshot.tasks.filter((task) => String(task.projectId) === String(project.id)).map((task) => context.workspace.taskPublic(task, context.today)).sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")) || a.title.localeCompare(b.title));
+    const milestones = context.snapshot.milestones.filter((milestone) => String(milestone.projectId) === String(project.id)).map((milestone) => ({ ...milestone, project: project.name }));
+    auditRead2("project-tasks", req.user.id);
+    res.json({ source: "sqlite", project: context.workspace.projectPublic(project, context.today), tasks, milestones, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+  });
   app2.post("/api/tasks", requireUser2, requirePermission2("manageTasks"), (req, res) => {
     const body = req.body;
     const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -1447,13 +1456,13 @@ function normalizeFilters(value) {
     const normalizedConditions = [];
     for (const condition of conditions) {
       if (!condition || typeof condition !== "object" || Array.isArray(condition)) return null;
-      const { field: field2, operator, join, value: filterValue } = condition;
-      if (typeof field2 !== "string" || !FIELD_PATTERN.test(field2)) return null;
+      const { field: field3, operator, join, value: filterValue } = condition;
+      if (typeof field3 !== "string" || !FIELD_PATTERN.test(field3)) return null;
       if (typeof operator !== "string" || !FILTER_OPERATORS.has(operator)) return null;
       if (join !== void 0 && (typeof join !== "string" || !FILTER_JOINS.has(join))) return null;
       if (typeof filterValue !== "string" || filterValue.length > MAX_FILTER_VALUE_LENGTH) return null;
       normalizedConditions.push({
-        field: field2,
+        field: field3,
         operator,
         join: join || "AND",
         value: filterValue
@@ -1478,6 +1487,254 @@ function registerPreferencesRoutes(app2, services) {
   });
 }
 
+// src/server/domain/export-data.js
+var field2 = (label, type = "text") => ({ label, type });
+var EXPORT_FIELD_SCHEMAS = {
+  projects: {
+    name: field2("Project"),
+    code: field2("Code"),
+    team: field2("Team"),
+    health: field2("Health"),
+    progress: field2("Progress", "percent"),
+    deadline: field2("Deadline", "date"),
+    status: field2("Status"),
+    owner: field2("Owner"),
+    description: field2("Description"),
+    createdAt: field2("Created", "date")
+  },
+  tasks: {
+    id: field2("Task ID"),
+    title: field2("Task"),
+    project: field2("Project"),
+    status: field2("Status"),
+    priority: field2("Priority"),
+    assignee: field2("Assignee"),
+    due: field2("Due", "date"),
+    dueDate: field2("Due date", "date"),
+    type: field2("Type"),
+    blocked: field2("Blocked", "boolean"),
+    createdAt: field2("Created", "date"),
+    completedAt: field2("Completed", "date")
+  },
+  people: {
+    name: field2("Name"),
+    email: field2("Email"),
+    role: field2("Job title"),
+    team: field2("Team"),
+    status: field2("Status"),
+    load: field2("Capacity", "percent"),
+    focus: field2("Focus")
+  },
+  activity: {
+    person: field2("Person"),
+    date: field2("Date", "date"),
+    time: field2("Time"),
+    yesterday: field2("Yesterday"),
+    today: field2("Today"),
+    blocked: field2("Blocked"),
+    upcoming: field2("Upcoming"),
+    status: field2("Status")
+  },
+  alerts: {
+    title: field2("Alert"),
+    type: field2("Type"),
+    project: field2("Project"),
+    resolved: field2("Resolved", "boolean"),
+    time: field2("Created", "date"),
+    body: field2("Details"),
+    source: field2("Source"),
+    occurrences: field2("Occurrences", "number")
+  },
+  milestones: {
+    name: field2("Milestone"),
+    "project.name": field2("Project"),
+    status: field2("Status"),
+    dueDate: field2("Due date", "date")
+  },
+  users: {
+    name: field2("Name"),
+    email: field2("Email"),
+    role: field2("Role"),
+    team: field2("Team"),
+    active: field2("Active", "boolean"),
+    createdAt: field2("Created", "date")
+  },
+  "delivery-report": {
+    label: field2("Period"),
+    completed: field2("Completions", "number"),
+    created: field2("New tasks", "number"),
+    rate: field2("Completions / intake %", "percent")
+  },
+  "activity-evidence": {
+    date: field2("Date", "date"),
+    time: field2("Time"),
+    person: field2("Person"),
+    project: field2("Project"),
+    taskId: field2("Task ID"),
+    task: field2("Task / update"),
+    action: field2("Action"),
+    status: field2("Status"),
+    summary: field2("Evidence"),
+    minutes: field2("Minutes", "number"),
+    source: field2("Source")
+  },
+  "activity-summary": {
+    person: field2("Person"),
+    role: field2("Job title"),
+    team: field2("Team"),
+    tasksTouched: field2("Tasks touched", "number"),
+    completedTasks: field2("Completed", "number"),
+    projects: field2("Projects", "number"),
+    updates: field2("Updates", "number"),
+    blockers: field2("Blockers", "number"),
+    minutes: field2("Minutes", "number")
+  },
+  "project-contributions": {
+    project: field2("Project"),
+    projectCode: field2("Code"),
+    tasksTouched: field2("Tasks touched", "number"),
+    completedTasks: field2("Completed", "number"),
+    users: field2("People", "number"),
+    minutes: field2("Minutes", "number")
+  }
+};
+function objectValue(row, key) {
+  if (Object.hasOwn(row || {}, key)) return row[key];
+  return String(key).split(".").reduce((value, part) => value?.[part], row);
+}
+var CUSTOM_FIELD_ENTITIES = { projects: "projects", tasks: "tasks", people: "people", activity: "activities", alerts: "alerts", milestones: "milestones" };
+function exportFieldType(type) {
+  if (type === "number") return "number";
+  if (type === "date" || type === "datetime") return "date";
+  if (type === "checkbox") return "boolean";
+  return "text";
+}
+function schemaForDataset(dataset, snapshot) {
+  const schema = { ...EXPORT_FIELD_SCHEMAS[dataset] };
+  const entity = CUSTOM_FIELD_ENTITIES[dataset];
+  const definitions = entity ? snapshot.settings?.customFields?.[entity] : [];
+  for (const definition of definitions || []) {
+    if (!definition || typeof definition.key !== "string" || definition.visible === false) continue;
+    schema[`customFields.${definition.key}`] = field2(definition.label || definition.key, exportFieldType(definition.type));
+  }
+  return schema;
+}
+function sourceId(dataset, row) {
+  if (dataset === "delivery-report") return row.key;
+  if (dataset === "activity-summary") return row.personId;
+  if (dataset === "project-contributions") return row.projectId;
+  return row.__recordId ?? row.numericId ?? row.id;
+}
+function rowsForDataset(dataset, context, query) {
+  const { snapshot, workspace, today } = context;
+  const peopleById = new Map(snapshot.people.map((person) => [String(person.id), person]));
+  const teamsById = new Map(snapshot.teams.map((team) => [String(team.id), team]));
+  const projectsById = new Map(snapshot.projects.map((project) => [String(project.id), project]));
+  const projects = () => snapshot.projects.map((project) => ({ ...workspace.projectPublic(project, today), __recordId: project.id, deadline: project.deadline || "", createdAt: project.createdAt || "" }));
+  const tasks = () => snapshot.tasks.map((task) => ({ ...workspace.taskPublic(task, today), __recordId: task.id, due: task.dueDate || "" }));
+  if (dataset === "projects") return projects();
+  if (dataset === "tasks") {
+    const projectId = query.projectId == null ? "" : String(query.projectId);
+    return tasks().filter((task) => !projectId || String(task.projectId) === projectId);
+  }
+  if (dataset === "people") return snapshot.people.map((person) => ({ ...workspace.personPublic(person), __recordId: person.id }));
+  if (dataset === "activity") return snapshot.activities.map((activity) => ({ ...workspace.activityPublic(activity, today), __recordId: activity.id }));
+  if (dataset === "alerts") return snapshot.alerts.map((alert) => ({ ...workspace.alertPublic(alert), __recordId: alert.id, time: alert.createdAt || "" }));
+  if (dataset === "milestones") return snapshot.milestones.map((milestone) => {
+    const project = projectsById.get(String(milestone.projectId)) || {};
+    return { ...milestone, project: { name: project.name || "Workspace", code: project.code || "" }, "project.name": project.name || "Workspace", __recordId: milestone.id };
+  });
+  if (dataset === "users") return snapshot.users.map((user) => {
+    const person = peopleById.get(String(user.personId)) || {};
+    const team = teamsById.get(String(person.teamId)) || {};
+    return {
+      __recordId: user.id,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      team: team.name || "Workspace",
+      active: user.active !== false,
+      createdAt: user.createdAt || ""
+    };
+  });
+  if (dataset === "delivery-report") return workspace.reportFor(query.period).series;
+  if (dataset === "activity-evidence" || dataset === "activity-summary" || dataset === "project-contributions") {
+    const report = workspace.activityReportFor(query.period, query.personId || "all");
+    if (dataset === "activity-evidence") return report.rows;
+    if (dataset === "activity-summary") return report.users;
+    return report.projects;
+  }
+  return null;
+}
+function prepareDatabaseExport({ context, dataset, recordIds, fields, query = {} }) {
+  if (!Object.hasOwn(EXPORT_FIELD_SCHEMAS, dataset)) throw new Error("Unsupported export dataset");
+  const schema = schemaForDataset(dataset, context.snapshot);
+  if (fields !== void 0 && !Array.isArray(fields)) throw new Error("One or more export fields are unavailable for this dataset");
+  const requested = fields === void 0 ? Object.keys(schema) : [...new Set(fields)];
+  if (!requested.length) throw new Error("At least one export field is required");
+  if (requested.length > 250 || requested.some((key) => typeof key !== "string" || !Object.hasOwn(schema, key))) throw new Error("One or more export fields are unavailable for this dataset");
+  const sourceRows = rowsForDataset(dataset, context, query);
+  if (!sourceRows) throw new Error("Unsupported export dataset");
+  let rows = sourceRows;
+  if (Array.isArray(recordIds)) {
+    const selected = new Set(recordIds.map(String));
+    rows = rows.filter((row) => selected.has(String(sourceId(dataset, row))));
+  }
+  if (Array.isArray(recordIds) && rows.length !== new Set(recordIds.map(String)).size) throw new Error("One or more selected database records are no longer available");
+  if (rows.length > 25e3) throw new Error("An export is limited to 25,000 database records at a time");
+  const columns = requested.map((key) => ({ key, ...schema[key] }));
+  const data = rows.map((row) => Object.fromEntries(requested.map((key) => [key, objectValue(row, key) ?? null])));
+  return {
+    dataset,
+    source: "sqlite",
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    recordCount: data.length,
+    columns,
+    rows: data
+  };
+}
+
+// src/server/routes/exports.routes.js
+var REPORT_DATASETS = /* @__PURE__ */ new Set(["delivery-report", "activity-evidence", "activity-summary", "project-contributions"]);
+var ACTIVITY_DATASETS = /* @__PURE__ */ new Set(["activity-evidence", "activity-summary", "project-contributions"]);
+var PERIODS = /* @__PURE__ */ new Set(["daily", "weekly", "monthly", "quarterly", "yearly"]);
+var ACTIVITY_PERIODS = /* @__PURE__ */ new Set(["daily", "weekly", "monthly"]);
+function registerExportRoutes(app2, services) {
+  const { sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, can: can2, createDatabaseExportContext: createDatabaseExportContext2, isPlainObject: isPlainObject2 } = services;
+  app2.post("/api/exports/prepare", requireUser2, requirePermission2("exportData"), (req, res) => {
+    const { dataset, recordIds, fields, query: inputQuery } = req.body || {};
+    if (typeof dataset !== "string" || dataset.length > 80) return sendError2(res, 400, "A supported export dataset is required");
+    if (recordIds !== void 0 && (!Array.isArray(recordIds) || recordIds.length > 25e3 || recordIds.some((id2) => !["string", "number"].includes(typeof id2) || String(id2).length > 200))) return sendError2(res, 400, "Selected record IDs are invalid");
+    if (fields !== void 0 && (!Array.isArray(fields) || fields.length > 250 || fields.some((key) => typeof key !== "string" || key.length > 120 || !/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)))) return sendError2(res, 400, "Selected export fields are invalid");
+    if (inputQuery !== void 0 && !isPlainObject2(inputQuery)) return sendError2(res, 400, "Export query must be an object");
+    const query = inputQuery || {};
+    if (REPORT_DATASETS.has(dataset) && !can2(req.user, "viewReports")) return sendError2(res, 403, "Report access is required for this export");
+    if (dataset === "users" && !can2(req.user, "manageUsers")) return sendError2(res, 403, "User administration access is required for this export");
+    if (query.period !== void 0 && (typeof query.period !== "string" || !(ACTIVITY_DATASETS.has(dataset) ? ACTIVITY_PERIODS : PERIODS).has(query.period.toLowerCase()))) return sendError2(res, 400, "Unsupported report period for this dataset");
+    if (query.personId !== void 0 && (typeof query.personId !== "string" || query.personId.length > 200)) return sendError2(res, 400, "Invalid person scope");
+    if (query.projectId !== void 0 && !["string", "number"].includes(typeof query.projectId)) return sendError2(res, 400, "Invalid project scope");
+    try {
+      const context = createDatabaseExportContext2();
+      const result = prepareDatabaseExport({
+        context,
+        dataset,
+        recordIds,
+        fields,
+        query: {
+          period: String(query.period || "weekly").toLowerCase(),
+          personId: query.personId || "all",
+          projectId: query.projectId
+        }
+      });
+      res.json(result);
+    } catch (error) {
+      const status = /unsupported export dataset|fields are unavailable|export field is required|selected database records|limited to 25,000/i.test(error.message) ? 400 : 500;
+      sendError2(res, status, status === 500 ? "Database export preparation failed" : error.message);
+    }
+  });
+}
+
 // src/server/routes/index.js
 function registerRoutes(app2, services) {
   registerSystemRoutes(app2, services);
@@ -1486,6 +1743,7 @@ function registerRoutes(app2, services) {
   registerActivityAlertRoutes(app2, services);
   registerUserRoutes(app2, services);
   registerPreferencesRoutes(app2, services);
+  registerExportRoutes(app2, services);
   app2.use("/api", (_req, res) => services.sendError(res, 404, "API route not found"));
 }
 
@@ -1738,16 +1996,16 @@ function createSettingsService({
       for (const [entity, definitions] of Object.entries(customFields)) {
         if (!Array.isArray(definitions) || definitions.length > 200) return `Custom fields for ${entity} must be an array of at most 200 definitions`;
         const keys = /* @__PURE__ */ new Set();
-        for (const field2 of definitions) {
-          if (!isPlainObject2(field2) || typeof field2.key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(field2.key) || ["__proto__", "prototype", "constructor"].includes(field2.key)) return `Custom fields for ${entity} need valid, non-empty field keys`;
-          if (keys.has(field2.key)) return `Custom field key ${field2.key} is duplicated for ${entity}`;
-          keys.add(field2.key);
-          if (field2.type !== void 0 && !allowedTypes.has(field2.type)) return `Custom field ${field2.key} has an unsupported type`;
-          if (field2.required !== void 0 && typeof field2.required !== "boolean") return `Required setting for ${field2.key} must be true or false`;
-          if (field2.visible !== void 0 && typeof field2.visible !== "boolean") return `Visibility setting for ${field2.key} must be true or false`;
-          if (field2.required === true && field2.visible === false) return `Required custom field ${field2.key} cannot be hidden`;
-          if (field2.validation !== void 0 && (typeof field2.validation !== "string" || field2.validation.length > 200)) return `Validation metadata for ${field2.key} must be 200 characters or fewer`;
-          if (field2.permissions !== void 0 && (!Array.isArray(field2.permissions) || field2.permissions.length > 50 || field2.permissions.some((permission) => typeof permission !== "string" || permission.length > 100))) return `Permission metadata for ${field2.key} is invalid`;
+        for (const field3 of definitions) {
+          if (!isPlainObject2(field3) || typeof field3.key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(field3.key) || ["__proto__", "prototype", "constructor"].includes(field3.key)) return `Custom fields for ${entity} need valid, non-empty field keys`;
+          if (keys.has(field3.key)) return `Custom field key ${field3.key} is duplicated for ${entity}`;
+          keys.add(field3.key);
+          if (field3.type !== void 0 && !allowedTypes.has(field3.type)) return `Custom field ${field3.key} has an unsupported type`;
+          if (field3.required !== void 0 && typeof field3.required !== "boolean") return `Required setting for ${field3.key} must be true or false`;
+          if (field3.visible !== void 0 && typeof field3.visible !== "boolean") return `Visibility setting for ${field3.key} must be true or false`;
+          if (field3.required === true && field3.visible === false) return `Required custom field ${field3.key} cannot be hidden`;
+          if (field3.validation !== void 0 && (typeof field3.validation !== "string" || field3.validation.length > 200)) return `Validation metadata for ${field3.key} must be 200 characters or fewer`;
+          if (field3.permissions !== void 0 && (!Array.isArray(field3.permissions) || field3.permissions.length > 50 || field3.permissions.some((permission) => typeof permission !== "string" || permission.length > 100))) return `Permission metadata for ${field3.key} is invalid`;
         }
       }
     }
@@ -1814,16 +2072,16 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
     const label = { projects: "Project", tasks: "Task", people: "Person", teams: "Team", milestones: "Milestone", activities: "Activity", alerts: "Alert" }[entity] || "Record";
     if (!validCustomFields2(value)) return `${label} custom fields contain invalid data`;
     const fields = store2.settings?.customFields?.[entity] || [];
-    for (const field2 of fields) {
-      if (!isPlainObject2(field2) || !field2.key) continue;
-      const current = value?.[field2.key];
+    for (const field3 of fields) {
+      if (!isPlainObject2(field3) || !field3.key) continue;
+      const current = value?.[field3.key];
       const empty = current === void 0 || current === null || typeof current === "string" && !current.trim() || Array.isArray(current) && current.length === 0;
-      if (field2.required && empty) return `${field2.label || field2.key} is required`;
+      if (field3.required && empty) return `${field3.label || field3.key} is required`;
       if (empty) continue;
-      if (field2.type === "number" && (typeof current !== "number" && typeof current !== "string" || !Number.isFinite(Number(current)))) return `${field2.label || field2.key} must be a valid number`;
-      if (field2.type === "date" && !validIsoDate2(current)) return `${field2.label || field2.key} must be a valid calendar date`;
-      if (field2.type === "datetime" && (typeof current !== "string" || !Number.isFinite(Date.parse(current)))) return `${field2.label || field2.key} must be a valid date and time`;
-      if (field2.type === "checkbox" && typeof current !== "boolean") return `${field2.label || field2.key} must be true or false`;
+      if (field3.type === "number" && (typeof current !== "number" && typeof current !== "string" || !Number.isFinite(Number(current)))) return `${field3.label || field3.key} must be a valid number`;
+      if (field3.type === "date" && !validIsoDate2(current)) return `${field3.label || field3.key} must be a valid calendar date`;
+      if (field3.type === "datetime" && (typeof current !== "string" || !Number.isFinite(Date.parse(current)))) return `${field3.label || field3.key} must be a valid date and time`;
+      if (field3.type === "checkbox" && typeof current !== "boolean") return `${field3.label || field3.key} must be true or false`;
     }
     return "";
   }
@@ -3010,6 +3268,27 @@ function auditRead(action, userId) {
 }
 var workspaceServices = createWorkspaceServices({ getStore: () => store, todayLA, addDays, fmt: formatDate, daysBetween, isPlainObject, validIsoDate, permissionsFor, can, isDone, terminalTaskStates });
 var { teamById, personById, projectById, taskById, validText, validEmail, validDateValue, validOptionalDate, validCustomFields, customFieldInputError, personReferenceExists, teamReferenceExists, projectReferenceExists, taskReferenceExists, publicUser, publicAccessUser, dueTone, dueLabel, projectProgress, projectHealth, taskPublic, projectPublic, personPublic, activityPublic, alertPublic, bucketFor, makeBuckets, reportFor, dashboard, settingsForUser, bootstrapFor, workLogPublic, bucketLabel, isCompletionEvent, completedTaskIds, activityReportFor, nextProjectId, nextTaskId } = workspaceServices;
+function createDatabaseExportContext() {
+  const snapshot = storeRepository.loadSnapshot();
+  if (!snapshot) throw new Error("SQLite workspace is not initialized");
+  const getSnapshot = () => snapshot;
+  const databaseTime = createTimeService({ getStore: getSnapshot, environmentTimezone: process.env.ATLAS_TIMEZONE, isValidTimezone });
+  const databaseWorkflow = createWorkflowService({ getStore: getSnapshot, defaultTaskStates: DEFAULT_WORKFLOW_STATES2 });
+  const workspace = createWorkspaceServices({
+    getStore: getSnapshot,
+    todayLA: databaseTime.todayLA,
+    addDays,
+    fmt: formatDate,
+    daysBetween,
+    isPlainObject,
+    validIsoDate,
+    permissionsFor,
+    can,
+    isDone: databaseWorkflow.isDone,
+    terminalTaskStates: databaseWorkflow.terminalTaskStates
+  });
+  return { snapshot, workspace, today: databaseTime.todayLA() };
+}
 function sendError(res, status, error) {
   res.status(status).json({ error });
 }
@@ -3107,6 +3386,7 @@ var routeServices = {
   listBackups,
   auditRead,
   storeChecksum,
+  createDatabaseExportContext,
   validateStoreState,
   requireUser,
   requireAdmin,

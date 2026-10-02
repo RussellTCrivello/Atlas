@@ -180,7 +180,7 @@ Command center for active projects, tasks, attention items, pulse, blockers, and
 
 ### Projects
 
-Manage project records, health, owners, team, milestones, deadlines, and progress.
+Manage project records, health, owners, team, milestones, deadlines, and progress. Select a project card to open its full delivery portfolio: every linked task and milestone is loaded from a fresh SQLite snapshot, with search, status filters, sorting, role-appropriate task/project actions, and a project-scoped export.
 
 ### My Work
 
@@ -241,18 +241,11 @@ Each activity report row includes:
 
 ## 17. Exports and print
 
-Reports and tables support:
+The report studio prepares each export through an authenticated API request against a fresh SQLite snapshot. It selects database-backed fields and records rather than printing the on-screen application; no screenshot or interface markup is used as report data. Dataset/field allowlists and role checks apply server-side, and export/print requests are audit logged.
 
-- CSV
-- Excel
-- JSON
-- PDF
-- Print
-- Column customization
-- Title customization
-- Orientation
-- Margins
-- Print templates
+Supported outputs are CSV, Excel (XLSX), JSON, PDF, and a separate print-ready HTML document. The studio supports selected standard and configured visible custom fields, configurable titles, locale/timezone-aware dates and numbers, row grouping and sorting, executive/ledger/compact templates, accent colors, summary metrics, workspace branding, review sign-off, PDF/print A4/Letter/Legal sizing, orientation and margins, and RTL-aware table presentation. Structured CSV/JSON remain data-first; visual document options apply to PDF, XLSX, and print output where supported. A single export is limited to 25,000 database records; export larger collections in smaller filtered sets.
+
+Project cards open a dedicated detail view whose complete linked task list (not only the first page of the workspace task board) comes from `GET /api/projects/:id/tasks`. Search and status controls filter the visible list without changing the project-scoped database export.
 
 ## 18. Backup and restore
 

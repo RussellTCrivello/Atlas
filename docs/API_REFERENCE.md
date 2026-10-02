@@ -298,6 +298,22 @@ Deletes a task.
 
 ## Projects
 
+### `GET /api/projects/:id/tasks`
+
+Requires authentication. Reads a fresh SQLite snapshot and returns the project plus **all** associated tasks and milestones; it does not return only the currently visible task-board rows.
+
+Response shape:
+
+```json
+{
+  "source": "sqlite",
+  "project": { "numericId": 42, "name": "..." },
+  "tasks": [],
+  "milestones": [],
+  "generatedAt": "..."
+}
+```
+
 ### `POST /api/projects`
 
 Requires `manageProjects`.
@@ -402,6 +418,33 @@ Requires `writeTasks` or alert management role.
 ### `DELETE /api/alerts/:id`
 
 Requires `manageAlerts`.
+
+## Exports
+
+### `POST /api/exports/prepare`
+
+Requires `exportData`. Report datasets additionally require `viewReports`; the `users` dataset additionally requires `manageUsers`.
+
+Prepares selected rows/fields from a fresh SQLite snapshot. The client sends identifiers and selected field keys, never screen-rendered row values. `fields` are checked against the dataset schema and configured visible custom-field definitions; user secrets such as password hashes are not allowlisted.
+
+Example body:
+
+```json
+{
+  "dataset": "tasks",
+  "recordIds": [41, 42],
+  "fields": ["id", "title", "status", "due", "customFields.client_code"],
+  "query": { "projectId": 7 }
+}
+```
+
+Supported datasets: `projects`, `tasks`, `people`, `activity`, `alerts`, `milestones`, `users`, `delivery-report`, `activity-evidence`, `activity-summary`, and `project-contributions`. `delivery-report` accepts `period` (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`); activity datasets accept `period` (`daily`, `weekly`, `monthly`) and optional `personId`. Task queries accept `projectId`. If `recordIds` or `fields` are omitted, all rows/allowlisted fields for that dataset are selected. At least one field is required when `fields` is supplied. Each response is limited to 25,000 records.
+
+Response includes `source: "sqlite"`, `dataset`, `generatedAt`, `recordCount`, database-derived `columns`, and `rows`.
+
+### `POST /api/audit/export`
+
+Requires `exportData`. Records the title, format, and row count of an export/print request in the workspace audit log when audit tracking is enabled.
 
 ## Users/access control
 

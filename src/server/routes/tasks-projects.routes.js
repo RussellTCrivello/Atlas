@@ -1,5 +1,19 @@
 export function registerTaskProjectRoutes(app, services) {
-  const { store, sendError, requireUser, requirePermission, validText, validOptionalDate, validEmail, teamReferenceExists, personReferenceExists, customFieldInputError, todayLA, nextProjectId, nextTaskId, id, taskPublic, projectPublic, projectById, taskById, taskWorkflowStates, terminalTaskStates, isDone, logWorkEvent, auditLog, persist, can, taskReferenceExists, validDateValue, personById, dueTone } = services
+  const { store, sendError, requireUser, requirePermission, validText, validOptionalDate, validEmail, teamReferenceExists, personReferenceExists, customFieldInputError, todayLA, nextProjectId, nextTaskId, id, taskPublic, projectPublic, projectById, taskById, taskWorkflowStates, terminalTaskStates, isDone, logWorkEvent, auditLog, persist, can, taskReferenceExists, validDateValue, personById, dueTone, createDatabaseExportContext, auditRead } = services
+app.get('/api/projects/:id/tasks', requireUser, (req, res) => {
+  const context = createDatabaseExportContext()
+  const project = context.snapshot.projects.find(row => String(row.id) === String(req.params.id))
+  if (!project) return sendError(res, 404, 'Project not found')
+  const tasks = context.snapshot.tasks
+    .filter(task => String(task.projectId) === String(project.id))
+    .map(task => context.workspace.taskPublic(task, context.today))
+    .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')) || a.title.localeCompare(b.title))
+  const milestones = context.snapshot.milestones
+    .filter(milestone => String(milestone.projectId) === String(project.id))
+    .map(milestone => ({ ...milestone, project: project.name }))
+  auditRead('project-tasks', req.user.id)
+  res.json({ source: 'sqlite', project: context.workspace.projectPublic(project, context.today), tasks, milestones, generatedAt: new Date().toISOString() })
+})
 app.post('/api/tasks', requireUser, requirePermission('manageTasks'), (req, res) => {
   const body = req.body
   const title = typeof body.title === 'string' ? body.title.trim() : ''

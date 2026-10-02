@@ -181,6 +181,18 @@ function auditRead(action, userId) {
 
 const workspaceServices = createWorkspaceServices({ getStore: () => store, todayLA, addDays, fmt, daysBetween, isPlainObject, validIsoDate, permissionsFor, can, isDone, terminalTaskStates })
 const { teamById, personById, projectById, taskById, validText, validEmail, validDateValue, validOptionalDate, validCustomFields, customFieldInputError, personReferenceExists, teamReferenceExists, projectReferenceExists, taskReferenceExists, publicUser, publicAccessUser, dueTone, dueLabel, projectProgress, projectHealth, taskPublic, projectPublic, personPublic, activityPublic, alertPublic, bucketFor, makeBuckets, reportFor, dashboard, settingsForUser, bootstrapFor, workLogPublic, bucketLabel, isCompletionEvent, completedTaskIds, activityReportFor, nextProjectId, nextTaskId } = workspaceServices
+function createDatabaseExportContext() {
+  const snapshot = storeRepository.loadSnapshot()
+  if (!snapshot) throw new Error('SQLite workspace is not initialized')
+  const getSnapshot = () => snapshot
+  const databaseTime = createTimeService({ getStore: getSnapshot, environmentTimezone: process.env.ATLAS_TIMEZONE, isValidTimezone })
+  const databaseWorkflow = createWorkflowService({ getStore: getSnapshot, defaultTaskStates: DEFAULT_WORKFLOW_STATES })
+  const workspace = createWorkspaceServices({
+    getStore: getSnapshot, todayLA: databaseTime.todayLA, addDays, fmt, daysBetween, isPlainObject, validIsoDate,
+    permissionsFor, can, isDone: databaseWorkflow.isDone, terminalTaskStates: databaseWorkflow.terminalTaskStates
+  })
+  return { snapshot, workspace, today: databaseTime.todayLA() }
+}
 function sendError(res, status, error) { res.status(status).json({ error }) }
 const { rateLimitMiddleware } = createRateLimitMiddleware({ sendError })
 const authMiddleware = createAuthMiddleware({ getStore: () => store, sessions, can, invalidateUserSessions, sendError })
@@ -234,7 +246,7 @@ const routeServices = {
   root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData,
   rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword,
   configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA,
-  publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum,
+  publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum, createDatabaseExportContext,
   validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
   invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor,
   bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path,

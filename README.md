@@ -35,7 +35,8 @@ All runtime application persistence is SQLite. The default database is `data/atl
 
 - Local fonts and assets; no remote UI fonts, CSS CDN, or core UI dependencies.
 - PWA manifest, icon, and service worker with static shell caching.
-- Projects, teams, people, tasks, milestones, activity updates, alerts, reports, and exports.
+- Projects, teams, people, tasks, milestones, activity updates, alerts, and reports. Project cards open a complete, searchable task portfolio loaded from SQLite.
+- An SQL-backed report studio builds CSV, Excel, JSON, PDF, and standalone print output from allowlisted database fields, including configured visible custom fields, with field selection, locale-aware formatting, grouping, sorting, branded templates, and export audit logging.
 - Role-based access control enforced by the API, plus role-aware interface controls.
 - Production first-run setup with no sample users or default credentials unless demo mode is explicitly enabled.
 - Salted password hashing, HTTP-only sessions, SQLite integrity checks, and timestamped SQLite backups.

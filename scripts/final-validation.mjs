@@ -366,6 +366,34 @@ async function main() {
     assert.ok(managerReport.body.series.length)
     record('manager project/task/alert/report journey', 'pass')
 
+    const projectPortfolio = await manager.get(`/api/projects/${project.numericId}/tasks`)
+    assert.equal(projectPortfolio.body.source, 'sqlite')
+    assert.equal(projectPortfolio.body.project.name, 'Client Portal مشروع')
+    assert.equal(projectPortfolio.body.tasks.length, 2)
+    assert.equal(projectPortfolio.body.milestones.length, 1)
+    assert.deepEqual(new Set(projectPortfolio.body.tasks.map(task => task.numericId)), new Set([managerTask.numericId, devTask.numericId]))
+    record('project detail loads the complete linked task portfolio from SQLite', 'pass')
+
+    const sqlExport = await manager.post('/api/exports/prepare', {
+      dataset: 'tasks', recordIds: [managerTask.numericId, devTask.numericId], fields: ['id', 'title', 'project', 'status', 'due'], query: { projectId: project.numericId }
+    })
+    assert.equal(sqlExport.body.source, 'sqlite')
+    assert.equal(sqlExport.body.recordCount, 2)
+    assert.ok(sqlExport.body.rows.some(row => row.title === 'Plan release checklist'))
+    assert.ok(sqlExport.body.rows.some(row => row.title === 'تنفيذ لوحة التقارير CP-42'))
+    const customFieldExport = await manager.post('/api/exports/prepare', { dataset: 'tasks', recordIds: [managerTask.numericId], fields: ['customFields.client_code'] })
+    assert.deepEqual(customFieldExport.body.rows[0], { 'customFields.client_code': 'MGR-1' })
+    const reportExport = await manager.post('/api/exports/prepare', {
+      dataset: 'delivery-report', recordIds: [managerReport.body.series[0].key], fields: ['label', 'completed', 'created', 'rate'], query: { period: 'weekly' }
+    })
+    assert.equal(reportExport.body.source, 'sqlite')
+    assert.equal(reportExport.body.recordCount, 1)
+    await manager.post('/api/exports/prepare', { dataset: 'users', fields: ['name'] }, 403)
+    await manager.post('/api/exports/prepare', { dataset: 'tasks', fields: ['passwordHash'] }, 400)
+    await manager.post('/api/exports/prepare', { dataset: 'tasks', fields: [] }, 400)
+    await manager.post('/api/exports/prepare', { dataset: 'activity-evidence', query: { period: 'quarterly', personId: 'all' } }, 400)
+    record('database-backed exports select allowlisted fields and enforce dataset permissions', 'pass')
+
     const developer = new Client('developer')
     await developer.post('/api/auth/login', { email: 'developer@example.com', password: 'DeveloperPass123' })
     await developer.patch(`/api/tasks/${devTask.numericId}/status`, { status: 'Active' })
