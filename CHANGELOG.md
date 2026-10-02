@@ -68,6 +68,13 @@ Decisions that the repository cannot answer are in [`docs/DECISIONS_AND_OPEN_QUE
   contrast preferences (UX-05). Not audited with real assistive technology.
 - Pages have URLs; screens refresh when someone else changes data; query builder precedence and date comparison (UX-08, UX-09).
 - Settings console labels what is not applied and saves only changes (UX-07).
+- Activity and dashboard honesty (REP-03, MIN-05): "Most active this week" ranks this week's daily updates and is hidden from
+  people who may see only their own activity; the Projects milestone list is ordered (open first, by due date) with "Show more"
+  and month names; "Capacity" is labelled "Planned capacity" because it is typed in, not measured; the delivery and activity
+  reports cover the same periods; the Activity page says who can see what (GOV-02). "Invite person" is "Add person" because it
+  only creates a profile (UX-08).
+- PDF export loads its fonts once per page load and tells you when it had to fall back to the basic font, where Arabic, Persian
+  and Hebrew would not display (MIN-03).
 
 ### Desktop and PWA
 
@@ -79,7 +86,8 @@ Decisions that the repository cannot answer are in [`docs/DECISIONS_AND_OPEN_QUE
 
 - Dependencies pinned, `.nvmrc`, `engine-strict`; server split into modules (strict TypeScript, 0 errors; client 0 errors, was 432);
   Prettier; CI workflow and Dependabot (BUILD-01, BUILD-02, ARCH-03, QA-01).
-- Test suites: server/API/store/CLI, UI in jsdom, acceptance against the built bundle; the old `final-validation` script and
+- Test suites: server/API/store/CLI, UI in jsdom (including axe-core accessibility scans), acceptance against the built bundle
+  (including a replay of the audit's reproductions); the old `final-validation` script and
   its tracked results file were removed (QA-01, QA-02).
 - Documentation rewritten to match the code (`README`, `PRODUCTION`, `SECURITY`, data, API, operations, development, build);
   point-in-time reports moved to `docs/history/`; third-party notices and font licence (DOC-01, DOC-02, BUILD-03).

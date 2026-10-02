@@ -2472,6 +2472,15 @@ function ActivityLog({ data, openModal, setPage, canLogActivity = true }) {
       {!canLogActivity && (
         <PermissionNotice>Your role can view activity and reports, but cannot log updates.</PermissionNotice>
       )}
+      <p className="filter-hint" role="note">
+        {tr(settings, 'Daily updates are visible to everyone in this workspace.')}{' '}
+        {tr(
+          settings,
+          settings?.reports?.activityVisibility === 'everyone'
+            ? 'Per-person activity reports are visible to everyone in this workspace.'
+            : 'Per-person activity reports are limited to managers and administrators; everyone can see their own.'
+        )}
+      </p>
       <div className="activity-layout">
         <section className="panel timeline-panel">
           <div className="section-head">

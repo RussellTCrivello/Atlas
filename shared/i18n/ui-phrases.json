@@ -580,7 +580,10 @@
     "Add person": "Add person",
     "Clear filters or add a person.": "Clear filters or add a person.",
     "PDF created with a basic font": "PDF created with a basic font",
-    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX."
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.",
+    "Daily updates are visible to everyone in this workspace.": "Daily updates are visible to everyone in this workspace.",
+    "Per-person activity reports are limited to managers and administrators; everyone can see their own.": "Per-person activity reports are limited to managers and administrators; everyone can see their own.",
+    "Per-person activity reports are visible to everyone in this workspace.": "Per-person activity reports are visible to everyone in this workspace."
   },
   "ar": {
     "Overview": "نظرة عامة",
@@ -1163,7 +1166,10 @@
     "Add person": "إضافة شخص",
     "Clear filters or add a person.": "امسح عوامل التصفية أو أضف شخصًا.",
     "PDF created with a basic font": "أُنشئ ملف PDF بخط أساسي",
-    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "تعذّر تحميل خط Unicode، لذا قد لا يظهر النص العربي والفارسي والعبري بشكل صحيح. حاول مرة أخرى أو صدّر إلى XLSX."
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "تعذّر تحميل خط Unicode، لذا قد لا يظهر النص العربي والفارسي والعبري بشكل صحيح. حاول مرة أخرى أو صدّر إلى XLSX.",
+    "Daily updates are visible to everyone in this workspace.": "التحديثات اليومية مرئية لكل من في مساحة العمل هذه.",
+    "Per-person activity reports are limited to managers and administrators; everyone can see their own.": "تقارير نشاط الأفراد مقصورة على المديرين والمسؤولين؛ ويمكن لكل شخص رؤية نشاطه الخاص.",
+    "Per-person activity reports are visible to everyone in this workspace.": "تقارير نشاط الأفراد مرئية لكل من في مساحة العمل هذه."
   },
   "fa": {
     "Overview": "نمای کلی",
@@ -1746,7 +1752,10 @@
     "Add person": "افزودن فرد",
     "Clear filters or add a person.": "فیلترها را پاک کنید یا فردی را اضافه کنید.",
     "PDF created with a basic font": "فایل PDF با فونت پایه ساخته شد",
-    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "فونت یونیکد بارگذاری نشد، بنابراین ممکن است متن عربی، فارسی و عبری درست نمایش داده نشود. دوباره تلاش کنید یا به XLSX خروجی بگیرید."
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "فونت یونیکد بارگذاری نشد، بنابراین ممکن است متن عربی، فارسی و عبری درست نمایش داده نشود. دوباره تلاش کنید یا به XLSX خروجی بگیرید.",
+    "Daily updates are visible to everyone in this workspace.": "به‌روزرسانی‌های روزانه برای همه اعضای این فضای کاری قابل مشاهده است.",
+    "Per-person activity reports are limited to managers and administrators; everyone can see their own.": "گزارش‌های فعالیت فردی فقط برای مدیران و ادمین‌ها در دسترس است؛ هر کس می‌تواند فعالیت خودش را ببیند.",
+    "Per-person activity reports are visible to everyone in this workspace.": "گزارش‌های فعالیت فردی برای همه اعضای این فضای کاری قابل مشاهده است."
   },
   "he": {
     "Overview": "סקירה",
@@ -2329,6 +2338,9 @@
     "Add person": "הוספת אדם",
     "Clear filters or add a person.": "נקו את המסננים או הוסיפו אדם.",
     "PDF created with a basic font": "קובץ ה-PDF נוצר בגופן בסיסי",
-    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "לא ניתן היה לטעון את גופן ה-Unicode, ולכן ייתכן שטקסט בערבית, בפרסית ובעברית לא יוצג כראוי. נסו שוב או ייצאו ל-XLSX."
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "לא ניתן היה לטעון את גופן ה-Unicode, ולכן ייתכן שטקסט בערבית, בפרסית ובעברית לא יוצג כראוי. נסו שוב או ייצאו ל-XLSX.",
+    "Daily updates are visible to everyone in this workspace.": "העדכונים היומיים גלויים לכל מי שנמצא במרחב העבודה הזה.",
+    "Per-person activity reports are limited to managers and administrators; everyone can see their own.": "דוחות הפעילות האישיים מוגבלים למנהלים ולמנהלי מערכת; כל אחד יכול לראות את הפעילות שלו.",
+    "Per-person activity reports are visible to everyone in this workspace.": "דוחות הפעילות האישיים גלויים לכל מי שנמצא במרחב העבודה הזה."
   }
 }

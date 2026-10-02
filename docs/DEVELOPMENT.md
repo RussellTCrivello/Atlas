@@ -83,11 +83,15 @@ npm run build && npm run test:acceptance                          # the built bu
   `makeUser()` and `Api` in `tests/helpers/server.ts`). Prefer asserting on HTTP behaviour; reach into `server.db` only to prove
   persistence or to damage data on purpose.
 - `tests/ui/*`: bundle `src/main.tsx` with esbuild and run it in jsdom against a real server (`bootUI()`); you click, type and
-  read the DOM. **jsdom is not a browser**: layout, CSS, focus rings and real input devices are not covered. A real-browser
+  read the DOM. `a11y.test.ts` runs axe-core (WCAG 2.x A/AA) over every screen, the sign-in page, the Arabic/RTL interface and the
+  dialogs, panels and command palette. **jsdom is not a browser**: layout, CSS (so colour contrast), focus rings and real input
+  devices are not covered. A real-browser
   suite (Playwright) is not set up because browsers could not be installed where this was developed; adding one is a good next
   step.
 - `tests/acceptance/*`: spawn `dist-desktop/app.mjs` and check start-up, failure modes (corrupt store, second process, crash),
-  restore, a standalone copy with no `node_modules`, and a 1,000-task load check.
+  restore, a standalone copy with no `node_modules`, and a 1,000-task load check. `audit-replay.test.ts` replays the audit's
+  reproductions (setup takeover, brute force, forged activity, poison values, backup retention, launchers) against the bundle;
+  it fails against the original 1.0.0 bundle.
 - Every fixed audit finding has a regression test named after the behaviour; keep it that way.
 - Never point a test at the real `./data`. Use `launch()` (temp directory) or set `ATLAS_DATA_DIR`.
 

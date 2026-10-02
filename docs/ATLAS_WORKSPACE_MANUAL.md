@@ -9,7 +9,7 @@
 
 ## 1. Product definition
 
-Atlas Workspace is a production-oriented, local-first operations application. It combines project management, task workflow, people/team context, daily activity, alerts, reporting, export/print, settings, access control, and desktop deployment in one Node.js/TSX application.
+Atlas Workspace is a production-oriented, self-hosted operations application. It combines project management, task workflow, people/team context, daily activity, alerts, reporting, export/print, settings, access control, and desktop deployment in one Node.js/TSX application.
 
 Atlas is intentionally not split into separate client and server applications. The same Node process serves:
 
@@ -114,7 +114,7 @@ See [Build and Deployment Guide](BUILD_AND_DEPLOYMENT.md) for the full environme
 
 ### Why one app
 
-The single app design reduces deployment complexity, supports desktop packaging, keeps local assets reliable, and satisfies local-first operation.
+The single app design reduces deployment complexity, supports desktop packaging, keeps local assets reliable, and needs no cloud service. Data lives on the machine that runs Atlas; there is no offline mode or sync (see D12 in `DECISIONS_AND_OPEN_QUESTIONS.md`).
 
 ## 11. Database architecture
 

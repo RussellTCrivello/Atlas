@@ -98,6 +98,9 @@ describe('"Most active this week" ranks this week\'s updates (REP-03)', () => {
   test('people who may only see their own activity do not get a ranking of colleagues', async () => {
     const ui = await open(dev.api, '/activity', () => 'Daily updates become operational intelligence')
     assert.equal(ui.doc.querySelector('.contributor-card'), null)
+    const notice = textOf(ui.doc.querySelector('.page-content > [role="note"]'))
+    assert.match(notice, /Daily updates are visible to everyone in this workspace\./)
+    assert.match(notice, /limited to managers and administrators; everyone can see their own/, 'GOV-02 transparency')
   })
 
   test('the workspace can opt in, and then everyone sees the ranking', async () => {
@@ -105,6 +108,11 @@ describe('"Most active this week" ranks this week\'s updates (REP-03)', () => {
     try {
       const ui = await open(dev.api, '/activity', () => 'Most active this week')
       assert.deepEqual(rows(ui), ['Ann Alpha 3 updates', 'Cy Gamma 2 updates', 'Bob Beta 1 updates'])
+      assert.match(
+        textOf(ui.doc.querySelector('.page-content > [role="note"]')),
+        /activity reports are visible to everyone in this workspace/,
+        'the notice follows the setting'
+      )
     } finally {
       await admin.put('/api/settings', { reports: { activityVisibility: 'managers' } })
     }

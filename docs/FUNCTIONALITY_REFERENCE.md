@@ -9,7 +9,7 @@
 
 ## Product overview
 
-Atlas Workspace is a local-first engineering/operations workspace for tracking projects, tasks, people, activity, alerts, and decision-ready reports from a single Node.js/TSX application.
+Atlas Workspace is a self-hosted engineering/operations workspace for tracking projects, tasks, people, activity, alerts, and decision-ready reports from a single Node.js/TSX application.
 
 Core capabilities:
 
@@ -213,9 +213,8 @@ Export menus support:
 - Column selection
 - Orientation
 - Margins
-- Template selection
 
-Templates:
+Print templates are one workspace-wide choice (Settings > Reports & exports) and affect Print only, not the exported files:
 
 - Standard report
 - Compact table

@@ -20,11 +20,11 @@ The design system applies to every interface: setup, login, dashboard, projects,
 
 ## Non-negotiable design principles
 
-### 1. Local-first professionalism
+### 1. Self-contained professionalism
 
 - Fonts, icons, manifest, service worker, styles, UI code, and report assets must be served locally.
 - No Google Fonts, CDN stylesheets, remote UI libraries, remote image dependencies, or externally hosted design assets are permitted for core UI rendering.
-- The application must remain usable when offline after assets are available locally.
+- The interface shell and its assets load from the Atlas server with no external dependency. Working without the server is not supported: offline, the service worker shows a notice page (see D12 in `DECISIONS_AND_OPEN_QUESTIONS.md`).
 
 ### 2. Clarity before density
 
