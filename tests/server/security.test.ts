@@ -183,20 +183,27 @@ describe('authorization and data exposure (SEC-07)', () => {
   })
 
   test('exportData is enforced and audited at the moment of export', async () => {
-    const ok = await viewer.api.post('/api/exports/audit', { page: 'tasks', format: 'csv', rows: 12, columns: 4 })
+    const ok = await viewer.api.post('/api/exports', { dataset: 'tasks', format: 'csv' })
     assert.equal(ok.status, 200)
     const role = await admin.put('/api/settings', {
       permissions: { roles: { Auditor: { permissions: ['viewReports'] } } }
     })
     assert.equal(role.status, 200)
     const auditor = await makeUser(server, admin, 'Auditor', 'Ada Auditor')
+    assert.equal((await auditor.api.post('/api/exports', { dataset: 'tasks', format: 'csv' })).status, 403)
     assert.equal(
-      (await auditor.api.post('/api/exports/audit', { page: 'tasks', format: 'csv', rows: 1, columns: 1 })).status,
-      403
+      (await manager.api.post('/api/exports', { dataset: 'users', format: 'csv' })).status,
+      403,
+      'a sensitive dataset needs its own permission'
     )
-    await sleep(2300)
-    assert.ok(auditRows(server, 'data.exported').some(e => e.detail.rows === 12))
-    assert.ok(auditRows(server, 'access.denied').length > 0)
+    await sleep(2300) // denials are written to the audit trail in batches
+    assert.ok(auditRows(server, 'data.exported').some(e => e.detail.format === 'csv' && e.detail.dataset === 'tasks'))
+    const denied = auditRows(server, 'access.denied').map(e => String(e.detail.permission))
+    assert.ok(denied.includes('exportData'), 'the refused export is audited as a denial')
+    assert.ok(
+      denied.some(permission => permission.includes('manageUsers')),
+      'so is the refused sensitive dataset'
+    )
   })
 
   test('per-person activity analytics are limited to managers unless the workspace opts in (GOV-02)', async () => {

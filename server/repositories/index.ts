@@ -3,6 +3,7 @@ import type { Database } from '../db/driver'
 import { ActivityRepository } from './activities'
 import { AlertRepository } from './alerts'
 import { AuditRepository } from './audit'
+import { ExportRepository } from './exports'
 import { LedgerRepository } from './ledger'
 import { MetaRepository } from './meta'
 import { MilestoneRepository } from './milestones'
@@ -36,7 +37,8 @@ export function createRepositories(db: Database, defaults: { defaultTimezone: st
     audit: new AuditRepository(db),
     reports: new ReportRepository(db),
     search: new SearchRepository(db),
-    system: new SystemRepository(db)
+    system: new SystemRepository(db),
+    exports: new ExportRepository(db)
   }
 }
 export type Repositories = ReturnType<typeof createRepositories>

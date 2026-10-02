@@ -10,6 +10,7 @@ import { AuthService } from '../services/auth'
 import { BackupService } from '../services/backups'
 import { BootstrapService } from '../services/bootstrap'
 import { ServiceContext } from '../services/context'
+import { ExportService } from '../services/exports'
 import { LocalizationService } from '../services/localization'
 import { MaintenanceService } from '../services/maintenance'
 import { PeopleService } from '../services/people'
@@ -59,7 +60,8 @@ export function createContainer(config: AtlasConfig, db: Database) {
     bootstrap: new BootstrapService(ctx, projects, people, reports),
     system: new SystemService(ctx, audit, backups, sessions),
     maintenance: new MaintenanceService(ctx, audit, backups, sessions),
-    search: new SearchService(ctx)
+    search: new SearchService(ctx),
+    exports: new ExportService(ctx, audit, reports, projects)
   }
 }
 

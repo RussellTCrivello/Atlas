@@ -271,7 +271,7 @@ JOIN projects p ON p.id = m.project_id
 LEFT JOIN people o ON o.id = p.owner_id;
 
 CREATE VIEW v_person_rows AS
-SELECT pe.id, pe.name, pe.email, pe.job_title, pe.team_id, tm.name AS team_name, pe.focus, pe.capacity, pe.status,
+SELECT pe.rowid AS seq, pe.id, pe.name, pe.email, pe.job_title, pe.team_id, tm.name AS team_name, pe.focus, pe.capacity, pe.status,
        pe.color, pe.custom_fields, pe.sample,
        (SELECT count(*) FROM tasks t WHERE t.assignee_id = pe.id) AS task_count
 FROM people pe
@@ -292,7 +292,7 @@ LEFT JOIN projects p ON p.id = al.project_id
 LEFT JOIN tasks t ON t.id = al.task_id;
 
 CREATE VIEW v_user_rows AS
-SELECT u.id, u.name, u.email, u.role, u.person_id, pe.name AS person_name, tm.name AS team_name,
+SELECT u.rowid AS seq, u.id, u.name, u.email, u.role, u.person_id, pe.name AS person_name, tm.name AS team_name,
        u.avatar_color, u.active, u.created_at, u.last_login_at, u.password_changed_at, u.must_change_password, u.sample
 FROM users u
 LEFT JOIN people pe ON pe.id = u.person_id
