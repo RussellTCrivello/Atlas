@@ -3,7 +3,7 @@
 Companion to [`AUDIT_REPORT_2026-10-02.md`](AUDIT_REPORT_2026-10-02.md). It records what was done about each of the 61 findings, how the result was
 verified in a second, independent review, what that review found wrong with the first pass, and what remains.
 
-- Branch `arena/01a0fb79-atlas`, pull request [#1](https://github.com/RussellTCrivello/Atlas/pull/1), 10 commits on top of `7cca0c0` (report written at `0504ff8`).
+- Branch `arena/01a0fb79-atlas`, pull request [#1](https://github.com/RussellTCrivello/Atlas/pull/1), based on `7cca0c0`.
 - The audit was written without a project brief. README, `PRODUCTION.md` and the older documents were treated as the objectives, and
   nothing was invented where they were silent: those gaps are listed as decisions (section 7) in
   [`DECISIONS_AND_OPEN_QUESTIONS.md`](DECISIONS_AND_OPEN_QUESTIONS.md).
