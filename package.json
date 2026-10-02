@@ -1,0 +1,86 @@
+{
+  "name": "atlas-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single Node.js Atlas Workspace application with a TSX React UI, local assets, reporting, exports, printing, and drag-and-drop operations.",
+  "scripts": {
+    "app": "tsx app.tsx",
+    "web": "tsx app.tsx",
+    "dev": "tsx app.tsx",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "esbuild app.tsx --platform=node --format=esm --bundle --packages=external --outfile=dist-desktop/app.mjs",
+    "preview": "npm run build && npm run start",
+    "desktop": "npm run build && electron .",
+    "desktop:pack": "npm run build && electron-builder",
+    "desktop:dir": "npm run build && electron-builder --dir",
+    "reset:data": "tsx app.tsx --reset-data",
+    "start": "NODE_ENV=production node dist-desktop/app.mjs",
+    "init:production": "tsx app.tsx --init-production",
+    "backup:data": "tsx app.tsx --backup-data"
+  },
+  "dependencies": {
+    "cookie-parser": "latest",
+    "express": "latest"
+  },
+  "main": "electron/main.cjs",
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "@vitejs/plugin-react": "latest",
+    "fflate": "latest",
+    "jspdf": "latest",
+    "jspdf-autotable": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "tsx": "^4.23.15",
+    "vite": "latest"
+  },
+  "build": {
+    "appId": "ai.arena.atlasworkspace",
+    "productName": "Atlas Workspace",
+    "artifactName": "Atlas-Workspace-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "dist-desktop/**/*",
+      "public/**/*",
+      "build/**/*",
+      "docs/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "build/icon.png"
+    }
+  },
+  "author": "Atlas Workspace Team",
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

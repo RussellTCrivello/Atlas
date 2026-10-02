@@ -1,0 +1,13 @@
+{
+  "name": "Atlas Workspace",
+  "short_name": "Atlas",
+  "description": "Engineering operations workspace with local assets and reporting.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f8fb",
+  "theme_color": "#101827",
+  "icons": [
+    { "src": "/atlas-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
