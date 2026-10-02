@@ -31,7 +31,9 @@
     "check": "npm run typecheck && npm run format:check && npm test",
     "test:all": "npm test && npm run build && npm run test:acceptance",
     "i18n:coverage": "node scripts/i18n-coverage.mjs",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:restricted": "node scripts/e2e-restricted.mjs"
   },
   "dependencies": {
     "compression": "^1.8.2",
@@ -41,6 +43,7 @@
   },
   "main": "electron/main.cjs",
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",

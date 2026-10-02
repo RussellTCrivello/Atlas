@@ -29,6 +29,37 @@ jobs:
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
 
+  # The same end-to-end tests in three real browsers, against the built bundle (see playwright.config.ts).
+  e2e:
+    name: e2e (${{ matrix.browser }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run build
+      - run: npx playwright test --project=${{ matrix.browser }}
+      - name: Keep the report and traces when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.browser }}
+          path: |
+            tmp/e2e-report
+            tmp/e2e-results
+          retention-days: 7
+
   # Builds an unpacked desktop package and checks that it contains what the shell needs. Launching the GUI needs a display
   # server and is left as a manual release step (see docs/OPERATIONS_RUNBOOK.md).
   desktop-package:
