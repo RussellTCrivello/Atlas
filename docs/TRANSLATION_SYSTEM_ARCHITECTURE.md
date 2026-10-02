@@ -1,5 +1,12 @@
 # Advanced Translation System Architecture
 
+> **Partly out of date.** Written before the remediation release (store schema 3.1.0). Where it disagrees with
+> [`PRODUCTION.md`](../PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`API_REFERENCE.md`](API_REFERENCE.md) or
+> [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), those win. Known differences: effort **minutes no longer exist** (the old
+> figures were fixed constants, not measurements); setup requires a one-time token; the interface localiser never rewrites
+> user-entered data and each person can choose a language and theme for themselves; settings labelled "Not applied yet" are stored
+> but do nothing; workspace data is no longer sent in full to every role.
+
 _Last updated: 2026-10-01_
 
 ## Purpose
@@ -65,34 +72,43 @@ window.AtlasI18n.formatCurrency(2500, 'EUR')
 ### Pluralization
 
 ```js
-window.AtlasI18n.plural('tasks.count', count, {
-  one: '{count} task',
-  other: '{count} tasks'
-}, { count })
+window.AtlasI18n.plural(
+  'tasks.count',
+  count,
+  {
+    one: '{count} task',
+    other: '{count} tasks'
+  },
+  { count }
+)
 ```
 
 ### Register an interface package from a frontend extension
 
 ```js
-await window.AtlasI18n.registerInterface('billing', {
-  en: {
-    'billing.invoice_due': 'Invoice {number} is due'
+await window.AtlasI18n.registerInterface(
+  'billing',
+  {
+    en: {
+      'billing.invoice_due': 'Invoice {number} is due'
+    },
+    ar: {
+      'billing.invoice_due': 'الفاتورة {number} مستحقة'
+    },
+    fa: {
+      'billing.invoice_due': 'فاکتور {number} سررسید دارد'
+    },
+    he: {
+      'billing.invoice_due': 'חשבונית {number} לתשלום'
+    }
   },
-  ar: {
-    'billing.invoice_due': 'الفاتورة {number} مستحقة'
-  },
-  fa: {
-    'billing.invoice_due': 'فاکتور {number} سررسید دارد'
-  },
-  he: {
-    'billing.invoice_due': 'חשבונית {number} לתשלום'
+  {
+    label: 'Billing',
+    version: '1.0.0',
+    owner: 'Finance',
+    route: '/billing'
   }
-}, {
-  label: 'Billing',
-  version: '1.0.0',
-  owner: 'Finance',
-  route: '/billing'
-})
+)
 ```
 
 ## Backend translation APIs
@@ -244,7 +260,7 @@ The localization settings branch now includes:
 - Use `window.AtlasI18n.t()` for dynamic UI strings.
 - Use `window.AtlasI18n.formatDate`, `formatNumber`, and `formatCurrency` instead of hard-coded browser defaults.
 - Avoid translating user-entered values, identifiers, codes, or data fields unless they are explicit labels.
-- Use `data-no-i18n` on code samples, technical IDs, templates, or editable content that must remain literal.
+- Use `translate="no"` (or `data-no-i18n`) on code samples, technical IDs, templates, or editable content that must remain literal.
 - For RTL languages, rely on the document-level direction set by Atlas instead of hard-coding directional styles.
 
 ## Validation
@@ -255,7 +271,6 @@ The translation architecture was validated with:
 - setup smoke tests
 - final validation suite
 - audit checks
-
 
 ## Immediate language switching note
 

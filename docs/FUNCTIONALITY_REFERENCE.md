@@ -1,5 +1,12 @@
 # Atlas Workspace Functionality Reference
 
+> **Partly out of date.** Written before the remediation release (store schema 3.1.0). Where it disagrees with
+> [`PRODUCTION.md`](../PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`API_REFERENCE.md`](API_REFERENCE.md) or
+> [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), those win. Known differences: effort **minutes no longer exist** (the old
+> figures were fixed constants, not measurements); setup requires a one-time token; the interface localiser never rewrites
+> user-entered data and each person can choose a language and theme for themselves; settings labelled "Not applied yet" are stored
+> but do nothing; workspace data is no longer sent in full to every role.
+
 ## Product overview
 
 Atlas Workspace is a local-first engineering/operations workspace for tracking projects, tasks, people, activity, alerts, and decision-ready reports from a single Node.js/TSX application.
@@ -191,7 +198,7 @@ Report includes:
 - Project contribution summaries
 - Evidence rows
 
-Evidence rows include exactly which tasks were performed, project context, user/person, action, status movement, minutes, source, and summary.
+Evidence rows include exactly which tasks were performed, project context, user/person, action, status movement, source, and summary.
 
 ## Export and print
 
@@ -256,4 +263,3 @@ When launched with Electron:
 - The native shell loads the local server.
 - Desktop metadata is exposed through a safe preload bridge.
 - Data is stored in Electron userData.
-

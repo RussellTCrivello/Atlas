@@ -1,5 +1,11 @@
 # Atlas Workspace Final Acceptance Report
 
+> **Historical record.** This is a point-in-time report written against an earlier version of Atlas. It is kept for context
+> only and is **superseded** by [`PRODUCTION.md`](../../PRODUCTION.md), [`SECURITY.md`](../SECURITY.md),
+> [`DATABASE_ARCHITECTURE.md`](../DATABASE_ARCHITECTURE.md) and [`API_REFERENCE.md`](../API_REFERENCE.md). Claims about validation,
+> security, translation coverage or "live" behaviour below describe that earlier version and were not true of every code path
+> (see [`AUDIT_REPORT_2026-10-02.md`](../AUDIT_REPORT_2026-10-02.md)).
+
 Date: 2026-10-02
 
 ## Executive conclusion

@@ -1,418 +1,153 @@
-# Atlas Workspace Database Architecture
+# Data architecture
 
-## Architecture summary
+Atlas keeps its data in an **embedded JSON document store**: one file, held in memory by the server process, rewritten
+atomically on every change. This document describes the model, the guarantees, and the point at which it stops being the right
+tool. Code: `server/store.ts` (persistence), `server/migrations.ts` (shape, migrations, integrity),
+`server/types.ts` (entities), `shared/settings.ts` (settings model).
 
-Atlas uses an embedded local document database stored as JSON. This fits the product's local-first desktop/web architecture: one Node.js process owns the API, interface, data store, export/report generation, and Electron integration.
+## Files in the data directory
 
-Current model:
-
-- Store file: `data/atlas-store.json` in web/local development.
-- Desktop store: Electron `userData/data/atlas-store.json`.
-- Store model: `embedded-json-document-store`.
-- Schema version: `3.0.0`.
-- Persistence: atomic temporary-file write followed by rename.
-- Normalization: every load normalizes collections, settings, counters, users, and schema metadata.
-- Integrity: `/api/system` validates relationships and reports errors/warnings to administrators.
-- Backup support: `npm run backup:data` creates a timestamped snapshot under `data/backups`.
-- Production default: first-run setup, zero sample records, zero users, no demo credentials.
-
-## Why this model
-
-Atlas is designed as a single local-first operations application rather than separate client/server services. For the intended desktop and local deployment model, an embedded document store provides:
-
-- Simple installation with no external database server.
-- Portable backups and restores.
-- Offline operation.
-- Easy Electron packaging.
-- Direct control over schema migrations and integrity checks.
-
-For centralized, high-concurrency, multi-node deployments, the repository boundaries documented here should be adapted to SQLite/PostgreSQL. The UI and API contracts should remain stable while persistence implementation changes behind the data layer.
-
-## Data file layout
-
-The root store has this shape:
-
-```json
-{
-  "meta": {
-    "schemaVersion": "3.0.0",
-    "model": "embedded-json-document-store",
-    "createdAt": "ISO timestamp",
-    "updatedAt": "ISO timestamp",
-    "writeCount": 0,
-    "lastMigrationAt": "ISO timestamp",
-    "designSystemVersion": "1.0.0",
-    "atomicPersistence": true,
-    "backupRetention": 25
-  },
-  "configured": false,
-  "counters": { "project": 1, "task": 1 },
-  "settings": {},
-  "users": [],
-  "teams": [],
-  "people": [],
-  "projects": [],
-  "tasks": [],
-  "milestones": [],
-  "activities": [],
-  "alerts": [],
-  "workLogs": []
-}
+```text
+<ATLAS_DATA_DIR>/            mode 0700 (default <project root>/data, independent of the working directory)
+  atlas-store.json           the workspace (mode 0600)
+  sessions.json              SHA-256 hashes of session tokens + user id + creation time (mode 0600)
+  atlas.lock                 {pid, hostname, startedAt, token}: single-writer lock
+  backups/atlas-store-<UTC timestamp>-<reason>.json
 ```
 
-## Metadata fields
+Do not edit `atlas-store.json` while the server runs. To repair by hand, stop the server first, run `npm run backup:data`,
+edit, then `npm run check:data`.
 
-| Field | Purpose |
-| --- | --- |
-| `schemaVersion` | Current persisted schema. Used for migration and compatibility checks. |
-| `model` | Identifies the storage model in runtime/system APIs. |
-| `createdAt` | Store creation timestamp. |
-| `updatedAt` | Most recent persisted write timestamp. |
-| `writeCount` | Incremented on persisted writes. Useful for support and diagnostics. |
-| `lastMigrationAt` | Last schema normalization/migration timestamp. |
-| `designSystemVersion` | Indicates which interface design standard the store was normalized against. |
-| `atomicPersistence` | Confirms temp-file + rename persistence is active. |
-| `backupRetention` | Number of backup snapshots to retain. Configurable with `ATLAS_BACKUP_RETENTION`. |
+## Why this model, and its limits
 
-## Entities
+It needs no installation, is easy to back up and inspect, and works the same inside the desktop app. It also means:
 
-### `settings`
+- the whole state is in memory and the whole file is rewritten on each change (≈ 80 ms per write at 10,000 tasks);
+- every browser receives all tasks at load (≈ 4 MB at 10,000 tasks);
+- there is exactly one writer process;
+- no queries or indexes: lookups are in-memory scans, built into per-request indexes where it matters.
 
-Versioned platform configuration. Settings are administered from the front-end Settings interface and normalized on load/save.
+**Rule of thumb: up to about 10,000 tasks.** The next step (not taken here, because the scale target is unknown and an embedded
+SQLite or native module cannot be verified inside Electron in this environment) is server-side pagination of the list
+endpoints, then moving collections to SQLite behind the same `DocumentStore.commit()` interface. See
+`DECISIONS_AND_OPEN_QUESTIONS.md` (D11).
 
-Primary branches:
+## Top-level shape (schema `3.1.0`)
 
-- `workspace` — name, logo, branding, organization, timezone, language, regional formats, working days/hours, holidays.
-- `interface` — theme, colors, density, spacing, typography, sidebar, navigation visibility, dashboard layout, tables, cards, motion, accessibility.
-- `localization` — active languages, fallback language, translations, language packages, date/number/currency/timezone formats, text direction, approval workflow.
-- `modules` — enabled modules, labels, icons, permissions, navigation metadata.
-- `workflows` — task states, transitions, approval steps, automated actions.
-- `customFields` — configurable fields for projects, tasks, people, teams, activities, alerts, reports.
-- `permissions` — roles, module access, field access, action access, export/report permissions.
-- `notifications` — notification channels and event flags.
-- `reports` — templates, custom columns, filters, calculations, localized output, branding.
-- `exports` — enabled formats and language/direction/branding behavior.
-- `integrations` — integration registry and future webhook/API metadata.
-- `storage` — model, schema, backup/import/export settings.
-- `security` — password/session/demo/security policy settings.
-- `audit` — audit enablement, tracked events, retention.
-
-Backward-compatible flat fields such as `workspaceName`, `language`, `theme`, `enabledPages`, and `pageSize` are still generated by normalization for older UI surfaces.
-
-### `users`
-
-Login/access records.
-
-Important fields:
-
-- `id`
-- `name`
-- `email`
-- `passwordHash`
-- `role`
-- `personId`
-- `avatarColor`
-- `active`
-- `createdAt`
-- `lastLoginAt`
-- `sample`
-
-Rules:
-
-- Email must be unique.
-- Plain-text `password` is normalized to `passwordHash` and removed.
-- Password hashes use salted `scrypt` format: `scrypt$<salt>$<key>`.
-- Role controls backend permissions.
-
-### `teams`
-
-Organizational groups.
-
-Fields:
-
-- `id`
-- `name`
-- `color`
-- `sample`
-
-### `people`
-
-Work profiles. People can exist without login accounts.
-
-Fields:
-
-- `id`
-- `name`
-- `email`
-- `jobTitle`
-- `teamId`
-- `focus`
-- `capacity`
-- `status`
-- `color`
-- `sample`
-
-Relationships:
-
-- `teamId` references `teams.id`.
-
-### `projects`
-
-Project records.
-
-Fields:
-
-- `id` numeric internal id
-- `name`
-- `code`
-- `description`
-- `teamId`
-- `ownerId`
-- `color`
-- `status`
-- `deadline`
-- `createdAt`
-- `sample`
-
-Relationships:
-
-- `teamId` references `teams.id`.
-- `ownerId` references `people.id`.
-
-### `tasks`
-
-Trackable work items.
-
-Fields:
-
-- `id` numeric internal id
-- `title`
-- `projectId`
-- `assigneeId`
-- `priority`
-- `dueDate`
-- `status`
-- `type`
-- `blocked`
-- `createdAt`
-- `completedAt`
-- `sample`
-
-Rules:
-
-- Status should be one of `To do`, `In progress`, `Review`, `Testing`, `Done`.
-- `completedAt` is set when status becomes `Done`.
-- Task display ids combine project code and numeric id, for example `PRD-001`.
-
-Relationships:
-
-- `projectId` references `projects.id`.
-- `assigneeId` references `people.id`.
-
-### `milestones`
-
-Project milestone records.
-
-Fields:
-
-- `id`
-- `projectId`
-- `name`
-- `dueDate`
-- `status`
-- `sample`
-
-### `activities`
-
-Daily update records.
-
-Fields:
-
-- `id`
-- `personId`
-- `date`
-- `time`
-- `yesterday`
-- `today`
-- `blocked`
-- `upcoming`
-- `status`
-- `sample`
-
-### `alerts`
-
-Risk, blocker, overdue, and informational alerts.
-
-Fields:
-
-- `id`
-- `title`
-- `body`
-- `type`
-- `tone`
-- `projectId`
-- `taskId`
-- `resolved`
-- `createdAt`
-- `sample`
-
-### `workLogs`
-
-Evidence ledger used by user activity reports.
-
-Fields:
-
-- `id`
-- `personId`
-- `taskId`
-- `projectId`
-- `action`
-- `statusFrom`
-- `statusTo`
-- `summary`
-- `date`
-- `time`
-- `minutes`
-- `sample`
-- `source`
-
-Rules:
-
-- Task creation, update, and completion write work-log events.
-- Activity submissions write work-log events.
-- Reports use work logs to show exactly which tasks were performed and within which projects.
-
-## Relationship model
-
-```txt
-teams 1 ─── * people
-teams 1 ─── * projects
-people 1 ── * users
-people 1 ── * tasks
-people 1 ── * activities
-people 1 ── * workLogs
-projects 1 ─ * tasks
-projects 1 ─ * milestones
-projects 1 ─ * alerts
-projects 1 ─ * workLogs
-tasks 1 ─── * alerts
-tasks 1 ─── * workLogs
+```text
+meta       { schemaVersion, model, createdAt, updatedAt, writeCount, lastMigrationAt, designSystemVersion, auditAnchor? }
+configured boolean: false only before first-run setup completes
+counters   { task, project }   next numeric ids (never reused)
+settings   workspace configuration (see below); only administrator overrides of translations are stored
+users, teams, people, projects, tasks, milestones, activities, alerts   operational records
+workLogs   the work ledger (append-only facts)
+auditLogs  hash-chained audit trail
 ```
 
-The embedded store does not rely on database-server foreign-key enforcement. Instead, the Node application enforces relationships through route logic, normalization, and `/api/system` integrity checks.
+### Entities
 
-## Persistence flow
+| Entity      | Fields (besides `sample?`, `customFields?`)                                                                                                                                                                                                                                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user`      | `id, name, email, passwordHash, role, personId, avatarColor, active, createdAt, lastLoginAt?, passwordChangedAt?, mustChangePassword?`. Email is unique (case-insensitive, trimmed); a person profile belongs to at most one account.                                                                                                                                       |
+| `team`      | `id, name, color`                                                                                                                                                                                                                                                                                                                                                           |
+| `person`    | `id, name, email, jobTitle, teamId, focus, capacity (0-100), status, color`                                                                                                                                                                                                                                                                                                 |
+| `project`   | `id (number), name, code (unique, 2-10 chars), description, teamId, ownerId, color, status, deadline, createdAt`                                                                                                                                                                                                                                                            |
+| `task`      | `id (number), key, title, projectId, assigneeId, priority, dueDate ('' = none), status, type, blocked, createdAt, createdBy?, completedAt?`. **`key`** (for example `ATL-012`) is frozen at creation, so editing a project code never renames tasks. `status` stores the workflow state's _label_; states are matched by id when the workflow is edited (§ Workflow edits). |
+| `milestone` | `id, name, projectId, dueDate, status`                                                                                                                                                                                                                                                                                                                                      |
+| `activity`  | `id, personId, date, time, yesterday, today, blocked, upcoming, status`                                                                                                                                                                                                                                                                                                     |
+| `alert`     | `id, title, body, type, tone, projectId, taskId, resolved, createdAt`                                                                                                                                                                                                                                                                                                       |
+| `workLog`   | see below                                                                                                                                                                                                                                                                                                                                                                   |
+| `auditLog`  | `id, action, actorId, detail, createdAt, ip?, userAgent?, prev, hash`                                                                                                                                                                                                                                                                                                       |
 
-### Load
+Dates are `YYYY-MM-DD` strings in the **workspace time zone** (`settings.workspace.defaultTimezone`; new workspaces default to
+the host's zone). Timestamps are ISO-8601 UTC.
 
-1. Ensure the data directory exists.
-2. If no store exists, create a production first-run store.
-3. Parse `atlas-store.json`.
-4. If parsing fails, move the corrupt file to a timestamped corrupt-file path and initialize a new first-run store.
-5. Normalize schema, metadata, settings, counters, collections, and users.
-6. Persist normalized data without incrementing the write count.
+### The work ledger (`workLogs`)
 
-### Write
+An append-only record of facts: `Created task`, `Updated task`, `Moved task`, `Completed task`, `Reopened task`, `Assigned task`,
+`Blocked/Unblocked task`, `Deleted task`, `Logged update`, `Raised blocker`. Each row has
+`id, personId (the actor), actorUserId, assigneeId, taskId, projectId, taskKey/taskTitle/projectName (snapshots), action,
+statusFrom, statusTo, summary, date, time, at, source, derived?`.
 
-1. Normalize the in-memory store.
-2. Update metadata, `updatedAt`, and `writeCount`.
-3. Optionally create a backup if `ATLAS_BACKUP_ON_WRITE=true` or a CLI reset/init requested backup.
-4. Write JSON to a process-specific temporary file inside the same data directory.
-5. Rename the temporary file over `atlas-store.json`.
+- It records **who did it** (not who the task belongs to) and **never records effort**. There is no `minutes` field.
+- Rows keep snapshots of the task title and project name, so reports stay readable after a task or project is deleted.
+- `derived: true` rows exist only for data created before ledger rows existed (see migrations): they are built from a task's
+  recorded creation/completion date or an activity's timestamp and carry no invented clock time, status or effort.
+- Reports are computed from this ledger (created/completed per period, activity counts) and from current task records (due
+  dates, open/blocked/overdue now). History therefore does not change when a task is later edited, re-opened or deleted.
 
-The temporary-file + rename pattern prevents partial JSON files from being left behind during ordinary write interruptions on a single filesystem.
+### Settings
 
-## Backup strategy
+`settings` is a tree with one branch per console section: `workspace`, `interface`, `localization`, `modules`, `workflows`,
+`customFields`, `permissions`, `notifications`, `reports`, `exports`, `integrations`, `storage`, `security`, `audit`, plus
+derived legacy flat keys (`language`, `theme`, …) that older clients read. Rules:
 
-Commands:
+- Updates are **RFC 7386 merge patches** (`PUT /api/settings`): objects merge, arrays and scalars replace, `null` removes a key
+  (resetting it to its default). A partial body never resets what it does not mention.
+- Every load and every update runs `normalizeSettings` (`shared/settings.ts`): unknown time zones, themes, page sizes and
+  language codes fall back to safe defaults so a bad value cannot break every route; role names are own-property checked; the
+  Administrator role always keeps `manageSettings` and `manageUsers`.
+- Built-in translations are **not** stored. Only entries that differ from the built-in catalog are persisted, so the store does
+  not grow by ~100 KB the first time an administrator saves.
+- Settings that are stored but not read by any code are listed in `src/lib/settings-status.ts` and shown as "Not applied yet".
 
-```bash
-npm run backup:data
-```
+## Relationships and delete semantics
 
-Backup location:
+References are checked on write (`400` for a missing project/person/team, `409` for duplicates).
 
-```txt
-data/backups/atlas-store-<timestamp>-manual.json
-```
+| Delete         | Behaviour                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| project        | `409 HAS_DEPENDENTS` (with counts) while it has tasks, milestones or alerts. `?cascade=true` removes them too, after taking a **pre-delete-project** backup. |
+| person         | Refused while they have a sign-in account. Otherwise their tasks become unassigned, projects lose the owner; ledger rows remain ("Former member").           |
+| team           | Refused while people or projects belong to it.                                                                                                               |
+| task           | Recorded in the ledger (`Deleted task`); alerts that referenced it lose the reference.                                                                       |
+| user           | Their sessions end immediately; the last active administrator cannot be deleted, demoted or disabled.                                                        |
+| workflow state | Refused while tasks use it. A _renamed_ state (same id, new label) carries its tasks and transitions along.                                                  |
 
-Retention:
+## Persistence
 
-- Default: 25 backup files.
-- Configure with `ATLAS_BACKUP_RETENTION=<number>`.
-- Minimum enforced retention is 3; maximum is 100.
+**Load** (`DocumentStore.open`): create the directory (0700) → acquire `atlas.lock` → read and parse → refuse if the schema is
+newer than this build understands → run pending migrations (after a **pre-migration** backup of the untouched file) →
+`normalizeState` (structure only: missing collections, counters, defaults) → write back only if something changed.
+A missing file creates an empty, unconfigured workspace **unless** backups exist, which stops with an error (an empty
+workspace would reopen first-run setup).
 
-Optional per-write backups:
+**Write** (`commit(fn, {backupFirst?})`): `fn` mutates the in-memory state and appends its ledger/audit rows; then the state is
+serialised, written to a temp file in the same directory, `fsync`ed, renamed over the store, and the directory is `fsync`ed.
+Contract for `fn`: perform every check that can fail (`HttpError`) **before** the first mutation. An `HttpError` is assumed to
+leave the state untouched; any other error and any failed write restores the last persisted state from its serialised
+snapshot. There is no `await` between reading and writing state, so within one process writes are serialised.
 
-```bash
-ATLAS_BACKUP_ON_WRITE=true npm run start
-```
+Other behaviour: a daily snapshot is taken before the first write of a day; with `ATLAS_BACKUP_ON_WRITE=true` before every
+write; `meta.writeCount` doubles as the **revision** clients poll (`GET /api/revision`); expensive diagnostics (checksum,
+integrity, audit-chain) are memoised per revision; every 6 hours housekeeping prunes expired audit entries (and ledger rows if
+`audit.workLogRetentionDays` is set).
 
-Use per-write backups for sensitive rollout periods, migrations, and high-risk administrative work. For normal desktop operation, scheduled/manual backups are usually sufficient.
+## Migrations
 
-## Restore procedure
+| To      | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `3.1.0` | Removes ledger rows named `wl_seed_*`/`wl_activity_*` (synthesised by older versions for tasks/activities that had no events, with made-up times and effort) and strips `minutes` from the remaining rows (fixed constants per action, never measured); adds `source`; freezes `task.key`; derives one `Created`/`Completed` ledger row per task and one row per activity from recorded dates (`derived: true`); resets role ranks to Viewer 1 … Administrator 4 (older stores recorded them inverted); drops frozen copies of the built-in translation catalog. Idempotent; covered by `tests/server/store.test.ts` using a real 3.0.0 store (`tests/fixtures/store-3.0.0.json`). |
 
-1. Stop Atlas.
-2. Copy the chosen backup file over the active data file.
-3. Restart Atlas.
-4. Sign in as an administrator.
-5. Open Settings → System store and confirm integrity is `ok` or review warnings.
+New migrations go in `MIGRATIONS` (`server/migrations.ts`), bump `STORE_SCHEMA_VERSION` in `shared/settings.ts`, and need a
+fixture-based test. Downgrades are not supported.
 
-Example:
+## Integrity
 
-```bash
-cp data/backups/atlas-store-2026-10-02T05-00-00-000Z-manual.json data/atlas-store.json
-npm run start
-```
+`npm run check:data` and `GET /api/system` report: collections are arrays; settings branches and workflow exist; the
+Administrator role keeps `manageSettings`; duplicate ids, emails and project codes (errors); references to missing teams,
+people, projects, tasks, and person profiles shared between accounts (warnings); legacy plain-text password fields (error); the
+audit chain (`ok`, entries checked, first broken entry).
 
-## Migrations and schema evolution
+## Backups and restore
 
-Schema migration is centralized in `normalizeStore()`.
+See `PRODUCTION.md` §6. In short: verified copies, retention per kind, `restore:data` validates the candidate first and keeps
+the replaced file as a `pre-restore` backup; a damaged store is never replaced automatically.
 
-Migration rules:
+## Standards for future changes
 
-- New collections must be initialized as arrays.
-- New settings must be added through `defaultSettings()`.
-- User secrets must be normalized so legacy plain-text `password` fields become `passwordHash` and are removed.
-- Counters must be recalculated to exceed existing numeric project/task ids.
-- `meta.schemaVersion` must update when persisted shape changes.
-- Documentation must be updated in this file and the API/functionality references.
-
-## Integrity checks
-
-Administrators can inspect `/api/system`, which reports:
-
-- `integrity`: `ok`, `warning`, or `attention`.
-- `errors`: critical persistence problems.
-- `warnings`: relationship or migration concerns.
-- `checksum`: SHA-256 checksum of the current normalized store payload.
-- `store`: file name, store model, schema version, metadata, recent backups, backup count, sample rows, live people.
-- `counts`: collection counts.
-
-Current validations include:
-
-- Collection type checks.
-- Schema version check.
-- Duplicate user emails.
-- Duplicate people, project, and task ids.
-- Plain-text password detection.
-- Missing team references.
-- Missing user/person profile references.
-- Missing project owner references.
-- Missing task project/assignee references.
-- Missing milestone project references.
-- Missing alert project/task references.
-
-## Database design standards for future work
-
-Any future data change must follow these standards:
-
-- Define the entity and relationships before coding UI.
-- Add defaults to `defaultSettings()` or `productionStore()` as appropriate.
-- Normalize legacy/missing fields in `normalizeStore()`.
-- Validate references in `validateStoreState()`.
-- Use atomic `persist()` for writes.
-- Never expose password hashes through public API responses.
-- Update documentation and API references.
-- Add smoke tests for create, update, delete, report, export, and permission behavior.
-
+1. Validate at the boundary (`server/schemas.ts`); never persist unvalidated input.
+2. Checks before mutation; mutation, ledger row and audit row in the same `commit`.
+3. Record facts in the ledger; do not store derived or estimated numbers as if they were measurements.
+4. Migrations are idempotent, preceded by a backup, and tested against a fixture.
+5. No new setting without code that reads it (or an entry in `settings-status.ts`).

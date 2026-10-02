@@ -1,5 +1,11 @@
 # Atlas Workspace UI Refinement Report
 
+> **Historical record.** This is a point-in-time report written against an earlier version of Atlas. It is kept for context
+> only and is **superseded** by [`PRODUCTION.md`](../../PRODUCTION.md), [`SECURITY.md`](../SECURITY.md),
+> [`DATABASE_ARCHITECTURE.md`](../DATABASE_ARCHITECTURE.md) and [`API_REFERENCE.md`](../API_REFERENCE.md). Claims about validation,
+> security, translation coverage or "live" behaviour below describe that earlier version and were not true of every code path
+> (see [`AUDIT_REPORT_2026-10-02.md`](../AUDIT_REPORT_2026-10-02.md)).
+
 ## Scope
 
 Refined the existing Atlas Workspace application in place. The goal was not to remove functionality, but to reduce visual clutter, improve information hierarchy, make Settings easier to administer, and keep the interface usable for daily organizational work in both LTR and RTL contexts.

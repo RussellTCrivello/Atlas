@@ -1,5 +1,12 @@
 # Atlas Workspace Complete Manual
 
+> **Partly out of date.** Written before the remediation release (store schema 3.1.0). Where it disagrees with
+> [`PRODUCTION.md`](../PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`API_REFERENCE.md`](API_REFERENCE.md) or
+> [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), those win. Known differences: effort **minutes no longer exist** (the old
+> figures were fixed constants, not measurements); setup requires a one-time token; the interface localiser never rewrites
+> user-entered data and each person can choose a language and theme for themselves; settings labelled "Not applied yet" are stored
+> but do nothing; workspace data is no longer sent in full to every role.
+
 ## 1. Product definition
 
 Atlas Workspace is a production-oriented, local-first operations application. It combines project management, task workflow, people/team context, daily activity, alerts, reporting, export/print, settings, access control, and desktop deployment in one Node.js/TSX application.
@@ -68,18 +75,18 @@ Only use this for development and demos. Production should use `npm run init:pro
 
 ## 8. Core scripts
 
-| Script | Description |
-| --- | --- |
-| `npm run app` | Start single app in development. |
-| `npm run build` | Build web assets and bundled server. |
-| `npm run start` | Run production server from `dist-desktop/app.mjs`. |
-| `npm run preview` | Build then start production server. |
-| `npm run init:production` | Reset data to production first-run. |
-| `npm run reset:data` | Reset to development demo data. |
-| `npm run backup:data` | Create data-store backup. |
-| `npm run desktop` | Build and launch Electron. |
-| `npm run desktop:dir` | Build unpacked desktop app. |
-| `npm run desktop:pack` | Build desktop packages/installers. |
+| Script                    | Description                                        |
+| ------------------------- | -------------------------------------------------- |
+| `npm run app`             | Start single app in development.                   |
+| `npm run build`           | Build web assets and bundled server.               |
+| `npm run start`           | Run production server from `dist-desktop/app.mjs`. |
+| `npm run preview`         | Build then start production server.                |
+| `npm run init:production` | Reset data to production first-run.                |
+| `npm run reset:data`      | Reset to development demo data.                    |
+| `npm run backup:data`     | Create data-store backup.                          |
+| `npm run desktop`         | Build and launch Electron.                         |
+| `npm run desktop:dir`     | Build unpacked desktop app.                        |
+| `npm run desktop:pack`    | Build desktop packages/installers.                 |
 
 ## 9. Environment variables
 
@@ -157,12 +164,12 @@ Roles map to permission lists. Backend route middleware enforces permissions bef
 
 ## 14. Roles
 
-| Role | Typical use |
-| --- | --- |
-| Administrator | Workspace owner, access control, settings, all data. |
-| Manager | Operational management, projects, people, tasks, alerts, reports. |
-| Developer | Own work, task movement, activity updates, reports/exports. |
-| Viewer | Read-only reporting and exports. |
+| Role          | Typical use                                                       |
+| ------------- | ----------------------------------------------------------------- |
+| Administrator | Workspace owner, access control, settings, all data.              |
+| Manager       | Operational management, projects, people, tasks, alerts, reports. |
+| Developer     | Own work, task movement, activity updates, reports/exports.       |
+| Viewer        | Read-only reporting and exports.                                  |
 
 ## 15. Screens
 
@@ -235,7 +242,6 @@ Each activity report row includes:
 - action
 - status movement
 - summary
-- minutes
 - source
 - date/time
 
@@ -354,7 +360,6 @@ Production smoke test:
 - Development: [Developer Guide](DEVELOPMENT.md)
 - Build/deploy: [Build and Deployment](BUILD_AND_DEPLOYMENT.md)
 - Operations: [Operations Runbook](OPERATIONS_RUNBOOK.md)
-
 
 ## 24. Configurable platform administration
 
