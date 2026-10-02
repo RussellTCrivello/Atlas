@@ -113,4 +113,4 @@ docs/              reference documentation; docs/history/ holds superseded point
 
 [`docs/README.md`](docs/README.md) is the index. Start with [`PRODUCTION.md`](PRODUCTION.md) (operators),
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) (contributors) and [`docs/SECURITY.md`](docs/SECURITY.md).
-Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
+Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Changes: [`CHANGELOG.md`](CHANGELOG.md). What was done about each audit finding, and how it was verified: [`docs/REMEDIATION_REPORT_2026-10-02.md`](docs/REMEDIATION_REPORT_2026-10-02.md).

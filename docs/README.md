@@ -2,14 +2,14 @@
 
 Start here:
 
-| You are…                                 | Read                                                                                                                               |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Installing or running a server           | [`../PRODUCTION.md`](../PRODUCTION.md), then [`OPERATIONS_RUNBOOK.md`](OPERATIONS_RUNBOOK.md)                                      |
-| Reviewing security                       | [`SECURITY.md`](SECURITY.md)                                                                                                       |
-| Contributing code                        | [`DEVELOPMENT.md`](DEVELOPMENT.md), [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), [`API_REFERENCE.md`](API_REFERENCE.md) |
-| Building releases and desktop installers | [`BUILD_AND_DEPLOYMENT.md`](BUILD_AND_DEPLOYMENT.md)                                                                               |
-| Deciding what to build or change next    | [`DECISIONS_AND_OPEN_QUESTIONS.md`](DECISIONS_AND_OPEN_QUESTIONS.md)                                                               |
-| Wanting the history of this release      | [`../CHANGELOG.md`](../CHANGELOG.md), [`AUDIT_REPORT_2026-10-02.md`](AUDIT_REPORT_2026-10-02.md)                                   |
+| You are…                                 | Read                                                                                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Installing or running a server           | [`../PRODUCTION.md`](../PRODUCTION.md), then [`OPERATIONS_RUNBOOK.md`](OPERATIONS_RUNBOOK.md)                                                                            |
+| Reviewing security                       | [`SECURITY.md`](SECURITY.md)                                                                                                                                             |
+| Contributing code                        | [`DEVELOPMENT.md`](DEVELOPMENT.md), [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), [`API_REFERENCE.md`](API_REFERENCE.md)                                       |
+| Building releases and desktop installers | [`BUILD_AND_DEPLOYMENT.md`](BUILD_AND_DEPLOYMENT.md)                                                                                                                     |
+| Deciding what to build or change next    | [`DECISIONS_AND_OPEN_QUESTIONS.md`](DECISIONS_AND_OPEN_QUESTIONS.md)                                                                                                     |
+| Wanting the history of this release      | [`../CHANGELOG.md`](../CHANGELOG.md), [`AUDIT_REPORT_2026-10-02.md`](AUDIT_REPORT_2026-10-02.md), [`REMEDIATION_REPORT_2026-10-02.md`](REMEDIATION_REPORT_2026-10-02.md) |
 
 ## Reference (partly out of date, see the note at the top of each)
 
