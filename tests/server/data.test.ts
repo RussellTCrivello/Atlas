@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
 import { bucketFor } from '../../server/reports'
 import { addDays } from '../../server/util'
-import { Api, type TestServer, launch, makeUser, setupAdmin } from '../helpers/server'
+import { Api, type TestServer, launch, makeUser, setupAdmin, sleep } from '../helpers/server'
 
 let server: TestServer
 let admin: Api
@@ -367,7 +367,40 @@ describe('ledger and reports are honest (DATA-04, REP-01..03)', () => {
   })
 })
 
-describe('malformed stored data cannot take the server down (VAL-04)', () => {
+describe('authorisation fails closed (VAL-04)', () => {
+  const auditCount = () => server.db.state.auditLogs.filter(entry => entry.action === 'alert.updated').length
+
+  test('an empty or partial alert patch is no way past authorisation, and a refused request leaves no audit entry', async () => {
+    const alert = (await manager.api.post('/api/alerts', { title: 'Check the build', projectId: project.numericId }))
+      .body
+    const before = auditCount()
+    for (const body of [{}, { resolved: true }, { resolved: 'yes' }, { title: 'Renamed by a reader' }])
+      assert.equal(
+        (await viewer.api.patch(`/api/alerts/${alert.id}`, body)).status,
+        403,
+        `a Viewer sending ${JSON.stringify(body)}`
+      )
+    assert.equal(auditCount(), before, 'nothing was recorded as an alert update')
+    const denied = () =>
+      server.db.state.auditLogs.some(
+        entry => entry.action === 'access.denied' && String((entry.detail as any)?.path).includes(alert.id)
+      )
+    for (let i = 0; i < 20 && !denied(); i++) await sleep(250) // denials are written to the audit trail in batches
+    assert.ok(denied(), 'the refusals are audited as denials instead')
+  })
+
+  test('people who may write tasks can resolve an alert but not edit it; an empty patch is a 400 for everyone', async () => {
+    const alert = (await manager.api.post('/api/alerts', { title: 'Needs a look', projectId: project.numericId })).body
+    assert.equal((await developer.api.patch(`/api/alerts/${alert.id}`, { resolved: true })).status, 200)
+    assert.equal((await developer.api.patch(`/api/alerts/${alert.id}`, { title: 'Hijacked' })).status, 403)
+    assert.equal((await manager.api.patch(`/api/alerts/${alert.id}`, { title: 'Edited by a manager' })).status, 200)
+    for (const who of [developer.api, manager.api])
+      assert.equal((await who.patch(`/api/alerts/${alert.id}`, {})).status, 400, 'nothing to update')
+    assert.equal((await manager.api.patch(`/api/alerts/${alert.id}`, { resolved: 'yes' })).status, 400)
+  })
+})
+
+describe('malformed stored data cannot take the server down (VAL-01)', () => {
   test('a task with a garbage due date still lists and renders', async () => {
     const task = await makeTask({ title: 'Will be damaged' })
     const stored = server.db.state.tasks.find(t => t.id === task.numericId)!

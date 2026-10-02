@@ -203,6 +203,11 @@ describe('authorization and data exposure (SEC-07)', () => {
     const devPerson = people.find((p: any) => p.name === 'Dev Dana').id
     const peek = await developer.api.get(`/api/reports/activity/weekly?userId=${manPerson}`)
     assert.equal(peek.status, 403)
+    // VAL-03: an id that does not exist is a 404 for people who may look, and gives restricted callers nothing to probe
+    assert.equal((await manager.api.get('/api/reports/activity/weekly?userId=person_nope')).status, 404)
+    assert.equal((await developer.api.get('/api/reports/activity/weekly?userId=person_nope')).status, 403)
+    assert.equal((await manager.api.get('/api/reports/activity/bogus?userId=all')).status, 400)
+    assert.equal((await manager.api.get('/api/reports/bogus')).status, 400)
     const mine = await developer.api.get('/api/reports/activity/weekly?userId=all')
     assert.equal(mine.status, 200)
     assert.equal(mine.body.restricted, true)
@@ -215,7 +220,7 @@ describe('authorization and data exposure (SEC-07)', () => {
   })
 })
 
-describe('user administration guards (SEC-06, SEC-08, SEC-09)', () => {
+describe('user administration guards (SEC-06, VAL-01, MIN-05)', () => {
   let server: TestServer
   let admin: Api
   before(async () => {
@@ -240,7 +245,7 @@ describe('user administration guards (SEC-06, SEC-08, SEC-09)', () => {
     assert.equal((await second.api.put(`/api/users/${me.id}`, { role: 'Administrator' })).status, 200)
   })
 
-  test('duplicate emails are refused on update and on create, case-insensitively (SEC-08)', async () => {
+  test('duplicate emails are refused on update and on create, case-insensitively (SEC-06)', async () => {
     const a = await makeUser(server, admin, 'Viewer', 'Mail A')
     await makeUser(server, admin, 'Viewer', 'Mail B')
     assert.equal((await admin.put(`/api/users/${a.user.id}`, { email: 'MAIL.B@example.com' })).status, 409)
@@ -302,7 +307,7 @@ describe('user administration guards (SEC-06, SEC-08, SEC-09)', () => {
     )
   })
 
-  test('role names that exist on Object.prototype are not roles (SEC-09 / MIN-05)', async () => {
+  test('role names that exist on Object.prototype are not roles (VAL-01 / MIN-05)', async () => {
     for (const role of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
       assert.equal(
         (await admin.post('/api/users', { name: 'Proto', email: `${role}@example.com`, password: PASSWORD, role }))

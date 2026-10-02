@@ -118,7 +118,7 @@ describe('the localiser never rewrites user data (UX-03)', () => {
   })
 })
 
-describe('exports (SEC-12, UX-01, export permission)', () => {
+describe('exports (SEC-07, SEC-08, UX-01)', () => {
   const exportCsv = async (ui: BootedUI, title?: string) => {
     ui.click('.export-wrap > button')
     await ui.settle(100)

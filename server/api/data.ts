@@ -124,7 +124,7 @@ function applyStatus(state: StoreState, user: User, task: Task, status: string) 
 // ---- routes --------------------------------------------------------------------------------------------------------
 export function registerDataRoutes(app: Express, deps: Deps) {
   const { db } = deps
-  const need = (permission: string, message?: string) => requirePermission(deps, permission, message)
+  const need = (permission: string | string[], message?: string) => requirePermission(deps, permission, message)
 
   // ============================== tasks ==============================
   app.post(
@@ -808,20 +808,17 @@ export function registerDataRoutes(app: Express, deps: Deps) {
 
   app.patch(
     '/api/alerts/:id',
+    // The baseline permission is checked before the body is looked at (VAL-04): an empty or partial patch must not be
+    // a way past authorisation. Editing the alert's content additionally needs manageAlerts; resolving needs only this.
+    need(['writeTasks', 'manageAlerts'], 'Task write access is required to update alerts'),
     handler((req, res) => {
       const user = userOf(req)
       const settings = db.state.settings
       const body = parse(alertPatchSchema, req.body)
+      if (!Object.keys(body).length) throw badRequest('Nothing to update')
       const editKeys = Object.keys(body).filter(key => key !== 'resolved')
       if (editKeys.length && !can(settings, user, 'manageAlerts'))
         throw forbidden('Manager or administrator access required to edit alerts')
-      if (
-        !editKeys.length &&
-        body.resolved !== undefined &&
-        !can(settings, user, 'writeTasks') &&
-        !can(settings, user, 'manageAlerts')
-      )
-        throw forbidden('Task write access required to resolve alerts')
       if (!db.state.alerts.some(alert => alert.id === req.params.id)) throw notFound('Alert not found')
       if (body.projectId !== undefined || body.taskId !== undefined) alertRefs(db.state, body)
       const updated = db.commit(

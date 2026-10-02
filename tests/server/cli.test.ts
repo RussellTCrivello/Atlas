@@ -56,7 +56,7 @@ describe('operations commands report mistyped settings (DATA-03)', () => {
   })
 })
 
-describe('demo data is gated (SEC-02/SEC-09)', () => {
+describe('demo data is gated (SEC-09)', () => {
   test('--reset-data is refused in production and without the explicit flag', async () => {
     const dir = mkdir()
     await assert.rejects(

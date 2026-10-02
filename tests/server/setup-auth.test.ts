@@ -316,7 +316,7 @@ describe('login throttling (SEC-04)', () => {
   })
 })
 
-describe('password hashing and policy', () => {
+describe('password hashing and policy (SEC-11)', () => {
   test('hashes carry their parameters, verify, and legacy hashes upgrade', async () => {
     const hash = await hashPassword('Some-Long-Passphrase-1')
     assert.match(hash, /^scrypt\$131072\$8\$1\$[0-9a-f]{32}\$[0-9a-f]{128}$/)
@@ -328,6 +328,8 @@ describe('password hashing and policy', () => {
     const legacy = `scrypt$${salt}$${scryptSync('legacy-pass-123', salt, 64).toString('hex')}`
     assert.deepEqual(await verifyPassword('legacy-pass-123', legacy), { ok: true, needsRehash: true })
     assert.equal((await verifyPassword('legacy-pass-124', legacy)).ok, false)
+    // the old code compared non-scrypt stored values as plaintext
+    assert.deepEqual(await verifyPassword('plain-text', 'plain-text'), { ok: false, needsRehash: false })
   })
 
   test('policy: length, maximum, common passwords, own email', () => {

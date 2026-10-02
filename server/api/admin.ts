@@ -122,7 +122,7 @@ function applyRenames(state: StoreState, renames: Map<string, string>) {
 
 export function registerAdminRoutes(app: Express, deps: Deps) {
   const { db, sessions } = deps
-  const need = (permission: string, message?: string) => requirePermission(deps, permission, message)
+  const need = (permission: string | string[], message?: string) => requirePermission(deps, permission, message)
   const settingsOf = () => db.state.settings
 
   // ============================== read endpoints ==============================
@@ -143,6 +143,9 @@ export function registerAdminRoutes(app: Express, deps: Deps) {
         throw forbidden('You can only view your own activity. Ask a manager for team reports.')
       scope = { onlyPersonId: user.personId || '__none__', label: 'Your activity' }
     }
+    // Checked after the visibility rule, so a restricted caller cannot probe which person ids exist (VAL-03).
+    if (requested !== 'all' && !db.state.people.some(person => person.id === requested))
+      throw notFound('Person not found')
     if (settings.audit?.trackReads)
       deps.audit.push('report.viewed', auditContext(req), { report: 'activity', period, userId: requested })
     const limit = Math.min(5000, Math.max(1, Math.trunc(Number(req.query.limit)) || 500))

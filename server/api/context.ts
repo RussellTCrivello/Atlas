@@ -116,19 +116,20 @@ export class MissingKeyLog {
   }
 }
 
-/** Require a permission; denials are recorded in the audit trail. */
+/** Require a permission (or any one of several); denials are recorded in the audit trail. */
 export function requirePermission(
   deps: Deps,
-  permission: string,
+  permission: string | string[],
   message = 'You do not have permission to complete this action'
 ): RequestHandler {
+  const anyOf = Array.isArray(permission) ? permission : [permission]
   return (req, _res, next) => {
     const user = userOf(req)
-    if (!can(deps.db.state.settings, user, permission)) {
+    if (!anyOf.some(candidate => can(deps.db.state.settings, user, candidate))) {
       deps.audit.push('access.denied', auditContext(req), {
         method: req.method,
         path: truncate(req.originalUrl.split('?')[0], 160),
-        permission
+        permission: anyOf.join(' | ')
       })
       return next(new HttpError(403, message, 'FORBIDDEN'))
     }

@@ -41,11 +41,11 @@ Decisions that the repository cannot answer are in [`docs/DECISIONS_AND_OPEN_QUE
 - Server-side sessions: 256-bit tokens (hashed at rest), persisted, expiring (`sessionDays`), revocable, new token per sign-in;
   password change, reset, disable and delete end sessions (SEC-05).
 - Password policy (length, deny-list), change-password endpoint and screen, sign-out everywhere, CLI reset for locked-out
-  administrators (SEC-06, SEC-08, SEC-09).
+  administrators (SEC-06, SEC-11).
 - Role-scoped `/api/bootstrap`, ownership rules for task edits, activity attribution, rank checks and a last-administrator guard,
-  unique emails and person links, own-property role lookups (SEC-07, SEC-08, SEC-09, MIN-05).
+  unique emails and person links, own-property role lookups (SEC-06, SEC-07, VAL-01, MIN-05).
 - Security headers, strict CSP, Host and Origin checks, JSON errors and 404s, compression, `Cache-Control` (SEC-10, MIN-02).
-- CSV formula injection neutralised; export permission enforced and audited server-side (SEC-12).
+- CSV formula injection neutralised; export permission enforced and audited server-side (SEC-07, SEC-08).
 - Hash-chained audit trail with actor/IP/user agent, failed sign-ins and denials recorded, viewer in Settings (SEC-13).
 
 ### Data integrity

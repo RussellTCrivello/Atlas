@@ -276,6 +276,17 @@ describe('audit replay against the production bundle', { skip }, () => {
     assert.equal((await manager.api.get('/api/reports/weekly')).status, 200)
   })
 
+  test('VAL-03 / VAL-04 · alert patches fail closed, and unknown report parameters are errors', async () => {
+    const alert = (await manager.api.post('/api/alerts', { title: 'Check the build', projectId: project.numericId }))
+      .body
+    assert.equal((await viewer.api.patch(`/api/alerts/${alert.id}`, {})).status, 403, 'a Viewer with an empty body')
+    assert.equal((await viewer.api.patch(`/api/alerts/${alert.id}`, { resolved: true })).status, 403)
+    assert.equal((await manager.api.patch(`/api/alerts/${alert.id}`, {})).status, 400, 'nothing to update')
+    assert.equal((await manager.api.get('/api/reports/activity/weekly?userId=person_nope')).status, 404)
+    assert.equal((await manager.api.get('/api/reports/bogus')).status, 400)
+    assert.equal((await manager.api.get('/api/reports/activity/bogus')).status, 400)
+  })
+
   test('DATA-03 · a mistyped ATLAS_BACKUP_RETENTION no longer deletes the backups, and the command says so', async () => {
     const count = () =>
       runCli(dir, ['--list-backups'])

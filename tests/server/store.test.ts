@@ -35,7 +35,7 @@ const cfg = (dataDir: string, env: Record<string, string> = {}) =>
   } as NodeJS.ProcessEnv)
 after(() => temp.forEach(dir => fs.rmSync(dir, { recursive: true, force: true })))
 
-describe('migration from the v3.0.0 store written by the original build (DATA-04, REP-02)', () => {
+describe('migration from the v3.0.0 store written by the original build (DATA-04, DATA-06, REP-02)', () => {
   const prepare = () => {
     const dir = mkdir()
     const raw = JSON.parse(fs.readFileSync(fixture, 'utf8'))
@@ -191,7 +191,7 @@ describe('fail closed (DATA-01)', () => {
   })
 })
 
-describe('single writer lock (DATA-06)', () => {
+describe('single writer lock (DATA-02, DESK-01)', () => {
   test('a second process (or instance) cannot open the same data directory', () => {
     const dir = mkdir()
     const first = DocumentStore.open(cfg(dir))

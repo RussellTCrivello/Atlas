@@ -15,7 +15,7 @@ before(async () => {
 after(() => server.cleanup())
 const settings = async () => (await admin.get('/api/bootstrap')).body.settings
 
-describe('settings updates (VAL-03, VAL-04, UX-07)', () => {
+describe('settings updates (VAL-01, VAL-03, UX-07, MIN-05)', () => {
   test('an invalid time zone is rejected up front', async () => {
     const res = await admin.put('/api/settings', { workspace: { defaultTimezone: 'Mars/Olympus' } })
     assert.equal(res.status, 400)
@@ -211,7 +211,7 @@ describe('settings updates (VAL-03, VAL-04, UX-07)', () => {
   })
 })
 
-describe('safe mode: damaged stored settings cannot break the server (VAL-04)', () => {
+describe('safe mode: damaged stored settings cannot break the server (VAL-01)', () => {
   test('an invalid stored time zone, theme and page size fall back to defaults instead of failing every request', async () => {
     const dir = fs.mkdtempSync(path.join(server.dataDir, 'damaged-'))
     const fresh = await launch({ dataDir: dir, keep: true })
