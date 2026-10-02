@@ -21,22 +21,22 @@
     "backup:data": "tsx app.tsx --backup-data"
   },
   "dependencies": {
-    "cookie-parser": "latest",
-    "express": "latest"
+    "cookie-parser": "1.4.7",
+    "express": "5.2.1"
   },
   "main": "electron/main.cjs",
   "devDependencies": {
-    "electron": "^44.5.1",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.2",
-    "@vitejs/plugin-react": "latest",
-    "fflate": "latest",
-    "jspdf": "latest",
-    "jspdf-autotable": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "tsx": "^4.23.15",
-    "vite": "latest"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "@vitejs/plugin-react": "6.1.1",
+    "fflate": "0.8.3",
+    "jspdf": "4.2.1",
+    "jspdf-autotable": "5.0.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tsx": "4.23.15",
+    "vite": "8.3.2"
   },
   "build": {
     "appId": "ai.arena.atlasworkspace",
@@ -81,6 +81,6 @@
   },
   "author": "Atlas Workspace Team",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   }
 }

@@ -2,417 +2,163 @@
 
 ## Architecture summary
 
-Atlas uses an embedded local document database stored as JSON. This fits the product's local-first desktop/web architecture: one Node.js process owns the API, interface, data store, export/report generation, and Electron integration.
+Atlas uses an embedded relational SQLite database for **all runtime persistence**. The application is one Node.js process with an in-memory workspace view, but every persisted application change is committed to SQLite; JSON is only used for explicit import/export formats and a one-time legacy-store import.
 
-Current model:
-
-- Store file: `data/atlas-store.json` in web/local development.
-- Desktop store: Electron `userData/data/atlas-store.json`.
-- Store model: `embedded-json-document-store`.
-- Schema version: `3.0.0`.
-- Persistence: atomic temporary-file write followed by rename.
-- Normalization: every load normalizes collections, settings, counters, users, and schema metadata.
-- Integrity: `/api/system` validates relationships and reports errors/warnings to administrators.
-- Backup support: `npm run backup:data` creates a timestamped snapshot under `data/backups`.
-- Production default: first-run setup, zero sample records, zero users, no demo credentials.
-
-## Why this model
-
-Atlas is designed as a single local-first operations application rather than separate client/server services. For the intended desktop and local deployment model, an embedded document store provides:
-
-- Simple installation with no external database server.
-- Portable backups and restores.
-- Offline operation.
-- Easy Electron packaging.
-- Direct control over schema migrations and integrity checks.
-
-For centralized, high-concurrency, multi-node deployments, the repository boundaries documented here should be adapted to SQLite/PostgreSQL. The UI and API contracts should remain stable while persistence implementation changes behind the data layer.
-
-## Data file layout
-
-The root store has this shape:
-
-```json
-{
-  "meta": {
-    "schemaVersion": "3.0.0",
-    "model": "embedded-json-document-store",
-    "createdAt": "ISO timestamp",
-    "updatedAt": "ISO timestamp",
-    "writeCount": 0,
-    "lastMigrationAt": "ISO timestamp",
-    "designSystemVersion": "1.0.0",
-    "atomicPersistence": true,
-    "backupRetention": 25
-  },
-  "configured": false,
-  "counters": { "project": 1, "task": 1 },
-  "settings": {},
-  "users": [],
-  "teams": [],
-  "people": [],
-  "projects": [],
-  "tasks": [],
-  "milestones": [],
-  "activities": [],
-  "alerts": [],
-  "workLogs": []
-}
-```
-
-## Metadata fields
-
-| Field | Purpose |
+| Concern | Implementation |
 | --- | --- |
-| `schemaVersion` | Current persisted schema. Used for migration and compatibility checks. |
-| `model` | Identifies the storage model in runtime/system APIs. |
-| `createdAt` | Store creation timestamp. |
-| `updatedAt` | Most recent persisted write timestamp. |
-| `writeCount` | Incremented on persisted writes. Useful for support and diagnostics. |
-| `lastMigrationAt` | Last schema normalization/migration timestamp. |
-| `designSystemVersion` | Indicates which interface design standard the store was normalized against. |
-| `atomicPersistence` | Confirms temp-file + rename persistence is active. |
-| `backupRetention` | Number of backup snapshots to retain. Configurable with `ATLAS_BACKUP_RETENTION`. |
-
-## Entities
-
-### `settings`
-
-Versioned platform configuration. Settings are administered from the front-end Settings interface and normalized on load/save.
+| Runtime engine | SQLite through Node's built-in `node:sqlite` / `DatabaseSync` |
+| Web/local database | `<ATLAS_DATA_DIR>/atlas.sqlite`, default `data/atlas.sqlite` |
+| Electron database | `<userData>/data/atlas.sqlite` |
+| Physical database schema | `PRAGMA user_version = 1`, managed in `src/server/database/schema.js` |
+| Domain data version | `STORE_SCHEMA_VERSION = 4.0.0`, normalized by `src/server/domain/store.js` |
+| Write model | In-memory workspace snapshot persisted transactionally across relational tables |
+| Backups | Standalone SQLite snapshots created with `VACUUM INTO` under `data/backups/` |
+| Legacy source | `atlas-store.json` is read once only when no SQLite snapshot exists; archived after successful import |
 
-Primary branches:
+Atlas does not connect to an external database service. Keep one application process per data directory: SQLite protects each database transaction, but separate Atlas processes keep independent in-memory snapshots and could overwrite newer state with stale snapshots.
 
-- `workspace` — name, logo, branding, organization, timezone, language, regional formats, working days/hours, holidays.
-- `interface` — theme, colors, density, spacing, typography, sidebar, navigation visibility, dashboard layout, tables, cards, motion, accessibility.
-- `localization` — active languages, fallback language, translations, language packages, date/number/currency/timezone formats, text direction, approval workflow.
-- `modules` — enabled modules, labels, icons, permissions, navigation metadata.
-- `workflows` — task states, transitions, approval steps, automated actions.
-- `customFields` — configurable fields for projects, tasks, people, teams, activities, alerts, reports.
-- `permissions` — roles, module access, field access, action access, export/report permissions.
-- `notifications` — notification channels and event flags.
-- `reports` — templates, custom columns, filters, calculations, localized output, branding.
-- `exports` — enabled formats and language/direction/branding behavior.
-- `integrations` — integration registry and future webhook/API metadata.
-- `storage` — model, schema, backup/import/export settings.
-- `security` — password/session/demo/security policy settings.
-- `audit` — audit enablement, tracked events, retention.
-
-Backward-compatible flat fields such as `workspaceName`, `language`, `theme`, `enabledPages`, and `pageSize` are still generated by normalization for older UI surfaces.
-
-### `users`
+## Runtime and driver compatibility
 
-Login/access records.
-
-Important fields:
+`node:sqlite` is available without an extra runtime flag beginning with Node 22.13.0, so the package now requires Node `>=22.13.0`. It remains experimental in Node 22 and a release candidate in Node 24; a warning on Node 22 is expected. Electron 44.5.1 release metadata reports bundled Node 24.21.0, which includes `node:sqlite` ([Electron release metadata](https://releases.electronjs.org/release/v44.5.1), [Node SQLite API](https://nodejs.org/api/sqlite.html)). The Electron binary could not be downloaded in the audit environment, so a packaged app launch against SQLite is still a release check, not a completed runtime test.
 
-- `id`
-- `name`
-- `email`
-- `passwordHash`
-- `role`
-- `personId`
-- `avatarColor`
-- `active`
-- `createdAt`
-- `lastLoginAt`
-- `sample`
+`DatabaseSync` runs statements synchronously on the event loop. The present workload is suitable for the local/single-process operating model; large writes or high concurrency may block request handling. Reassess a different driver/deployment architecture before high-volume or multi-instance use.
 
-Rules:
+## Source layout
 
-- Email must be unique.
-- Plain-text `password` is normalized to `passwordHash` and removed.
-- Password hashes use salted `scrypt` format: `scrypt$<salt>$<key>`.
-- Role controls backend permissions.
+- `src/server/database/schema.js` — table definitions, indexes, foreign keys, and physical migrations.
+- `src/server/database/connection.js` — SQLite connection, durability/security pragmas, private directory setup.
+- `src/server/database/store-repository.js` — record conversion, snapshot reads/writes, backup, integrity, and counts.
+- `src/server/domain/store.js` — default/legacy normalization, generated seed data, integrity validation, and checksums.
+- `src/server/domain/` — settings, workspace mapping/report logic, security, and time services.
+- `src/server/routes/` — API route groups; route handlers use the repository/service composition from `app.tsx`.
 
-### `teams`
+## Schema and tables
 
-Organizational groups.
+The physical schema is migrated transactionally and marked with SQLite's `user_version`. Schema version 1 creates:
 
-Fields:
+- `teams`, `people`, `projects`, `tasks`, `milestones`, `activities`, `alerts`
+- `users`, `work_logs`, `audit_logs`
+- `workspace_settings` — the single normalized settings document stored as validated JSON text in SQL
+- `application_meta` — store metadata and configured status
+- `id_counters` — next project/task numeric identifiers
+- `schema_migrations` — applied physical schema version/name/time
 
-- `id`
-- `name`
-- `color`
-- `sample`
+Settings remain JSON-shaped to support structured, backward-compatible configuration, but the persisted value is inside SQLite with `json_valid` constraints. Entity collections use typed SQL columns for known fields. Each collection table also stores:
 
-### `people`
+- `id` as a primary key, with `id_type` to preserve numeric versus string IDs.
+- `ordinal` to preserve source collection order.
+- `attributes_json` for unrecognized/forward-compatible properties.
+- `present_json` and `field_states_json` to round-trip omitted, `undefined`, `null`, and empty-reference values.
+- `row_hash` to avoid unnecessary row updates when records have not changed.
 
-Work profiles. People can exist without login accounts.
+Known JSON/custom-field properties are stored in JSON-validated SQL columns. Boolean, numeric, required text/JSON, and identifier fields are checked while converting records; tables use SQLite `STRICT` mode. Entity updates/deletes are written as a transaction, not as independent JSON files.
 
-Fields:
+### Relationships and constraints
 
-- `id`
-- `name`
-- `email`
-- `jobTitle`
-- `teamId`
-- `focus`
-- `capacity`
-- `status`
-- `color`
-- `sample`
+- `teams 1 ── * people` — team deletion is restricted while referenced.
+- `teams 1 ── * projects` — team deletion is restricted while referenced.
+- `people 1 ── * users` — profile deletion is restricted while referenced.
+- `people 1 ── * projects` — owner deletion is restricted while referenced.
+- `people 1 ── * tasks` — assignee deletion is restricted while referenced.
+- `people 1 ── * activities` — person deletion is restricted while referenced.
+- `projects 1 ── * tasks/milestones/alerts` — task/milestone/alert references cascade when their project is removed; normal API validation still prevents unsafe removal.
+- `tasks 1 ── * alerts` — task-linked alerts cascade when a task is removed.
+- `work_logs` and `audit_logs` retain historical identifiers without foreign keys so history can survive entity removal.
 
-Relationships:
+Foreign keys are enabled on every connection and checked before commit with `PRAGMA foreign_key_check`. Additional application-level validation appears in `/api/system`.
 
-- `teamId` references `teams.id`.
+Unique indexes enforce non-empty, case-insensitive team names, person/user emails, and project codes. The repository temporarily clears these unique values inside the same write transaction before updating a full snapshot, allowing safe in-transaction swaps without violating uniqueness midway through a multi-record update.
 
-### `projects`
+## Persistence and startup
 
-Project records.
+### Normal SQLite startup
 
-Fields:
+1. Ensure the data directory exists with owner-only permissions on POSIX systems.
+2. Open SQLite and configure `foreign_keys=ON`, `busy_timeout`, WAL journaling, `synchronous=FULL`, memory temp storage, and `trusted_schema=OFF`.
+3. Run the physical schema migration if needed.
+4. Load the singleton settings/metadata/counters and entity tables into the in-memory workspace snapshot.
+5. Normalize application-level defaults and compatibility fields, then write the normalized snapshot back to SQLite without incrementing the write count.
 
-- `id` numeric internal id
-- `name`
-- `code`
-- `description`
-- `teamId`
-- `ownerId`
-- `color`
-- `status`
-- `deadline`
-- `createdAt`
-- `sample`
-
-Relationships:
-
-- `teamId` references `teams.id`.
-- `ownerId` references `people.id`.
-
-### `tasks`
-
-Trackable work items.
-
-Fields:
+### One-time legacy JSON import
 
-- `id` numeric internal id
-- `title`
-- `projectId`
-- `assigneeId`
-- `priority`
-- `dueDate`
-- `status`
-- `type`
-- `blocked`
-- `createdAt`
-- `completedAt`
-- `sample`
-
-Rules:
-
-- Status should be one of `To do`, `In progress`, `Review`, `Testing`, `Done`.
-- `completedAt` is set when status becomes `Done`.
-- Task display ids combine project code and numeric id, for example `PRD-001`.
-
-Relationships:
-
-- `projectId` references `projects.id`.
-- `assigneeId` references `people.id`.
-
-### `milestones`
-
-Project milestone records.
-
-Fields:
-
-- `id`
-- `projectId`
-- `name`
-- `dueDate`
-- `status`
-- `sample`
-
-### `activities`
-
-Daily update records.
-
-Fields:
-
-- `id`
-- `personId`
-- `date`
-- `time`
-- `yesterday`
-- `today`
-- `blocked`
-- `upcoming`
-- `status`
-- `sample`
-
-### `alerts`
-
-Risk, blocker, overdue, and informational alerts.
-
-Fields:
-
-- `id`
-- `title`
-- `body`
-- `type`
-- `tone`
-- `projectId`
-- `taskId`
-- `resolved`
-- `createdAt`
-- `sample`
-
-### `workLogs`
-
-Evidence ledger used by user activity reports.
-
-Fields:
-
-- `id`
-- `personId`
-- `taskId`
-- `projectId`
-- `action`
-- `statusFrom`
-- `statusTo`
-- `summary`
-- `date`
-- `time`
-- `minutes`
-- `sample`
-- `source`
-
-Rules:
-
-- Task creation, update, and completion write work-log events.
-- Activity submissions write work-log events.
-- Reports use work logs to show exactly which tasks were performed and within which projects.
-
-## Relationship model
-
-```txt
-teams 1 ─── * people
-teams 1 ─── * projects
-people 1 ── * users
-people 1 ── * tasks
-people 1 ── * activities
-people 1 ── * workLogs
-projects 1 ─ * tasks
-projects 1 ─ * milestones
-projects 1 ─ * alerts
-projects 1 ─ * workLogs
-tasks 1 ─── * alerts
-tasks 1 ─── * workLogs
-```
-
-The embedded store does not rely on database-server foreign-key enforcement. Instead, the Node application enforces relationships through route logic, normalization, and `/api/system` integrity checks.
-
-## Persistence flow
-
-### Load
-
-1. Ensure the data directory exists.
-2. If no store exists, create a production first-run store.
-3. Parse `atlas-store.json`.
-4. If parsing fails, move the corrupt file to a timestamped corrupt-file path and initialize a new first-run store.
-5. Normalize schema, metadata, settings, counters, collections, and users.
-6. Persist normalized data without incrementing the write count.
-
-### Write
-
-1. Normalize the in-memory store.
-2. Update metadata, `updatedAt`, and `writeCount`.
-3. Optionally create a backup if `ATLAS_BACKUP_ON_WRITE=true` or a CLI reset/init requested backup.
-4. Write JSON to a process-specific temporary file inside the same data directory.
-5. Rename the temporary file over `atlas-store.json`.
-
-The temporary-file + rename pattern prevents partial JSON files from being left behind during ordinary write interruptions on a single filesystem.
-
-## Backup strategy
-
-Commands:
+If the SQLite database has no workspace snapshot and `<dataDir>/atlas-store.json` exists:
+
+1. Parse the old document.
+2. Normalize it using the current domain rules.
+3. Persist the complete result to SQLite in one database transaction.
+4. Only after the SQLite commit succeeds, move the source to `data/legacy/atlas-store-imported-<timestamp>.json`.
+
+Subsequent startup reads only SQLite. If the legacy source is invalid JSON, it is moved to a timestamped `atlas-store-corrupt-<timestamp>.json` path and Atlas initializes an empty production workspace; restore/inspect the moved source before using the new workspace if its content may matter. An archive failure is logged and leaves the legacy JSON file in place, but a populated SQLite database takes precedence on later startup.
+
+Legacy JSON backups under `data/backups/` are not active databases. To import one, stop Atlas, copy the chosen legacy snapshot to an empty data directory as `atlas-store.json`, and start Atlas there; verify the resulting SQLite database and archived source before replacing any active data.
+
+## Transaction and write flow
+
+Every `persist()` operation:
+
+1. Normalizes the current workspace view and updates metadata/write count.
+2. Optionally creates a backup of the previously committed database if `ATLAS_BACKUP_ON_WRITE=true`.
+3. Starts `BEGIN IMMEDIATE`.
+4. Upserts typed rows and forward-compatible attributes in dependency order; removes missing records in reverse order.
+5. Writes settings, metadata, configured state, and counters.
+6. Runs a foreign-key check and commits; errors roll back the entire write.
+
+This makes one application-level snapshot write transactional. The design currently rewrites/upserts the complete in-memory snapshot rather than issuing narrowly scoped SQL for each request. Public reads/reporting are built from that in-memory view, not independent SQL queries.
+
+## Backup and restore
+
+Create a backup:
 
 ```bash
 npm run backup:data
 ```
 
-Backup location:
+Backups are named `atlas-db-<timestamp>-<reason>.sqlite` under `<ATLAS_DATA_DIR>/backups/`. The database is snapshotted with `VACUUM INTO`, chmodded to owner read/write on POSIX, and pruned to the configured retention count (`ATLAS_BACKUP_RETENTION`, default 25, clamped to 3–100). With `ATLAS_BACKUP_ON_WRITE=true`, a backup is made before each persisted write.
 
-```txt
-data/backups/atlas-store-<timestamp>-manual.json
-```
+Restore a SQLite backup safely:
 
-Retention:
+1. Stop Atlas completely.
+2. Preserve a copy of the current `atlas.sqlite` and any `atlas.sqlite-wal` / `atlas.sqlite-shm` sidecars.
+3. Copy the chosen standalone `.sqlite` backup to the active database path as `atlas.sqlite`.
+4. Remove stale `atlas.sqlite-wal` and `atlas.sqlite-shm` sidecars only after the app is stopped and the old files have been preserved.
+5. Start Atlas and verify `/api/system` integrity and expected record counts.
 
-- Default: 25 backup files.
-- Configure with `ATLAS_BACKUP_RETENTION=<number>`.
-- Minimum enforced retention is 3; maximum is 100.
+Never copy a database over a running application. Keep at least one backup outside the machine/user profile that contains the live database if hardware loss is in scope. SQLite is not encrypted at rest; protect the data directory and backup destination using OS permissions and storage encryption appropriate to the deployment.
 
-Optional per-write backups:
+## CLI operations
 
-```bash
-ATLAS_BACKUP_ON_WRITE=true npm run start
-```
+- `npm run init:production` initializes an empty first-run database. It refuses an existing SQLite database or legacy JSON source unless the explicitly destructive `ATLAS_FORCE_INIT_PRODUCTION=true` override is set.
+- `npm run reset:data` replaces the store with demo data only when `ATLAS_ALLOW_DEMO_DATA=true` is set.
+- `npm run backup:data` loads/imports the store if necessary, then creates a manual SQLite backup.
 
-Use per-write backups for sensitive rollout periods, migrations, and high-risk administrative work. For normal desktop operation, scheduled/manual backups are usually sufficient.
+These commands are not upgrade steps. Back up existing data before deploying a new build; normal startup runs supported physical migrations.
 
-## Restore procedure
+## Integrity and diagnostics
 
-1. Stop Atlas.
-2. Copy the chosen backup file over the active data file.
-3. Restart Atlas.
-4. Sign in as an administrator.
-5. Open Settings → System store and confirm integrity is `ok` or review warnings.
+`GET /api/runtime-config` reports SQLite engine version, physical schema version, data schema version, and journal mode. An administrator can inspect `GET /api/system` / Settings → System store, which reports:
 
-Example:
+- SQLite integrity (`PRAGMA integrity_check`) and foreign-key checks.
+- Domain integrity errors/warnings and checksum.
+- Data/schema metadata, table counts, recent backups, and sample/live profile counts.
 
-```bash
-cp data/backups/atlas-store-2026-10-02T05-00-00-000Z-manual.json data/atlas-store.json
-npm run start
-```
+The validation command `TEST_PORT=5193 node scripts/final-validation.mjs` exercises production CRUD, permissions, reporting, backup/restore, restarts, schema normalization, one-time JSON import and archival, and explicit legacy content preservation in isolated directories under `.audit-test-data/`.
 
-## Migrations and schema evolution
+## Schema evolution rules
 
-Schema migration is centralized in `normalizeStore()`.
+For a new property/entity:
 
-Migration rules:
+1. Add it to `COLLECTIONS` with the correct SQLite type, indexes, uniqueness, and references.
+2. Add a physical migration and increment SQLite `user_version` when tables/indexes/constraints change. Never mutate an already-deployed schema version in place.
+3. Add/update domain defaults and normalization as needed; bump `STORE_SCHEMA_VERSION` for data-shape changes.
+4. Preserve legacy IDs, field values, and collection ordering where valid; only discard documented generated/invalid data.
+5. Verify export/import behavior, foreign-key handling, backup/restore, and old-schema fixtures.
+6. Update this architecture document, API docs, and operational restore instructions.
 
-- New collections must be initialized as arrays.
-- New settings must be added through `defaultSettings()`.
-- User secrets must be normalized so legacy plain-text `password` fields become `passwordHash` and are removed.
-- Counters must be recalculated to exceed existing numeric project/task ids.
-- `meta.schemaVersion` must update when persisted shape changes.
-- Documentation must be updated in this file and the API/functionality references.
+## Current boundaries and limitations
 
-## Integrity checks
-
-Administrators can inspect `/api/system`, which reports:
-
-- `integrity`: `ok`, `warning`, or `attention`.
-- `errors`: critical persistence problems.
-- `warnings`: relationship or migration concerns.
-- `checksum`: SHA-256 checksum of the current normalized store payload.
-- `store`: file name, store model, schema version, metadata, recent backups, backup count, sample rows, live people.
-- `counts`: collection counts.
-
-Current validations include:
-
-- Collection type checks.
-- Schema version check.
-- Duplicate user emails.
-- Duplicate people, project, and task ids.
-- Plain-text password detection.
-- Missing team references.
-- Missing user/person profile references.
-- Missing project owner references.
-- Missing task project/assignee references.
-- Missing milestone project references.
-- Missing alert project/task references.
-
-## Database design standards for future work
-
-Any future data change must follow these standards:
-
-- Define the entity and relationships before coding UI.
-- Add defaults to `defaultSettings()` or `productionStore()` as appropriate.
-- Normalize legacy/missing fields in `normalizeStore()`.
-- Validate references in `validateStoreState()`.
-- Use atomic `persist()` for writes.
-- Never expose password hashes through public API responses.
-- Update documentation and API references.
-- Add smoke tests for create, update, delete, report, export, and permission behavior.
-
+- One Atlas process per data directory; no multi-instance coordination, distributed database, or horizontal scaling.
+- Synchronous `DatabaseSync` and full-snapshot persistence can block the event loop for large workspaces.
+- `node:sqlite` is experimental on Node 22 and release-candidate on Node 24. Electron release metadata is compatible, but a packaged Electron run remains unverified.
+- No SQLite encryption-at-rest layer; use filesystem/OS encryption and protect backups.
+- Authentication sessions remain in memory; only application workspace data is persisted in SQL.
+- JSON settings and custom-field values are intentionally kept as JSON-shaped values in SQLite columns; this is not a JSON-file persistence fallback.

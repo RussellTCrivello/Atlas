@@ -29,7 +29,7 @@ Production mode is designed for real-world first use:
 
 ## 3. Requirements
 
-- Node.js `>=22.12.0` for production packaging and Electron 44.
+- Node.js `>=22.13.0` for the built-in SQLite runtime and Electron 44.
 - npm.
 - Modern Chromium-based browser for web preview.
 - Supported desktop build hosts for Electron packaging targets.
@@ -100,7 +100,7 @@ See [Build and Deployment Guide](BUILD_AND_DEPLOYMENT.md) for the full environme
 ### Runtime layers
 
 1. `app.tsx` creates the Express application.
-2. API routes operate on the embedded data store.
+2. API routes use role-grouped modules and domain services over an in-memory workspace view persisted to SQLite.
 3. Development mode mounts Vite middleware.
 4. Production mode serves `dist/` static assets.
 5. Electron imports `dist-desktop/app.mjs` and loads the local app.
@@ -111,14 +111,14 @@ The single app design reduces deployment complexity, supports desktop packaging,
 
 ## 11. Database architecture
 
-Atlas uses an embedded schema-versioned JSON document database:
+Atlas uses an embedded, relational SQLite database for all runtime persistence:
 
-- Store model: `embedded-json-document-store`
-- Schema: `3.0.0`
-- Atomic writes: yes
-- Integrity checks: yes
-- Backup command: yes
-- Migration/normalization: centralized
+- Database: `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`)
+- Physical SQLite schema: version 1; domain store schema: `4.0.0`
+- Snapshot writes: SQLite transactions with foreign-key validation
+- Integrity checks: SQLite and domain-level checks
+- Backup command: `npm run backup:data` creates `.sqlite` backups
+- Legacy JSON: one-time import into SQLite, then archived under `data/legacy/`
 
 See [Database Architecture](DATABASE_ARCHITECTURE.md) for complete schema details.
 
@@ -264,10 +264,13 @@ npm run backup:data
 
 Restore:
 
-1. Stop Atlas.
-2. Copy backup over `data/atlas-store.json`.
-3. Restart Atlas.
-4. Validate Settings → System store.
+1. Stop Atlas completely.
+2. Preserve the active `atlas.sqlite` and any `atlas.sqlite-wal` / `atlas.sqlite-shm` files.
+3. Copy the selected standalone `.sqlite` backup to the active path as `data/atlas.sqlite`.
+4. Remove stale WAL/SHM sidecars only while Atlas remains stopped.
+5. Restart Atlas and validate Settings → System store.
+
+For full recovery details and legacy JSON import behavior, see [Database Architecture](DATABASE_ARCHITECTURE.md).
 
 ## 19. Build and desktop packaging
 

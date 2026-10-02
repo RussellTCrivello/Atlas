@@ -3,6 +3,7 @@ node_modules/
 release/
 dist/
 data/
+.audit-test-data/
 *.log
 .DS_Store
 .env

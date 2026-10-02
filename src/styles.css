@@ -426,3 +426,14 @@ html[data-theme="dark"] .advanced-settings-page .admin-toolbar { background:line
 .developer-i18n-snippet span { color:#c9cae7; font-size:12px; margin-top:3px; }
 .developer-i18n-snippet pre { margin:0; padding:12px; overflow:auto; border-radius:12px; background:rgba(0,0,0,.28); color:#e7e8ff; font-size:11px; line-height:1.6; direction:ltr; text-align:left; }
 @media (max-width:1100px) { .i18n-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .interface-registry-row { grid-template-columns:1fr; } }
+
+/* Audit corrections: configurable task-list columns and access-aware affordances. */
+.task-row-cell { min-width:0; display:flex; align-items:center; overflow:hidden; }
+.task-row-title { min-width:0; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.task-assignee { min-width:0; display:flex; align-items:center; gap:6px; overflow:hidden; color:#778194; font-size:9px; }
+.task-assignee>span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-check:disabled { cursor:not-allowed; opacity:.45; }
+.table-head.sortable-head>span { min-width:0; }
+.settings-subsection { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+.settings-subsection h3 { margin:0 0 5px; color:var(--ink); font-size:12px; }
+.settings-subsection>p { margin:0 0 11px; color:var(--muted); font-size:10px; line-height:1.5; }

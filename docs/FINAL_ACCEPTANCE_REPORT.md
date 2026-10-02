@@ -1,339 +1,74 @@
-# Atlas Workspace Final Acceptance Report
+# Atlas Architecture and Acceptance Report
 
-Date: 2026-10-02
+**Audit date:** 2026-10-02
+
+**Scope:** Runtime persistence, server modularization, API/data behavior, migration, security wiring, build, validation, and deployment documentation.
 
 ## Executive conclusion
 
-Atlas Workspace was validated as a real operational product across production setup, administration, role-based work, reporting, data persistence, Arabic/RTL data handling, backups, restore, and realistic data volume.
-
-The web/local production runtime is ready for operational use after first-run administrator setup. Desktop packaging was validated, but actual Electron GUI launch could not be completed in this sandbox because the sandbox OS is missing an Electron runtime system library (`libnspr4.so`). This is recorded as a deployment-environment limitation, not a web/runtime application failure.
-
-## 1. Complete functionality audit results
-
-Validated through production-runtime API workflows, source-level UI control review, build output inspection, and live preview restart.
-
-### Passed
-
-- First-run setup status exposes no demo credentials.
-- Health endpoint works.
-- Production HTML is served.
-- Local font assets load from the app server.
-- Administrator setup works.
-- Invalid setup password is rejected.
-- Invalid login is rejected.
-- Authentication sessions work.
-- Workspace settings persist.
-- Settings export works.
-- Settings import works.
-- Language, appearance, workflow, custom fields, roles, and modules persist.
-- Backup creation works.
-- Backup restoration works.
-- Restart persistence works.
-- User creation works.
-- Duplicate user email is rejected.
-- Invalid role is rejected.
-- Deleting a linked person is rejected.
-- Deleting a team with assigned people is rejected.
-- Manager project/task/alert/report workflow works.
-- Developer task/activity workflow works.
-- Viewer report access works.
-- Viewer protected mutations are rejected.
-- Reports retain Arabic and mixed Arabic/Latin data.
-- System integrity endpoint reports `ok` after realistic data operations.
-- Audit logs are generated.
-- Large operational dataset remains responsive.
-
-## 2. User journeys tested
-
-### Administrator
-
-Tested:
-
-1. Completed initial setup.
-2. Configured workspace identity.
-3. Configured Arabic language and regional settings.
-4. Configured compact appearance and accessibility settings.
-5. Created users.
-6. Added/validated role and permission configuration.
-7. Confirmed module configuration.
-8. Configured a custom workflow.
-9. Configured a task custom field.
-10. Created projects and operational data.
-11. Generated reports.
-12. Created a backup.
-13. Restored from backup.
-14. Restarted the application.
-15. Verified persistence.
-
-Result: Passed.
-
-### Manager
-
-Tested:
-
-1. Logged in as Manager.
-2. Created project.
-3. Created milestone.
-4. Created manager and developer tasks.
-5. Created alert.
-6. Resolved alert.
-7. Generated weekly report.
-
-Result: Passed.
-
-### Developer
-
-Tested:
-
-1. Logged in as Developer.
-2. Updated assigned task through configured workflow.
-3. Completed task.
-4. Recorded activity.
-5. Attempted protected project creation.
-
-Result: Passed. Protected project mutation returned `403` as expected.
-
-### Viewer
-
-Tested:
-
-1. Logged in as Viewer.
-2. Accessed activity report.
-3. Attempted task creation.
-4. Attempted settings mutation.
-
-Result: Passed. Report access worked; protected mutations returned `403` as expected.
-
-## 3. Defects discovered
-
-The final audit found the following issues before final acceptance:
-
-1. The topbar notification dot displayed even when there were no open alerts.
-2. The topbar alert shortcut remained visible even when the Alerts module could be disabled.
-3. The topbar New action appeared on Reports, where it was not contextually correct.
-4. Read-only users could still see Add task controls in board empty states.
-5. Translation JSON import errors were not handled gracefully in the interface.
-6. Settings JSON import errors were not handled gracefully in the interface.
-7. Settings import could allow stale legacy flat settings such as `workspaceName` to override newer nested settings such as `workspace.name`.
-
-## 4. Defects corrected
-
-Corrected during this phase:
-
-1. Alert dot now appears only when open alerts exist.
-2. Alert shortcut now respects module visibility.
-3. New action is hidden on Reports and other non-create contexts.
-4. Read-only task board add controls are hidden.
-5. Translation JSON import now shows a concise validation error.
-6. Settings JSON import now shows a concise validation error.
-7. Settings normalization now preserves nested configuration over stale legacy flat fields.
-
-## 5. Files modified
-
-- `app.tsx`
-- `src/main.tsx`
-- `src/styles.css`
-- `scripts/final-validation.mjs`
-- `docs/final-validation-results.json`
-- `docs/FINAL_ACCEPTANCE_REPORT.md`
-
-## 6. Automated test results
-
-Automated production validation script:
-
-```bash
-node scripts/final-validation.mjs
-```
-
-Result:
-
-- Checks executed: 23
-- Failures: 0
-
-Key metrics from realistic operational data test:
-
-```json
-{
-  "create160TasksMs": 534,
-  "bootstrapMs": 6,
-  "weeklyReportMs": 3,
-  "monthlyActivityReportMs": 22
-}
-```
-
-Full result file:
-
-```txt
-docs/final-validation-results.json
-```
-
-## 7. Arabic and RTL validation results
-
-Validated:
-
-- Arabic default language persisted.
-- Arabic and mixed Arabic/Latin project names persisted.
-- Arabic and mixed Arabic/Latin task titles persisted.
-- Arabic user/person names persisted.
-- Arabic activity text persisted.
-- Arabic/mixed data appeared in activity reports.
-- RTL configuration persisted through settings.
-- Custom workflow and custom fields worked with Arabic operational data.
-
-Tested Arabic/mixed values included:
-
-- Person: `ليلى Developer`
-- Project: `Client Portal مشروع`
-- Task: `تنفيذ لوحة التقارير CP-42`
-
-Result: Passed.
-
-## 8. Data integrity results
-
-Validated:
-
-- Production restart retained settings and data.
-- Backup creation produced a real backup file.
-- Backup restore reverted settings to the backup point.
-- Restart after restore succeeded.
-- Schema normalization retained required configuration branches.
-- Relationship integrity checks passed.
-- Invalid relationship operations were rejected.
-- Custom field data persisted.
-- Workflow state changes persisted.
-- Audit log entries were created.
-
-Final integrity endpoint result during validation: `ok`.
-
-## 9. Production build results
-
-Commands run:
-
-```bash
-npm run build
-npm audit --omit=dev
-npm audit
-```
-
-Results:
-
-- Web build: passed.
-- Server bundle build: passed.
-- Runtime dependency audit: `0 vulnerabilities`.
-- Full dependency/toolchain audit: `0 vulnerabilities`.
-
-## 10. Desktop validation results
-
-Validated:
-
-```bash
-npx electron-builder --dir --linux dir --config.directories.output=/tmp/atlas-final-release2
-node --check electron/main.cjs
-node --check electron/preload.cjs
-```
-
-Results:
-
-- Electron Builder unpacked Linux package: passed.
-- Electron main syntax check: passed.
-- Electron preload syntax check: passed.
-
-Attempted actual Electron binary launch:
-
-```bash
-/tmp/atlas-final-release2/linux-unpacked/atlas-workspace --version
-```
-
-Result:
-
-```txt
-error while loading shared libraries: libnspr4.so: cannot open shared object file: No such file or directory
-```
-
-Conclusion: desktop packaging is configured and package generation succeeds, but actual Electron GUI launch could not be completed in this sandbox due a missing OS library. Desktop runtime must be launch-tested on the target deployment OS or a CI image with Electron runtime libraries installed.
-
-## 11. Known limitations
-
-1. Actual Electron GUI launch was blocked by the sandbox OS missing `libnspr4.so`.
-2. No browser automation engine is available in this sandbox, so click-level browser export/print dialogs were not automated. Export code paths and report payloads were inspected/validated through build and production data tests; final click-level export validation should be performed in a browser/Electron QA environment.
-3. Production Electron toolchain requires Node.js `>=22.12.0`; this sandbox runs Node `v20.20.2`, which produces engine warnings during install. Build and packaging still completed here, but production/CI should use Node 22.12+.
-
-## 12. Exact instructions for starting and using Atlas
-
-### Install
-
-```bash
-npm install
-```
-
-Use Node.js `>=22.12.0` for production and desktop packaging.
-
-### Initialize production first-run state
-
-```bash
-npm run init:production
-```
-
-This creates a clean first-run store:
-
-- no users
-- no demo credentials
-- no sample business data
-
-### Run development/live preview
-
-```bash
-npm run app
-```
-
-Open the live preview and complete setup.
-
-### Build production
-
-```bash
-npm run build
-```
-
-### Run production server
-
-```bash
-npm run start
-```
-
-### First administrator workflow
-
-1. Open Atlas.
-2. Complete first-run setup.
-3. Create the administrator account.
-4. Open Settings.
-5. Configure workspace identity, language, appearance, modules, workflow, custom fields, users, roles, reports, backups, and audit preferences.
-6. Create teams, people, projects, and tasks.
-7. Invite/create Manager, Developer, and Viewer users.
-
-### Daily use
-
-- Managers manage projects, tasks, milestones, alerts, activity, and reports.
-- Developers update assigned work and log activity.
-- Viewers access permitted reports and exports.
-- Administrators maintain settings, users, backups, and system integrity.
-
-### Backup
-
-```bash
-npm run backup:data
-```
-
-or use Settings → System → Create backup.
-
-### Restore
-
-1. Stop Atlas.
-2. Copy a backup file over `data/atlas-store.json`.
-3. Restart Atlas.
-4. Log in and check Settings → System integrity.
-
-## Final acceptance status
-
-Atlas Workspace satisfies the operational acceptance condition for the web/local production runtime: a new administrator can configure the system, a team can perform normal work, users can retrieve accurate reports, and data is preserved across restart/backup/restore without developer intervention.
-
-Desktop packaging is release-configured, but final desktop GUI acceptance must be completed on a host with the required Electron runtime libraries.
+Atlas now uses SQLite as the only runtime persistence source. The former `atlas-store.json` is accepted only as a one-time import source when SQLite has no workspace snapshot, and is archived after a successful SQL commit. Server responsibilities are split into database, domain, HTTP middleware, route groups, and shared-helper modules under `src/server/`; `app.tsx` is the composition root.
+
+The production web/server build succeeded, and the latest isolated production workflow passed **29/29 checks**, including CRUD, roles, backup/restore, restart persistence, schema normalization, one-time JSON import/archive, SQL integrity/foreign keys, and preservation of imported data. This supports **local/internal evaluation**, not an internet-facing security certification, multi-process deployment, browser accessibility certification, or a completed packaged Electron release.
+
+## Implemented changes and resolved findings
+
+| Finding | Correction |
+| --- | --- |
+| The prior runtime persisted one whole workspace document as JSON, making SQL constraints, transactions, backups, and queryable relationships unavailable. | Added SQLite schema/migrations, typed relational tables, indexes, case-insensitive uniqueness, foreign keys, a transactional snapshot repository, integrity checks, and `VACUUM INTO` backups. Runtime state is read/written through SQLite; JSON exports/configuration and the one-time legacy source are not runtime persistence. |
+| Server routes/domain/security/time/store rules were concentrated in the app entry point. | Extracted `src/server/database/`, `domain/`, `http/`, `routes/`, and `shared/` modules with explicit dependency injection. Route files are grouped by responsibility and registered centrally. |
+| A successful legacy import could be followed by first-run setup replacing imported, unconfigured records. | Setup now clones/preserves the existing workspace, adds or links the administrator profile, reuses an existing team with the selected name, and refuses demo seeding into a non-empty workspace. The acceptance fixture verifies records, relationships, custom fields, explicit work-log values, source archive, and restart behavior. |
+| Date helpers assumed all stored values were date-only strings; valid ISO timestamps could fail bootstrap/report generation. | Date formatting and report bucket normalization handle both calendar dates and timestamp values, safely ignoring invalid dates. The imported fixture includes timestamp-valued alert/task fields. |
+| Earlier normalization discarded deterministic generated work-log rows but also zeroed every remaining legacy row's minutes. | Migration now removes only identifiable generated `wl_seed_*`/`wl_activity_*` rows and preserves explicit imported history/minutes. New application events continue to record zero minutes unless a real time-entry feature is implemented. |
+| SQL schema changes and legacy record fidelity needed verification. | Repository round-trips typed fields, custom JSON values, identifier types, ordering, and empty/null/missing states; transactions run FK checks before commit. Validation covers backup restore, schema version normalization, explicit minutes, integrity, and FK constraints. |
+| Initial setup could duplicate a team/person where imported content already had the same team name or administrator email. | Setup reuses a matching existing team and links to a matching person instead of inserting conflicting duplicates. The import acceptance fixture checks this behavior. |
+| Package engine range allowed a Node 22 version where built-in `node:sqlite` still required an extra flag. | Minimum Node engine is now `>=22.13.0`; package manifest and lockfile agree. |
+| Production initialization could overwrite existing data without an explicit override. | Existing-store protection remains in place. Fresh isolated init succeeded; a second init was refused and the database SHA-256 remained unchanged. |
+| Other previously audited UI/API defects: inconsistent action/role affordances, unredacted integration secrets, hidden-module navigation, blocker alert deduplication, weak custom-field enforcement, settings error visibility, non-JSON API failures, reverse-proxy IP handling, and offline-shell behavior. | Prior corrections remain in place. Role capabilities are still enforced at API boundaries; the outstanding policy limitations below are not presented as security controls. |
+
+## Data and schema model
+
+- Runtime database: `<ATLAS_DATA_DIR>/atlas.sqlite`; default `data/atlas.sqlite`.
+- Electron database: `<userData>/data/atlas.sqlite`.
+- Physical schema version: SQLite `PRAGMA user_version = 1`.
+- Domain data schema: `4.0.0`.
+- Tables include teams, people, projects, tasks, milestones, activities, alerts, users, work logs, audit logs, settings, metadata, counters, and migration history.
+- Writes use SQLite transactions, foreign-key checks, WAL journaling, and `synchronous=FULL`.
+- Backups are standalone `.sqlite` files created with `VACUUM INTO`; restore only with Atlas stopped and stale WAL/SHM files handled as documented.
+- Legacy JSON imports are archived under `<ATLAS_DATA_DIR>/legacy/` after commit. Corrupt JSON is moved aside rather than silently parsed as valid data.
+
+## Fresh verification
+
+- `npm run build` — passed; Vite transformed 218 modules and esbuild produced `dist-desktop/app.mjs`.
+- `TEST_PORT=5193 node scripts/final-validation.mjs` — **29/29 checks passed**. The latest raw record is [`audit-validation-results-2026-10-02.json`](audit-validation-results-2026-10-02.json). It includes production API setup/auth, role-based CRUD, settings import/export, SQLite backup/restore, restart persistence, task-volume reporting, schema migration, explicit legacy work-log minutes, one-time legacy JSON import and archival, setup without data loss, and SQL integrity/FK validation.
+- Sandbox measurements for 160 sequential task writes: **1,830 ms**; bootstrap **7 ms**; weekly report **4 ms**; monthly activity report **40 ms**. These are a single-run sandbox result, not capacity targets.
+- `npm audit` and `npm audit --omit=dev` — zero reported vulnerabilities at validation time.
+- `npm ls --depth=0` — all declared top-level dependencies resolve to manifest/lockfile versions; package engine is `>=22.13.0`.
+- `git diff --check` — passed. Build validates the TSX app; JavaScript modules and validation scripts pass Node syntax checks.
+- Production-init guard — fresh isolated initialization passed; second init returned exit 1 and left the database hash unchanged.
+- Current Node runtime was v22.22.3. `node:sqlite` worked and emitted Node's expected experimental warning.
+
+The Electron 44.5.1 release metadata reports bundled Node 24.21.0, which includes `node:sqlite` ([Electron release metadata](https://releases.electronjs.org/release/v44.5.1), [Node SQLite API](https://nodejs.org/api/sqlite.html)). The Electron binary download failed TLS certificate verification in this environment, so actual Electron main-process/package launch and SQLite access remain unverified. Do not disable TLS verification to retry; use a valid CA setup or a cached Electron binary.
+
+## Outstanding risks and product decisions
+
+| Priority | Status | Finding / impact | Recommendation |
+| --- | --- | --- | --- |
+| **High** | Confirmed behavior; intended scope unclear | Users with `viewReports` can request all-person activity reports. Authenticated bootstrap includes workspace people, tasks, projects, activity, and alerts. The persisted `reportingPermissions` map is not enforced. | Decide whether workspace-wide visibility is intended; otherwise define and enforce server-side data/report scopes before production use. |
+| **High** | Confirmed limitation | `moduleAccess`, `fieldAccess`, `actionAccess`, `exportPermissions`, and `reportingPermissions` are configuration metadata, not runtime authorization policy. Role permission arrays are enforced. | Do not treat these maps as security controls; define their schema/semantics before implementing them. |
+| **High** | Confirmed limitation | Configured workflow transitions, approval steps, and automated actions are not enforced. Task permission checks allow movement to any configured state. | Confirm whether transition/approval enforcement is required and define exception/override behavior. |
+| **Medium** | Confirmed limitation | Custom-field visibility/permissions and arbitrary validation expressions are not server-enforced. Required fields and basic scalar types are enforced; attachment/calculated/multi-select fields are not full runtime controls. | Treat unsupported field metadata as non-security behavior until a supported server-side type/validation contract is defined. |
+| **Medium** | Confirmed limitation | Notification preferences, webhooks/integration registry, and some report/localization metadata are stored but do not execute delivery/automation. | Do not promise delivery, retries, or automation until event handling and secret lifecycle exist. |
+| **Medium** | Deployment constraint | The database is SQLite, but Atlas keeps a full snapshot in each process and rewrites/upserts that snapshot per persistence operation. Concurrent Atlas instances can overwrite each other from stale memory; synchronous `DatabaseSync` can block on large writes. | Run one process per data directory. Benchmark realistic maximum workspace size; choose a different read/write architecture before multi-instance/high-concurrency deployment. |
+| **Medium** | Runtime status | `node:sqlite` is experimental in Node 22 and release-candidate in Node 24. It is available in the configured Node/Electron versions, but the packaged Electron process was not launched in this environment. | Keep supported runtime versions explicit and make an Electron startup/CRUD/restore test a release gate. |
+| **Medium** | Security limitation | SQLite files/backups are not application-encrypted at rest. POSIX data directories/database/backups receive restrictive permissions, but file permissions do not replace disk encryption. | Use OS/disk encryption and protected off-device backups where data sensitivity requires them. |
+| **Medium** | Confirmed identity limitation | Authentication is local email/password with in-memory sessions; MFA/SSO, external identity lifecycle, and persistent shared sessions are not implemented. | Confirm local-only auth is acceptable before exposing sensitive data. |
+| **Medium** | Deployment configuration | Atlas does not terminate HTTPS; secure cookies and proxy IP parsing depend on correct trusted-proxy configuration. | Terminate TLS at a trusted proxy, set `ATLAS_COOKIE_SECURE=true`, configure exact `ATLAS_TRUST_PROXY_HOPS`, and restrict network access. |
+| **Medium** | Confirmed limitation | PWA caching covers the static shell/assets only; API data and writes are not cached or synchronized offline. | Treat the app as online-required for workspace operations. |
+| **Low** | Manual verification outstanding | No browser automation or real-browser accessibility/printing/RTL-PDF test suite is present. | Complete browser/device acceptance against supported browsers and assistive technologies. |
+
+## Deployment safety
+
+- Back up the complete data directory before migration or upgrade. The JSON source is retained in `legacy/` after import, but backups and archives should also be copied off-device when required.
+- Do not run `npm run init:production` as an upgrade step. It refuses existing data unless the deliberately destructive `ATLAS_FORCE_INIT_PRODUCTION=true` override is set.
+- Legacy JSON backups are not active SQLite databases. Import them into a separate empty test data directory first; inspect integrity and records before changing the production data path.
+- Electron packaging/signing, cross-platform data paths, and packaged SQLite access remain release gates.
