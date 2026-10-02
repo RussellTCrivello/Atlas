@@ -31,8 +31,20 @@ export class SystemService {
 
   /** Can the database take a write right now? (The one fact the unauthenticated health check reveals.) */
   health() {
-    const { db } = this.ctx
-    return { writable: db.lastWriteError === null, lastSavedAt: db.lastCommitAt, error: db.lastWriteError }
+    const { lastWriteError, lastCommitAt } = this.ctx.repos.system.storage()
+    return { writable: lastWriteError === null, lastSavedAt: lastCommitAt, error: lastWriteError }
+  }
+
+  /** What the administrator's runtime-config shows about storage: where it lives and which schema it is on. */
+  databaseInfo() {
+    const { config, repos } = this.ctx
+    return {
+      fileName: path.relative(config.appRoot, repos.system.file()),
+      storeModel: DATABASE_MODEL,
+      schemaVersion: String(SCHEMA_VERSION),
+      atomicWrites: true,
+      backupRetention: config.backupRetention
+    }
   }
 
   /** Database integrity (SQLite's own checks) plus the rules the application relies on. Cached briefly: it scans the file. */
@@ -40,14 +52,14 @@ export class SystemService {
     const revision = this.ctx.revision
     if (this.validation && this.validation.revision === revision && Date.now() - this.validation.at < 60_000)
       return this.validation.value
-    const { db, repos } = this.ctx
+    const { repos } = this.ctx
     const settings = this.ctx.settings
     const errors: string[] = []
     const warnings: string[] = []
-    const check = String(db.pragma('quick_check'))
+    const check = repos.system.quickCheck()
     if (check !== 'ok') errors.push(`SQLite integrity check: ${check}`)
-    const dangling = db.all('PRAGMA foreign_key_check')
-    if (dangling.length) errors.push(`${dangling.length} record(s) point to something that no longer exists`)
+    const dangling = repos.system.danglingReferences()
+    if (dangling) errors.push(`${dangling} record(s) point to something that no longer exists`)
     if (!settings?.workspace || !settings?.interface || !settings?.localization)
       errors.push('Settings must include workspace, interface, and localization configuration branches')
     if (!settings?.workflows?.task?.states?.length) errors.push('Task workflow must define at least one state')
@@ -72,24 +84,11 @@ export class SystemService {
 
   /** The administrator's overview: integrity, audit chain, storage, backups and record counts. */
   status() {
-    const { config, db, repos } = this.ctx
+    const { config, repos } = this.ctx
     const validation = this.validate()
     const backups = this.backups.list()
     const chain = this.audit.verify()
-    const counts = {
-      teams: repos.teams.list().length,
-      people: repos.people.list().length,
-      projects: repos.projects.count(),
-      tasks: Number(db.scalar('SELECT count(*) FROM tasks')),
-      activity: repos.activities.count(),
-      alerts: Number(db.scalar('SELECT count(*) FROM alerts')),
-      workLogs: repos.ledger.count(),
-      auditLogs: repos.audit.count()
-    }
-    const sampleRows = ['people', 'projects', 'tasks', 'activities', 'alerts', 'work_logs', 'users'].reduce(
-      (sum, table) => sum + Number(db.scalar(`SELECT count(*) FROM ${table} WHERE sample = 1`)),
-      0
-    )
+    const counts = repos.system.counts()
     const writable = this.health()
     return {
       ok: validation.integrity === 'ok' && chain.ok && writable.writable,
@@ -101,11 +100,11 @@ export class SystemService {
       auditChain: chain,
       storage: writable,
       store: {
-        fileName: path.relative(config.appRoot, db.file),
+        fileName: path.relative(config.appRoot, repos.system.file()),
         storeModel: DATABASE_MODEL,
         schemaVersion: String(SCHEMA_VERSION),
-        sqliteVersion: String(db.scalar('SELECT sqlite_version()')),
-        sizeBytes: Number(db.pragma('page_count')) * Number(db.pragma('page_size')),
+        sqliteVersion: repos.system.sqliteVersion(),
+        sizeBytes: repos.system.sizeBytes(),
         meta: {
           createdAt: repos.meta.createdAt(),
           updatedAt: repos.meta.updatedAt(),
@@ -125,8 +124,8 @@ export class SystemService {
           format: backup.format
         })),
         backupCount: backups.length,
-        sampleRows,
-        livePeople: Number(db.scalar('SELECT count(*) FROM people WHERE sample = 0'))
+        sampleRows: repos.system.sampleRows(),
+        livePeople: repos.system.livePeople()
       },
       counts
     }

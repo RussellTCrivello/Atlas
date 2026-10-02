@@ -13,6 +13,7 @@ import { SearchRepository } from './search'
 import { SessionRepository } from './sessions'
 import { SettingsRepository } from './settings'
 import { SnapshotRepository } from './snapshot'
+import { SystemRepository } from './system'
 import { TaskRepository } from './tasks'
 import { UserRepository } from './users'
 
@@ -34,7 +35,8 @@ export function createRepositories(db: Database, defaults: { defaultTimezone: st
     ledger: new LedgerRepository(db),
     audit: new AuditRepository(db),
     reports: new ReportRepository(db),
-    search: new SearchRepository(db)
+    search: new SearchRepository(db),
+    system: new SystemRepository(db)
   }
 }
 export type Repositories = ReturnType<typeof createRepositories>

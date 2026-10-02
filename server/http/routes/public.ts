@@ -1,10 +1,7 @@
 // Endpoints that need no sign-in: health, what this server is, whether setup is done, the public translation catalogue.
-import path from 'node:path'
 import type { Express } from 'express'
-import { DATABASE_MODEL } from '../../../shared/settings'
 import type { Container } from '../../app/container'
 import { DESIGN_SYSTEM_VERSION, isLoopbackHost } from '../../config'
-import { SCHEMA_VERSION } from '../../db/migrations'
 import { can } from '../../domain/permissions'
 import { DEMO_ACCOUNTS } from '../../seed/demo'
 import { clientIp } from '../../util'
@@ -33,16 +30,7 @@ export function registerPublicRoutes(http: Express, app: Container) {
     }
     const user = optionalUser(app, req)
     if (!user || !can(app.ctx.settings, user, 'manageSettings')) return void res.json(base)
-    res.json({
-      ...base,
-      database: {
-        fileName: path.relative(config.appRoot, app.db.file),
-        storeModel: DATABASE_MODEL,
-        schemaVersion: String(SCHEMA_VERSION),
-        atomicWrites: true,
-        backupRetention: config.backupRetention
-      }
-    })
+    res.json({ ...base, database: app.system.databaseInfo() })
   })
 
   http.get('/api/setup/status', (req, res) => {

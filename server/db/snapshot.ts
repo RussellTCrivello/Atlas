@@ -36,6 +36,12 @@ const json = (value: unknown) =>
   JSON.stringify(value && typeof value === 'object' && !Array.isArray(value) ? value : {})
 const text = (value: unknown, fallback = '') => (value === undefined || value === null ? fallback : String(value))
 const flag = (value: unknown) => (value ? 1 : 0)
+/** A reference stored as a number, or null: old documents sometimes held '' or a numeric string where a task or project id belongs. */
+const intOrNull = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === '') return null
+  const number = Number(value)
+  return Number.isInteger(number) ? number : null
+}
 
 /** Replace every record in the database with the contents of `snapshot`. */
 export function writeSnapshot(db: Database, snapshot: Snapshot, config: { defaultTimezone: string }): SnapshotReport {
@@ -356,8 +362,8 @@ export function writeSnapshot(db: Database, snapshot: Snapshot, config: { defaul
           text(log.personId),
           log.actorUserId ?? null,
           log.assigneeId ?? null,
-          log.taskId ?? null,
-          log.projectId ?? null,
+          intOrNull(log.taskId),
+          intOrNull(log.projectId),
           log.taskKey ?? null,
           log.taskTitle ?? null,
           log.projectName ?? null,

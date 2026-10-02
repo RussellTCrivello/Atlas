@@ -5352,7 +5352,7 @@ function AdvancedSystemPanel({
         <SettingInput
           disabled
           label="Storage model (fixed)"
-          value={runtime?.database?.storeModel || 'embedded-json-document-store'}
+          value={runtime?.database?.storeModel || 'sqlite'}
           onChange={() => {}}
         />
         <AdvancedToggleSetting
