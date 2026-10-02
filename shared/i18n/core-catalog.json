@@ -1,0 +1,54 @@
+{
+  "en": {
+    "app.name": "Atlas Workspace",
+    "nav.overview": "Overview",
+    "nav.projects": "Projects",
+    "nav.tasks": "My work",
+    "nav.people": "People",
+    "nav.activity": "Activity",
+    "nav.reports": "Reports",
+    "nav.alerts": "Alerts",
+    "nav.settings": "Settings",
+    "actions.new": "New",
+    "actions.search": "Search anything"
+  },
+  "ar": {
+    "app.name": "مساحة عمل أطلس",
+    "nav.overview": "نظرة عامة",
+    "nav.projects": "المشاريع",
+    "nav.tasks": "عملي",
+    "nav.people": "الأشخاص",
+    "nav.activity": "النشاط",
+    "nav.reports": "التقارير",
+    "nav.alerts": "التنبيهات",
+    "nav.settings": "الإعدادات",
+    "actions.new": "جديد",
+    "actions.search": "البحث في كل شيء"
+  },
+  "fa": {
+    "app.name": "فضای کاری اطلس",
+    "nav.overview": "نمای کلی",
+    "nav.projects": "پروژه‌ها",
+    "nav.tasks": "کارهای من",
+    "nav.people": "افراد",
+    "nav.activity": "فعالیت",
+    "nav.reports": "گزارش‌ها",
+    "nav.alerts": "هشدارها",
+    "nav.settings": "تنظیمات",
+    "actions.new": "جدید",
+    "actions.search": "جست‌وجوی همه چیز"
+  },
+  "he": {
+    "app.name": "סביבת העבודה Atlas",
+    "nav.overview": "סקירה",
+    "nav.projects": "פרויקטים",
+    "nav.tasks": "העבודה שלי",
+    "nav.people": "אנשים",
+    "nav.activity": "פעילות",
+    "nav.reports": "דוחות",
+    "nav.alerts": "התראות",
+    "nav.settings": "הגדרות",
+    "actions.new": "חדש",
+    "actions.search": "חיפוש בכל מקום"
+  }
+}
