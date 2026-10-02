@@ -1,0 +1,46 @@
+# TEMPORARY: probes what Electron's embedded Node offers (node:sqlite) on each OS, and how much text can be read back
+# through check-run annotations. Deleted once the answers are recorded.
+name: probe
+on: pull_request
+jobs:
+  electron-node:
+    name: electron-node (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        shell: bash
+      - name: Probe Electron's Node
+        shell: bash
+        run: |
+          cat > /tmp/probe.cjs <<'JS'
+          const out = []
+          const log = (...a) => out.push(a.join(' '))
+          log('electron', process.versions.electron, '| node', process.versions.node, '| chrome', process.versions.chrome, '| platform', process.platform, process.arch)
+          try {
+            const sqlite = require('node:sqlite')
+            const db = new sqlite.DatabaseSync(':memory:')
+            log('node:sqlite OK, sqlite', db.prepare('select sqlite_version() v').get().v)
+            db.exec('create virtual table t using fts5(a)')
+            log('FTS5 OK')
+            log('json OK', db.prepare("select json_extract('{\"a\":2}','$.a') a").get().a)
+            log('backup export:', typeof sqlite.backup)
+          } catch (e) { log('node:sqlite FAILED:', e && e.message) }
+          console.log(out.join('\n'))
+          JS
+          out=$(ELECTRON_RUN_AS_NODE=1 npx electron /tmp/probe.cjs 2>&1 | head -30 || true)
+          echo "$out"
+          msg="${out//$'\n'/%0A}"
+          echo "::notice title=electron-node ${{ matrix.os }}::${msg}"
+          # capacity test: a 40 kB annotation
+          big=$(head -c 40000 /dev/zero | tr '\0' 'x')
+          echo "::notice title=capacity-40k ${{ matrix.os }}::${big}"
