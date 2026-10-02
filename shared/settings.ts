@@ -2,7 +2,7 @@
 // Pure functions only (no I/O, no environment access) so the same code runs in the browser and on the server.
 import { BUILTIN_LANGUAGES, RTL_LANGUAGES, buildTranslationCatalog, stripBuiltinTranslations } from './i18n/catalog'
 
-export const DATABASE_MODEL = 'embedded-json-document-store'
+export const DATABASE_MODEL = 'sqlite'
 export const STORE_SCHEMA_VERSION = '3.1.0'
 
 export const DEFAULT_NAVIGATION = ['overview', 'projects', 'tasks', 'people', 'activity', 'reports', 'alerts']

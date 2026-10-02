@@ -2,8 +2,9 @@
 // The real client bundle runs in jsdom against a real server; jsdom does not cover layout or CSS.
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
-import { bucketFor } from '../../server/reports'
+import { bucketFor } from '../../server/domain/report-windows'
 import { addDays } from '../../server/util'
+import { insertActivities, settingsOf } from '../helpers/db'
 import { Api, type TestServer, launch, makeUser, setupAdmin } from '../helpers/server'
 import { type BootedUI, bootUI, textOf } from '../helpers/ui'
 
@@ -31,31 +32,15 @@ before(async () => {
   const [ann, bob, cy, oldTimer] = await Promise.all(['Ann Alpha', 'Bob Beta', 'Cy Gamma', 'Old Timer'].map(person))
   await person('Zed Zero')
   const today = (await admin.get('/api/bootstrap')).body.today as string
-  const lastWeek = addDays(bucketFor('weekly', today, server.db.state.settings), -3)
-  let n = 0
-  const entry = (personId: string, date: string) => ({
-    id: `activity_fixture_${++n}`,
-    personId,
-    date,
-    time: '09:00',
-    yesterday: '',
-    today: `Fixture update ${n}`,
-    blocked: '',
-    upcoming: '',
-    status: 'On track'
-  })
-  server.db.commit(
-    state => {
-      for (const [personId, count, date] of [
-        [ann, 3, today],
-        [cy, 2, today],
-        [bob, 1, today],
-        [oldTimer, 6, lastWeek]
-      ] as const)
-        for (let i = 0; i < count; i++) state.activities.push(entry(personId, date))
-    },
-    { reason: 'test-fixture' }
-  )
+  const lastWeek = addDays(bucketFor('weekly', today, settingsOf(server)), -3)
+  const updates = (personId: string, count: number, date: string) =>
+    Array.from({ length: count }, (_, i) => ({ personId, date, text: `Fixture update ${i}` }))
+  insertActivities(server, [
+    ...updates(ann, 3, today),
+    ...updates(cy, 2, today),
+    ...updates(bob, 1, today),
+    ...updates(oldTimer, 6, lastWeek)
+  ])
 
   // Milestones: eight open ones inserted out of order plus two finished ones with the earliest dates.
   const project = (await manager.api.post('/api/projects', { name: 'Roadmap', code: 'MAP' })).body

@@ -3,7 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { Api, PASSWORD, SETUP_TOKEN, type TestServer, launch, makeUser, setupAdmin, sleep } from '../helpers/server'
-import { LoginThrottle, SessionManager, validatePassword, hashPassword, verifyPassword } from '../../server/auth'
+import { auditRows } from '../helpers/db'
+import { hashPassword, validatePassword, verifyPassword } from '../../server/security/passwords'
+import { LoginThrottle } from '../../server/security/throttle'
+import { sha256 } from '../../server/util'
 
 describe('first-run setup (SEC-01)', () => {
   let server: TestServer
@@ -159,25 +162,23 @@ describe('sessions (SEC-05)', () => {
     }
   })
 
-  test('sessions expire after sessionDays (SessionManager)', async () => {
-    const manager = new SessionManager(null)
-    const token = manager.create('u1')
-    assert.ok(manager.resolve(token, 60_000))
+  test('sessions expire after sessionDays', async () => {
+    const sessions = server.container.sessions
+    const userId = String(server.db.scalar('SELECT id FROM users LIMIT 1'))
+    const token = sessions.create(userId)
+    assert.ok(sessions.resolve(token, 60_000))
     await sleep(15)
-    assert.equal(manager.resolve(token, 5), null)
-    assert.equal(manager.resolve(token, 60_000), null, 'an expired session is deleted, not merely ignored')
+    assert.equal(sessions.resolve(token, 5), null)
+    assert.equal(sessions.resolve(token, 60_000), null, 'an expired session is deleted, not merely ignored')
   })
 
-  test('only the SHA-256 of a token is persisted', async () => {
-    const dir = fs.mkdtempSync(path.join(server.dataDir, 'sess-'))
-    const file = path.join(dir, 'sessions.json')
-    const manager = new SessionManager(file)
-    const token = manager.create('u1')
-    manager.flush()
-    const text = fs.readFileSync(file, 'utf8')
-    assert.ok(!text.includes(token))
-    assert.ok(text.includes('"userId":"u1"'))
-    assert.equal((fs.statSync(file).mode & 0o777).toString(8), '600')
+  test('only the SHA-256 of a token is persisted, and the database file is private', async () => {
+    const userId = String(server.db.scalar('SELECT id FROM users LIMIT 1'))
+    const token = server.container.sessions.create(userId)
+    const stored = server.db.all('SELECT * FROM sessions WHERE user_id = ?', [userId])
+    assert.ok(stored.some(row => row.token_hash === sha256(token)))
+    assert.ok(!JSON.stringify(stored).includes(token), 'the token itself is nowhere in the table')
+    assert.equal((fs.statSync(path.join(server.dataDir, 'atlas.db')).mode & 0o777).toString(8), '600')
   })
 
   test('changing the password signs out other sessions but not this one, and the old password stops working', async () => {
@@ -268,7 +269,7 @@ describe('login throttling (SEC-04)', () => {
     await sleep(2300) // audit events for failures are batched
     const admin = new Api(server.url)
     // the account is locked, so use a fresh server session created through another path
-    const audit = server.db.state.auditLogs.filter(entry => entry.action === 'auth.login.failed')
+    const audit = auditRows(server, 'auth.login.failed')
     assert.ok(audit.length >= 5)
     assert.ok(audit[0].ip)
     assert.ok(admin)

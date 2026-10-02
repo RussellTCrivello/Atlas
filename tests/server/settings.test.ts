@@ -4,6 +4,7 @@ import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { buildTranslationCatalog } from '../../shared/i18n/catalog'
 import { diffPatch, mergePatch, normalizeSettings } from '../../shared/settings'
+import { auditRows, listBackups, openDirect, settingsOf } from '../helpers/db'
 import { Api, PASSWORD, type TestServer, launch, makeUser, setupAdmin } from '../helpers/server'
 
 let server: TestServer
@@ -83,16 +84,16 @@ describe('settings updates (VAL-01, VAL-03, UX-07, MIN-05)', () => {
 
   test('the client round-trip: a built-in catalog sent back by the UI is never frozen into the store', async () => {
     const catalog = buildTranslationCatalog()
-    const before = fs.statSync(path.join(server.dataDir, 'atlas-store.json')).size
+    const before = Number(server.db.scalar('SELECT length(document) FROM settings WHERE id = 1'))
     const res = await admin.put('/api/settings', {
       localization: { translations: { ar: { ...catalog.ar, 'nav.reports': 'تقاريرنا' }, en: { ...catalog.en } } }
     })
     assert.equal(res.status, 200)
-    const stored = server.db.state.settings.localization.translations
+    const stored = settingsOf(server).localization.translations
     assert.deepEqual(stored.ar, { 'nav.reports': 'تقاريرنا' })
     assert.deepEqual(Object.keys(stored), ['ar'], 'languages without overrides are not stored at all')
-    const growth = fs.statSync(path.join(server.dataDir, 'atlas-store.json')).size - before
-    assert.ok(growth < 8_000, `store grew by ${growth} bytes`)
+    const growth = Number(server.db.scalar('SELECT length(document) FROM settings WHERE id = 1')) - before
+    assert.ok(growth < 8_000, `the settings document grew by ${growth} bytes`)
     const catalogResponse = await new Api(server.url).get('/api/i18n/catalog?language=ar')
     assert.equal(catalogResponse.body.catalog['nav.reports'], 'تقاريرنا')
     assert.equal(catalogResponse.body.catalog['nav.projects'], catalog.ar['nav.projects'], 'built-ins still served')
@@ -111,7 +112,7 @@ describe('settings updates (VAL-01, VAL-03, UX-07, MIN-05)', () => {
     const res = await admin.post('/api/settings/import', { settings: edited })
     assert.equal(res.status, 200)
     assert.equal(res.body.workspace.name, 'Imported Name')
-    assert.ok(server.db.listBackups().some(b => b.reason === 'pre-settings-import'))
+    assert.ok(listBackups(server).some(b => b.reason === 'pre-settings-import'))
   })
 
   test('workflow states are validated and drive task statuses', async () => {
@@ -176,9 +177,9 @@ describe('settings updates (VAL-01, VAL-03, UX-07, MIN-05)', () => {
 
   test('changes to security and audit settings are themselves audited with before/after values', async () => {
     await admin.put('/api/settings', { audit: { retentionDays: 90 } })
-    const entry = server.db.state.auditLogs.filter(e => e.action === 'settings.updated').at(-1)!
-    assert.deepEqual((entry.detail as any).audit.from.retentionDays, 365)
-    assert.deepEqual((entry.detail as any).audit.to.retentionDays, 90)
+    const entry = auditRows(server, 'settings.updated').at(-1)!
+    assert.deepEqual(entry.detail.audit.from.retentionDays, 365)
+    assert.deepEqual(entry.detail.audit.to.retentionDays, 90)
     await admin.put('/api/settings', { audit: { retentionDays: 365 } })
   })
 
@@ -217,12 +218,12 @@ describe('safe mode: damaged stored settings cannot break the server (VAL-01)', 
     const fresh = await launch({ dataDir: dir, keep: true })
     const a = await setupAdmin(fresh)
     await fresh.close()
-    const file = path.join(dir, 'atlas-store.json')
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-    raw.settings.workspace.defaultTimezone = 'Not/AZone'
-    raw.settings.interface.theme = 'neon'
-    raw.settings.interface.tableBehavior.pageSize = -5
-    fs.writeFileSync(file, JSON.stringify(raw))
+    // Damage the stored settings document directly in the database file.
+    const damaged = openDirect(dir)
+    damaged.run(
+      "UPDATE settings SET document = json_set(document, '$.workspace.defaultTimezone', 'Not/AZone', '$.interface.theme', 'neon', '$.interface.tableBehavior.pageSize', -5) WHERE id = 1"
+    )
+    damaged.close()
     const again = await launch({ dataDir: dir })
     try {
       const b = new Api(again.url)

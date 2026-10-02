@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
+import { auditRows } from '../helpers/db'
 import { raw } from '../helpers/raw'
 import { Api, PASSWORD, type TestServer, launch, makeUser, setupAdmin, sleep } from '../helpers/server'
 
@@ -143,13 +144,14 @@ describe('authorization and data exposure (SEC-07)', () => {
 
   test('runtime missing-translation reports need a session and are never persisted', async () => {
     assert.equal((await new Api(server.url).post('/api/i18n/missing', { key: 'x.y' })).status, 401)
-    const before = fs.statSync(path.join(server.dataDir, 'atlas-store.json')).size
+    const before = server.container.ctx.revision
     for (let i = 0; i < 300; i++)
       assert.equal(
         (await viewer.api.post('/api/i18n/missing', { key: `spam.key.${i}`, fallback: 'x'.repeat(250) })).status,
         200
       )
-    assert.equal(fs.statSync(path.join(server.dataDir, 'atlas-store.json')).size, before, 'store file did not grow')
+    assert.equal(server.container.ctx.revision, before, 'nothing was written to the database')
+    assert.equal(server.db.scalar("SELECT count(*) FROM audit_log WHERE detail LIKE '%spam.key%'"), 0)
     const keys = (await admin.get('/api/i18n/missing')).body.keys
     assert.ok(keys.length <= 200, 'bounded')
     assert.equal((await viewer.api.get('/api/i18n/missing')).status, 403)
@@ -193,8 +195,8 @@ describe('authorization and data exposure (SEC-07)', () => {
       403
     )
     await sleep(2300)
-    assert.ok(server.db.state.auditLogs.some(e => e.action === 'data.exported' && (e.detail as any).rows === 12))
-    assert.ok(server.db.state.auditLogs.some(e => e.action === 'access.denied'))
+    assert.ok(auditRows(server, 'data.exported').some(e => e.detail.rows === 12))
+    assert.ok(auditRows(server, 'access.denied').length > 0)
   })
 
   test('per-person activity analytics are limited to managers unless the workspace opts in (GOV-02)', async () => {

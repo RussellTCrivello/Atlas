@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { bundle, root, runCli, skip, start, tmp, web } from '../helpers/bundle'
+import { openDirect } from '../helpers/db'
 import { Api, PASSWORD, SETUP_TOKEN } from '../helpers/server'
 
 describe('production bundle', { skip }, () => {
@@ -133,8 +134,13 @@ describe('production bundle', { skip }, () => {
     for (let i = 0; i < 20; i++) await api.post('/api/tasks', { title: `T${i}`, projectId: project.numericId })
     await first.stop('SIGKILL')
     assert.ok(fs.existsSync(path.join(dir, 'atlas.lock')), 'a killed process cannot clean up its lock')
-    const store = JSON.parse(fs.readFileSync(path.join(dir, 'atlas-store.json'), 'utf8'))
-    assert.equal(store.tasks.length, 20, 'every acknowledged write is on disk and the file is complete JSON')
+    const store = openDirect(dir, true)
+    try {
+      assert.equal(store.scalar('SELECT count(*) FROM tasks'), 20, 'every acknowledged write is on disk')
+      assert.equal(store.pragma('integrity_check'), 'ok', 'and the database is intact')
+    } finally {
+      store.close()
+    }
     const again = await start(dir)
     try {
       assert.equal((await new Api(again.base).get('/api/health')).status, 200)
@@ -151,8 +157,8 @@ describe('production bundle', { skip }, () => {
     await api.post('/api/projects', { name: 'Precious', code: 'PRC' })
     await api.post('/api/system/backup')
     await first.stop()
-    const file = path.join(dir, 'atlas-store.json')
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').slice(0, 300)) // truncated mid-write
+    const file = path.join(dir, 'atlas.db')
+    fs.writeFileSync(file, fs.readFileSync(file).subarray(0, 3000)) // truncated mid-write
     const damaged = fs.readFileSync(file)
     await assert.rejects(start(dir), (error: any) => {
       assert.equal(error.exitCode, 1)

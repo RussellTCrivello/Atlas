@@ -8,7 +8,7 @@ import { type RunningServer, loadConfig, startServer } from '../../server/index'
 import { raw } from '../helpers/raw'
 
 // The original P0: `npm run app` started Vite with the project root as its web root on 0.0.0.0, which served
-// /data/atlas-store.json (password hashes, audit log) and the server source to anyone on the network.
+// /data/atlas-store.json (password hashes, audit log; today /data/atlas.db) and the server source to anyone on the network.
 const MARKER = 'TOP-SECRET-MARKER-9f3a'
 let base: string
 let root: string
@@ -33,6 +33,7 @@ before(async () => {
   fs.writeFileSync(path.join(root, 'public', 'atlas-icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
   fs.writeFileSync(path.join(root, 'app.tsx'), `export const secret = "${MARKER}"\n`)
   fs.writeFileSync(path.join(root, 'server', 'store.ts'), `export const secret = "${MARKER}"\n`)
+  fs.writeFileSync(path.join(root, 'data', 'atlas.db-fixture'), MARKER)
   fs.writeFileSync(path.join(root, 'docs', 'internal.md'), MARKER)
   fs.writeFileSync(path.join(root, '.env'), `TOKEN=${MARKER}\n`)
   fs.writeFileSync(path.join(root, 'data', 'secret.json'), JSON.stringify({ marker: MARKER }))
@@ -55,7 +56,10 @@ describe('development server exposure (SEC-02)', () => {
   test('the data directory, server sources, docs and secrets are not served in any form', async () => {
     const paths = [
       '/data/secret.json',
-      '/data/atlas-store.json',
+      '/data/atlas.db',
+      '/data/atlas.db-wal',
+      '/data/atlas.db-shm',
+      '/data/atlas.lock',
       '/app.tsx',
       '/server/store.ts',
       '/docs/internal.md',

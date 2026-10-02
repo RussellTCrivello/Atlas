@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
-import { bucketFor } from '../../server/reports'
+import { bucketFor } from '../../server/domain/report-windows'
 import { addDays } from '../../server/util'
+import { auditRows, insertActivities, ledgerFor, listBackups, settingsOf } from '../helpers/db'
 import { Api, type TestServer, launch, makeUser, setupAdmin, sleep } from '../helpers/server'
 
 let server: TestServer
@@ -129,7 +130,7 @@ describe('task semantics', () => {
     assert.ok(done.body.completedAt)
     const reopened = await developer.api.patch(`/api/tasks/${task.numericId}/status`, { status: 'Review' })
     assert.equal(reopened.body.completedAt, '')
-    const actions = server.db.state.workLogs.filter(row => row.taskId === task.numericId).map(row => row.action)
+    const actions = ledgerFor(server, task.numericId).map(row => row.action)
     assert.deepEqual(actions, ['Created task', 'Completed task', 'Reopened task'])
   })
 
@@ -229,12 +230,12 @@ describe('referential integrity and destructive operations (DATA-05)', () => {
       (await boot()).tasks.some((x: any) => x.numericId === t.numericId),
       'still there'
     )
-    const before = server.db.listBackups().length
+    const before = listBackups(server).length
     const done = await manager.api.delete(`/api/projects/${p.numericId}?cascade=true`)
     assert.equal(done.status, 200)
     assert.equal(done.body.removed.tasks, 1)
-    assert.ok(server.db.listBackups().length > before, 'a pre-delete backup was taken')
-    assert.ok(server.db.listBackups().some(b => b.reason === 'pre-delete-project'))
+    assert.ok(listBackups(server).length > before, 'a pre-delete backup was taken')
+    assert.ok(listBackups(server).some(b => b.reason === 'pre-delete-project'))
     const empty = (await manager.api.post('/api/projects', { name: 'Empty', code: 'EMPT' })).body
     assert.equal(
       (await manager.api.delete(`/api/projects/${empty.numericId}`)).status,
@@ -288,10 +289,10 @@ describe('ledger and reports are honest (DATA-04, REP-01..03)', () => {
   test('events are attributed to the person who acted, not the assignee, and carry no invented minutes', async () => {
     const task = await makeTask({ assigneeId: devPerson, title: 'Moved by the manager' })
     await manager.api.patch(`/api/tasks/${task.numericId}/status`, { status: 'In progress' })
-    const row = server.db.state.workLogs.filter(r => r.taskId === task.numericId).find(r => r.action === 'Moved task')!
-    assert.equal(row.personId, managerPerson)
-    assert.equal(row.assigneeId, devPerson)
-    assert.equal((row as any).minutes, undefined)
+    const row = ledgerFor(server, task.numericId).find(r => r.action === 'Moved task')!
+    assert.equal(row.person_id, managerPerson)
+    assert.equal(row.assignee_id, devPerson)
+    assert.equal('minutes' in row, false, 'the ledger has no effort column at all')
     const report = (await manager.api.get('/api/reports/activity/weekly?userId=all')).body
     assert.equal(
       report.rows.some((r: any) => 'minutes' in r),
@@ -368,7 +369,7 @@ describe('ledger and reports are honest (DATA-04, REP-01..03)', () => {
 })
 
 describe('authorisation fails closed (VAL-04)', () => {
-  const auditCount = () => server.db.state.auditLogs.filter(entry => entry.action === 'alert.updated').length
+  const auditCount = () => auditRows(server, 'alert.updated').length
 
   test('an empty or partial alert patch is no way past authorisation, and a refused request leaves no audit entry', async () => {
     const alert = (await manager.api.post('/api/alerts', { title: 'Check the build', projectId: project.numericId }))
@@ -381,10 +382,7 @@ describe('authorisation fails closed (VAL-04)', () => {
         `a Viewer sending ${JSON.stringify(body)}`
       )
     assert.equal(auditCount(), before, 'nothing was recorded as an alert update')
-    const denied = () =>
-      server.db.state.auditLogs.some(
-        entry => entry.action === 'access.denied' && String((entry.detail as any)?.path).includes(alert.id)
-      )
+    const denied = () => auditRows(server, 'access.denied').some(entry => String(entry.detail?.path).includes(alert.id))
     for (let i = 0; i < 20 && !denied(); i++) await sleep(250) // denials are written to the audit trail in batches
     assert.ok(denied(), 'the refusals are audited as denials instead')
   })
@@ -400,17 +398,18 @@ describe('authorisation fails closed (VAL-04)', () => {
   })
 })
 
-describe('malformed stored data cannot take the server down (VAL-01)', () => {
-  test('a task with a garbage due date still lists and renders', async () => {
-    const task = await makeTask({ title: 'Will be damaged' })
-    const stored = server.db.state.tasks.find(t => t.id === task.numericId)!
-    stored.dueDate = 'not-a-date'
+describe('malformed data cannot get in, and odd data cannot take the server down (VAL-01)', () => {
+  test('the database itself refuses an impossible date, so a task can never hold one', async () => {
+    const task = await makeTask({ title: 'Will not be damaged' })
+    for (const bad of ['not-a-date', '2026-02-30', '2026-13-01', ''])
+      assert.throws(
+        () => server.db.run('UPDATE tasks SET due_date = ? WHERE id = ?', [bad, task.numericId]),
+        /CHECK constraint failed/,
+        `due_date ${JSON.stringify(bad)}`
+      )
     const res = await admin.get('/api/bootstrap')
     assert.equal(res.status, 200)
-    const row = res.body.tasks.find((t: any) => t.numericId === task.numericId)
-    assert.equal(row.due, 'not-a-date')
-    assert.equal(row.dueDays, null)
-    stored.dueDate = '2030-01-01'
+    assert.equal(res.body.tasks.find((t: any) => t.numericId === task.numericId).dueDate, task.dueDate)
   })
 })
 
@@ -419,34 +418,15 @@ describe('dashboard ranking and report windows (REP-03)', () => {
     const people = (await admin.get('/api/bootstrap')).body.people
     const ids = Object.fromEntries(people.map((p: any) => [p.name, p.id])) as Record<string, string>
     const today = (await boot()).today as string
-    const thisWeek = bucketFor('weekly', today, server.db.state.settings)
+    const thisWeek = bucketFor('weekly', today, settingsOf(server))
     const lastWeek = addDays(thisWeek, -2)
-    let n = 0
-    const entry = (personId: string, date: string) => ({
-      id: `activity_rank_${++n}`,
-      personId,
-      date,
-      time: '10:00',
-      yesterday: '',
-      today: `Update ${n}`,
-      blocked: '',
-      upcoming: '',
-      status: 'On track'
-    })
-    // Isolate from the updates other tests in this file posted for real; the original list is restored afterwards.
-    const original = server.db.state.activities
-    server.db.commit(
-      state => {
-        state.activities = []
-        for (const [name, count, date] of [
-          ['Dev Dana', 2, today],
-          ['Mia Manager', 4, today],
-          ['Vic Viewer', 9, lastWeek] // busiest overall, but not this week
-        ] as const)
-          for (let i = 0; i < count; i++) state.activities.push(entry(ids[name], date))
-      },
-      { reason: 'test-fixture' }
-    )
+    // Isolate from the updates other tests in this file posted for real.
+    server.db.transaction(() => server.db.run('DELETE FROM activities'))
+    insertActivities(server, [
+      ...Array.from({ length: 2 }, (_, i) => ({ personId: ids['Dev Dana'], date: today, text: `Dana ${i}` })),
+      ...Array.from({ length: 4 }, (_, i) => ({ personId: ids['Mia Manager'], date: today, text: `Mia ${i}` })),
+      ...Array.from({ length: 9 }, (_, i) => ({ personId: ids['Vic Viewer'], date: lastWeek, text: `Vic ${i}` })) // busiest overall, but not this week
+    ])
     try {
       const ranked = (await boot(manager.api)).dashboard.mostActive
       assert.deepEqual(
@@ -464,12 +444,6 @@ describe('dashboard ranking and report windows (REP-03)', () => {
       assert.deepEqual((await boot(developer.api)).dashboard.mostActive, ranked, 'visible once the workspace opts in')
       assert.equal((await admin.put('/api/settings', { reports: { activityVisibility: 'managers' } })).status, 200)
     } finally {
-      server.db.commit(
-        state => {
-          state.activities = original
-        },
-        { reason: 'test-fixture' }
-      )
       await admin.put('/api/settings', { reports: { activityVisibility: 'managers' } })
     }
   })

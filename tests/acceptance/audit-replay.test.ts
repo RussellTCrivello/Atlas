@@ -9,6 +9,7 @@ import path from 'node:path'
 import { before, describe, test } from 'node:test'
 import type { RunningServer } from '../../server/index'
 import { type Running, root, runCli, skip, start, tmp } from '../helpers/bundle'
+import { openDirect } from '../helpers/db'
 import { raw } from '../helpers/raw'
 import { Api, PASSWORD, SETUP_TOKEN, makeUser, setupAdmin, sleep } from '../helpers/server'
 
@@ -66,7 +67,9 @@ describe('audit replay against the production bundle', { skip }, () => {
   test('SEC-02 · only the web build is reachable: no store, no source, no config, no lock file', async () => {
     const leaks = /schemaVersion|passwordHash|scrypt\$|createApp|"name":\s*"atlas-workspace"|ATLAS_SETUP_TOKEN|"pid"/
     const routes = [
-      '/data/atlas-store.json',
+      '/data/atlas.db',
+      '/atlas.db',
+      '/atlas.db-wal',
       '/atlas-store.json',
       '/sessions.json',
       '/atlas.lock',
@@ -74,7 +77,7 @@ describe('audit replay against the production bundle', { skip }, () => {
       '/app.tsx',
       '/package.json',
       '/electron/main.cjs',
-      '/server/auth.ts',
+      '/server/security/passwords.ts',
       '/shared/password.ts',
       '/dist-desktop/app.mjs',
       '/tests/helpers/server.ts',
@@ -91,8 +94,8 @@ describe('audit replay against the production bundle', { skip }, () => {
   })
 
   test('SEC-03 · anonymous translation reports are refused; a signed-in user cannot grow the store through them', async () => {
-    const file = path.join(dir, 'atlas-store.json')
-    const before = fs.statSync(file).size
+    const revision = async () => (await admin.get('/api/revision')).body.revision
+    const before = await revision()
     const anonymous = new Api(server.base)
     for (let i = 0; i < 20; i++)
       assert.equal(
@@ -107,7 +110,7 @@ describe('audit replay against the production bundle', { skip }, () => {
       )
     for (let i = 0; i < 40; i++)
       await viewer.api.post('/api/i18n/missing', { key: `spam.${i}`, fallback: 'B'.repeat(2000) })
-    assert.equal(fs.statSync(file).size, before, 'the store file did not grow')
+    assert.equal(await revision(), before, 'nothing was written to the database')
     assert.equal((await admin.put('/api/settings', { workspace: { name: 'Still saves' } })).status, 200)
   })
 
@@ -253,9 +256,17 @@ describe('audit replay against the production bundle', { skip }, () => {
     const reset = runCli(demoDir, ['--reset-data'], { ATLAS_ALLOW_DEMO_DATA: 'true' })
     assert.equal(reset.status, 1)
     assert.match(reset.stderr, /Refusing to load demo data/)
-    const store = JSON.parse(fs.readFileSync(path.join(demoDir, 'atlas-store.json'), 'utf8'))
-    assert.equal(store.configured, false, 'the workspace is still waiting for first-run setup')
-    assert.equal(store.users.length, 0, 'no demo accounts were written')
+    const store = openDirect(demoDir, true)
+    try {
+      assert.equal(
+        store.get("SELECT value FROM meta WHERE key = 'configured'")?.value,
+        '0',
+        'the workspace is still waiting for first-run setup'
+      )
+      assert.equal(store.scalar('SELECT count(*) FROM users'), 0, 'no demo accounts were written')
+    } finally {
+      store.close()
+    }
   })
 
   // ---- P1: data ------------------------------------------------------------------------------------------------------------
@@ -291,7 +302,7 @@ describe('audit replay against the production bundle', { skip }, () => {
     const count = () =>
       runCli(dir, ['--list-backups'])
         .stdout.split('\n')
-        .filter(line => /\.json$/.test(line)).length
+        .filter(line => /\.db$/.test(line)).length
     const before = count()
     for (let i = 0; i < 2; i++) {
       const made = runCli(dir, ['--backup-data'], { ATLAS_BACKUP_RETENTION: 'abc' })

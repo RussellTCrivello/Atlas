@@ -23,6 +23,8 @@ export interface AtlasConfig {
   trustProxy: boolean | number | string
   backupRetention: number
   backupOnWrite: boolean
+  /** Most tasks sent to the browser at sign-in (the rest is always reachable through filters, project pages and exports). */
+  bootstrapTaskLimit: number
   /** One-time token that must accompany first-run setup. */
   setupToken: string
   setupTokenFromEnv: boolean
@@ -106,6 +108,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
       )
   }
 
+  // ---- how much the browser loads at sign-in -----------------------------------------------------------------
+  let bootstrapTaskLimit = 5000
+  if (env.ATLAS_BOOTSTRAP_TASK_LIMIT !== undefined && env.ATLAS_BOOTSTRAP_TASK_LIMIT !== '') {
+    if (/^\d+$/.test(env.ATLAS_BOOTSTRAP_TASK_LIMIT.trim()))
+      bootstrapTaskLimit = Math.min(50_000, Math.max(200, Number(env.ATLAS_BOOTSTRAP_TASK_LIMIT)))
+    else
+      warnings.push(`ATLAS_BOOTSTRAP_TASK_LIMIT="${env.ATLAS_BOOTSTRAP_TASK_LIMIT}" is not a whole number; using 5000.`)
+  }
+
   // ---- first-run setup token -------------------------------------------------------------------------------------
   let setupToken = String(env.ATLAS_SETUP_TOKEN || '').trim()
   let setupTokenFromEnv = Boolean(setupToken)
@@ -140,6 +151,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     trustProxy: parseTrustProxy(env.ATLAS_TRUST_PROXY),
     backupRetention,
     backupOnWrite: env.ATLAS_BACKUP_ON_WRITE === 'true',
+    bootstrapTaskLimit,
     setupToken,
     setupTokenFromEnv,
     allowedHosts: String(env.ATLAS_ALLOWED_HOSTS || '')

@@ -3,9 +3,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, describe, test } from 'node:test'
-import { SessionManager, verifyPassword } from '../../server/auth'
+import { createContainer } from '../../server/app/container'
 import { loadConfig } from '../../server/config'
-import { CliError, DocumentStore, runCommand } from '../../server/index'
+import { listBackupsIn } from '../../server/db/backup'
+import { openDatabase } from '../../server/db/open'
+import { CliError, runCommand } from '../../server/index'
+import { verifyPassword } from '../../server/security/passwords'
 import { Api, PASSWORD, launch, setupAdmin, sleep } from '../helpers/server'
 
 const dirs: string[] = []
@@ -16,6 +19,20 @@ const mkdir = () => {
 }
 const cfg = (dir: string, env: Record<string, string> = {}) =>
   loadConfig({ ATLAS_DATA_DIR: dir, ATLAS_TIMEZONE: 'Europe/Amsterdam', ...env } as NodeJS.ProcessEnv)
+
+/** Open the database the way the server does (lock, migrations) and give back the services; `close()` releases it. */
+function openStore(config: ReturnType<typeof cfg>) {
+  const opened = openDatabase(config)
+  const container = createContainer(config, opened.db)
+  return {
+    db: opened.db,
+    container,
+    close() {
+      opened.db.close()
+      opened.release?.()
+    }
+  }
+}
 after(() => dirs.forEach(dir => fs.rmSync(dir, { recursive: true, force: true })))
 
 async function capture(fn: () => Promise<unknown>) {
@@ -45,7 +62,7 @@ describe('operations commands report mistyped settings (DATA-03)', () => {
 
   test('a command prints the configuration warning; starting the server leaves that to its banner', async () => {
     const dir = mkdir()
-    DocumentStore.open(cfg(dir)).close()
+    openStore(cfg(dir)).close()
     const bad = cfg(dir, { ATLAS_BACKUP_RETENTION: 'abc' })
     const command = await warnings(['--list-backups'], bad)
     assert.ok(command.lines.some(line => line.includes('ATLAS_BACKUP_RETENTION')))
@@ -67,7 +84,7 @@ describe('demo data is gated (SEC-09)', () => {
       runCommand(['--reset-data'], cfg(dir, { NODE_ENV: 'development' })),
       (e: any) => e instanceof CliError && /ATLAS_ALLOW_DEMO_DATA=true/.test(e.message)
     )
-    assert.equal(fs.existsSync(path.join(dir, 'atlas-store.json')), false, 'nothing was written')
+    assert.equal(fs.existsSync(path.join(dir, 'atlas.db')), false, 'nothing was written')
   })
 
   test('ATLAS_ALLOW_DEMO_DATA is ignored (with a warning) under NODE_ENV=production', () => {
@@ -78,21 +95,26 @@ describe('demo data is gated (SEC-09)', () => {
 
   test('in development the flag loads demo data, snapshots an existing store first, and hashes the demo passwords', async () => {
     const dir = mkdir()
-    DocumentStore.open(cfg(dir)).close()
+    openStore(cfg(dir)).close()
     const out = await capture(() =>
       runCommand(['--reset-data'], cfg(dir, { NODE_ENV: 'development', ATLAS_ALLOW_DEMO_DATA: 'true' }))
     )
     assert.match(out, /Reset .* with development demo data/)
-    const db = DocumentStore.open(cfg(dir))
+    const store = openStore(cfg(dir))
     try {
-      assert.equal(db.state.configured, true)
-      assert.equal(db.state.tasks.length, 54)
-      assert.equal(db.state.settings.workspace.name, 'Northstar')
-      assert.ok(db.state.users.every(user => user.sample && user.passwordHash.startsWith('scrypt$')))
-      assert.ok(db.listBackups().some(b => b.reason === 'pre-reset-data'))
-      assert.ok(db.state.workLogs.every(row => !('minutes' in row)))
+      const { db } = store
+      assert.equal(store.container.auth.isConfigured(), true)
+      assert.equal(db.scalar('SELECT count(*) FROM tasks'), 54)
+      assert.equal(store.container.ctx.settings.workspace.name, 'Northstar')
+      assert.equal(
+        db.scalar("SELECT count(*) FROM users WHERE sample = 0 OR password_hash NOT LIKE 'scrypt$%'"),
+        0,
+        'every demo account is flagged as sample data and has a hashed password'
+      )
+      assert.ok(listBackupsIn(dir).some(b => b.reason === 'pre-reset-data'))
+      assert.ok(!db.all('PRAGMA table_info(work_logs)').some(column => column.name === 'minutes'))
     } finally {
-      db.close()
+      store.close()
     }
   })
 
@@ -161,23 +183,21 @@ describe('operations commands', () => {
   test('--init-production wipes only with --yes and always snapshots first', async () => {
     const dir = mkdir()
     const config = cfg(dir, { NODE_ENV: 'production' })
-    const seed = DocumentStore.open(config)
-    seed.commit(state => {
-      state.configured = true
-    })
+    const seed = openStore(config)
+    seed.db.transaction(() => seed.container.repos.meta.setConfigured(true))
     seed.close()
     await assert.rejects(
       runCommand(['--init-production'], config),
       (e: any) => e instanceof CliError && /--yes/.test(e.message)
     )
-    const probe = DocumentStore.open(config)
-    assert.equal(probe.state.configured, true)
+    const probe = openStore(config)
+    assert.equal(probe.container.auth.isConfigured(), true)
     probe.close()
     await runCommand(['--init-production', '--yes'], config)
-    const db = DocumentStore.open(config)
-    assert.equal(db.state.configured, false)
-    assert.ok(db.listBackups().some(b => b.reason === 'pre-init-production'))
-    db.close()
+    const store = openStore(config)
+    assert.equal(store.container.auth.isConfigured(), false)
+    assert.ok(listBackupsIn(dir).some(b => b.reason === 'pre-init-production'))
+    store.close()
   })
 
   test('--reset-admin-password recovers a locked-out account, ends its sessions and forces a new password', async () => {
@@ -193,18 +213,17 @@ describe('operations commands', () => {
     )
     const temp = /Temporary password \(shown once\): (\S+)/.exec(out)?.[1]
     assert.ok(temp && temp.length >= 12)
-    const db = DocumentStore.open(config)
+    const store = openStore(config)
     try {
-      const user = db.state.users[0]
+      const user = store.container.repos.users.list()[0]
       assert.equal(user.mustChangePassword, true)
       assert.equal((await verifyPassword(temp!, user.passwordHash)).ok, true)
       assert.equal((await verifyPassword(PASSWORD, user.passwordHash)).ok, false)
-      assert.ok(db.state.auditLogs.some(e => e.action === 'user.password.reset.cli'))
+      assert.ok(store.db.all("SELECT 1 FROM audit_log WHERE action = 'user.password.reset.cli'").length > 0)
+      assert.equal(store.container.sessions.resolve(cookie.split('=')[1], 1e12), null, 'old session no longer valid')
     } finally {
-      db.close()
+      store.close()
     }
-    const sessions = new SessionManager(path.join(dir, 'sessions.json'))
-    assert.equal(sessions.resolve(cookie.split('=')[1], 1e12), null, 'old session no longer valid')
     await assert.rejects(runCommand(['--reset-admin-password', '--email', 'nobody@example.com'], config), CliError)
     fs.rmSync(dir, { recursive: true, force: true })
   })
@@ -212,11 +231,11 @@ describe('operations commands', () => {
   test('--check-data validates, --list-backups lists, --backup-data copies', async () => {
     const dir = mkdir()
     const config = cfg(dir)
-    DocumentStore.open(config).close()
+    openStore(config).close()
     assert.match(await capture(() => runCommand(['--check-data'], config)), /OK/)
     assert.match(await capture(() => runCommand(['--backup-data'], config)), /Created backup/)
     assert.match(await capture(() => runCommand(['--list-backups'], config)), /manual/)
-    fs.writeFileSync(path.join(dir, 'atlas-store.json'), 'garbage')
+    fs.writeFileSync(path.join(dir, 'atlas.db'), 'garbage')
     await assert.rejects(runCommand(['--check-data'], config), CliError)
   })
 
