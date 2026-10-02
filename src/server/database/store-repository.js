@@ -269,7 +269,9 @@ export class SqliteStoreRepository {
   }
 
   tableCounts() {
-    return Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]))
+    const counts = Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]))
+    counts.userPreferences = Number(this.db.prepare('SELECT COUNT(*) AS count FROM user_preferences').get().count)
+    return counts
   }
 
   databaseInfo() {

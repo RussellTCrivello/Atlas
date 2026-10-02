@@ -114,57 +114,83 @@ function createCollectionTable(tableName, definition) {
 
 function toSnakeCase(value) { return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`) }
 
-export function migrateDatabase(db) {
-  const currentVersion = Number(db.prepare('PRAGMA user_version').get().user_version || 0)
-  if (currentVersion > 1) throw new Error(`Database schema ${currentVersion} is newer than this application supports (1)`)
-  if (currentVersion === 1) return
+export const CURRENT_SCHEMA_VERSION = 2
 
+function applyMigration(db, version, name, migrate) {
   db.exec('BEGIN IMMEDIATE')
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER NOT NULL PRIMARY KEY,
-        name TEXT NOT NULL,
-        applied_at TEXT NOT NULL
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS application_meta (
-        meta_key TEXT NOT NULL PRIMARY KEY,
-        value_json TEXT NOT NULL CHECK(json_valid(value_json))
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS workspace_settings (
-        id INTEGER NOT NULL PRIMARY KEY CHECK(id = 1),
-        settings_json TEXT NOT NULL CHECK(json_valid(settings_json)),
-        updated_at TEXT NOT NULL
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS id_counters (
-        name TEXT NOT NULL PRIMARY KEY,
-        value INTEGER NOT NULL CHECK(value >= 1)
-      ) STRICT;
-    `)
-    for (const [name, definition] of Object.entries(COLLECTIONS)) db.exec(createCollectionTable(definition.table || name, definition))
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_people_team ON people(team_id);
-      CREATE INDEX IF NOT EXISTS idx_users_person ON users(person_id);
-      CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
-      CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
-      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-      CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
-      CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
-      CREATE INDEX IF NOT EXISTS idx_activities_person_date ON activities(person_id, date);
-      CREATE INDEX IF NOT EXISTS idx_alerts_open_created ON alerts(resolved, created_at);
-      CREATE INDEX IF NOT EXISTS idx_work_logs_person_date ON work_logs(person_id, date);
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_people_email_unique ON people(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_code_unique ON projects(code COLLATE NOCASE) WHERE code IS NOT NULL AND trim(code) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique ON teams(name COLLATE NOCASE) WHERE name IS NOT NULL AND trim(name) <> '';
-      INSERT INTO schema_migrations(version, name, applied_at) VALUES(1, 'initial-relational-schema', datetime('now'));
-    `)
-    db.exec('PRAGMA user_version = 1')
+    migrate()
+    db.prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES(?, ?, datetime('now'))").run(version, name)
+    db.exec(`PRAGMA user_version = ${version}`)
     db.exec('COMMIT')
   } catch (error) {
-    db.exec('ROLLBACK')
+    try { db.exec('ROLLBACK') } catch {}
     throw error
+  }
+}
+
+function createInitialSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER NOT NULL PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS application_meta (
+      meta_key TEXT NOT NULL PRIMARY KEY,
+      value_json TEXT NOT NULL CHECK(json_valid(value_json))
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS workspace_settings (
+      id INTEGER NOT NULL PRIMARY KEY CHECK(id = 1),
+      settings_json TEXT NOT NULL CHECK(json_valid(settings_json)),
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS id_counters (
+      name TEXT NOT NULL PRIMARY KEY,
+      value INTEGER NOT NULL CHECK(value >= 1)
+    ) STRICT;
+  `)
+  for (const [name, definition] of Object.entries(COLLECTIONS)) db.exec(createCollectionTable(definition.table || name, definition))
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_people_team ON people(team_id);
+    CREATE INDEX IF NOT EXISTS idx_users_person ON users(person_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+    CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
+    CREATE INDEX IF NOT EXISTS idx_activities_person_date ON activities(person_id, date);
+    CREATE INDEX IF NOT EXISTS idx_alerts_open_created ON alerts(resolved, created_at);
+    CREATE INDEX IF NOT EXISTS idx_work_logs_person_date ON work_logs(person_id, date);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_people_email_unique ON people(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_code_unique ON projects(code COLLATE NOCASE) WHERE code IS NOT NULL AND trim(code) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique ON teams(name COLLATE NOCASE) WHERE name IS NOT NULL AND trim(name) <> '';
+  `)
+}
+
+function createUserPreferencesTable(db) {
+  db.exec(`
+    CREATE TABLE user_preferences (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      filters_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(filters_json)),
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+    ) STRICT;
+    CREATE INDEX idx_user_preferences_updated ON user_preferences(updated_at);
+  `)
+}
+
+export function migrateDatabase(db) {
+  let version = Number(db.prepare('PRAGMA user_version').get().user_version || 0)
+  if (version > CURRENT_SCHEMA_VERSION) throw new Error(`Database schema ${version} is newer than this application supports (${CURRENT_SCHEMA_VERSION})`)
+  if (version < 1) {
+    applyMigration(db, 1, 'initial-relational-schema', () => createInitialSchema(db))
+    version = 1
+  }
+  if (version < 2) {
+    applyMigration(db, 2, 'user-saved-filters', () => createUserPreferencesTable(db))
   }
 }

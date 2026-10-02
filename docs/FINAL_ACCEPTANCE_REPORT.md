@@ -2,13 +2,13 @@
 
 **Audit date:** 2026-10-02
 
-**Scope:** Runtime persistence, server modularization, API/data behavior, migration, security wiring, build, validation, and deployment documentation.
+**Scope:** Runtime persistence, server/client modularization, API/data behavior, migration, security wiring, build, validation, and deployment documentation.
 
 ## Executive conclusion
 
-Atlas now uses SQLite as the only runtime persistence source. The former `atlas-store.json` is accepted only as a one-time import source when SQLite has no workspace snapshot, and is archived after a successful SQL commit. Server responsibilities are split into database, domain, HTTP middleware, route groups, and shared-helper modules under `src/server/`; `app.tsx` is the composition root.
+Atlas now uses SQLite as the only runtime persistence source. The former `atlas-store.json` is accepted only as a one-time import source when SQLite has no workspace snapshot, and is archived after a successful SQL commit. Server responsibilities are split into database, domain, HTTP middleware, route groups, and shared-helper modules under `src/server/`; `app.tsx` is the server composition root. The browser API client, common UI, saved-filter context/repository, filtering and migration helpers, localization runtime, workspace defaults, forms, navigation, and feature pages are organized into role-specific modules under `src/`. `src/main.tsx` is now a compact client composition/state root rather than the home of feature implementations.
 
-The production web/server build succeeded, and the latest isolated production workflow passed **29/29 checks**, including CRUD, roles, backup/restore, restart persistence, schema normalization, one-time JSON import/archive, SQL integrity/foreign keys, and preservation of imported data. This supports **local/internal evaluation**, not an internet-facing security certification, multi-process deployment, browser accessibility certification, or a completed packaged Electron release.
+The production web/server build succeeded, and the latest isolated production workflow passed **33/33 checks**, including per-user SQL filter storage, v1-to-v2 migration, failed-write rollback, CRUD, roles, backup/restore, restart persistence, one-time JSON import/archive, SQL integrity/foreign keys, and preservation of imported data. This supports **local/internal evaluation**, not an internet-facing security certification, multi-process deployment, browser accessibility certification, or a completed packaged Electron release.
 
 ## Implemented changes and resolved findings
 
@@ -22,25 +22,29 @@ The production web/server build succeeded, and the latest isolated production wo
 | SQL schema changes and legacy record fidelity needed verification. | Repository round-trips typed fields, custom JSON values, identifier types, ordering, and empty/null/missing states; transactions run FK checks before commit. Validation covers backup restore, schema version normalization, explicit minutes, integrity, and FK constraints. |
 | Initial setup could duplicate a team/person where imported content already had the same team name or administrator email. | Setup reuses a matching existing team and links to a matching person instead of inserting conflicting duplicates. The import acceptance fixture checks this behavior. |
 | Package engine range allowed a Node 22 version where built-in `node:sqlite` still required an extra flag. | Minimum Node engine is now `>=22.13.0`; package manifest and lockfile agree. |
+| Advanced-filter conditions were the remaining application data stored in browser `localStorage`, and clearing a filter chip did not clear the builder's draft. | Added schema v2 `user_preferences` SQL storage per account, authenticated/validated preference endpoints, serialized browser saves, and a one-time guarded import of legacy `atlas-filter-*` values. SQL settings win during import; legacy browser keys are cleared only after the server confirms the SQL state. Chip clear/remove now persists and synchronizes with the builder. |
+| A failed SQLite snapshot write rolled back SQL but could leave the failed mutation in the process's in-memory workspace. | `persist()` now reloads the last committed SQL snapshot after any write failure. An injected SQLite trigger verifies failed CRUD is absent from SQL and memory and does not reappear after a later write. |
 | Production initialization could overwrite existing data without an explicit override. | Existing-store protection remains in place. Fresh isolated init succeeded; a second init was refused and the database SHA-256 remained unchanged. |
+| The frontend entry file mixed localization catalogs, defaults, navigation, forms, administration, and operational pages, making feature ownership difficult to maintain. | Split client concerns into `src/components/`, `src/pages/`, `src/config/`, `src/i18n/`, `src/context/`, `src/api/`, and `src/lib/`. `src/main.tsx` now composes the app and owns cross-page runtime state; page and shared component implementations live in responsibility-specific modules. |
 | Other previously audited UI/API defects: inconsistent action/role affordances, unredacted integration secrets, hidden-module navigation, blocker alert deduplication, weak custom-field enforcement, settings error visibility, non-JSON API failures, reverse-proxy IP handling, and offline-shell behavior. | Prior corrections remain in place. Role capabilities are still enforced at API boundaries; the outstanding policy limitations below are not presented as security controls. |
 
 ## Data and schema model
 
 - Runtime database: `<ATLAS_DATA_DIR>/atlas.sqlite`; default `data/atlas.sqlite`.
 - Electron database: `<userData>/data/atlas.sqlite`.
-- Physical schema version: SQLite `PRAGMA user_version = 1`.
+- Physical schema version: SQLite `PRAGMA user_version = 2`.
 - Domain data schema: `4.0.0`.
-- Tables include teams, people, projects, tasks, milestones, activities, alerts, users, work logs, audit logs, settings, metadata, counters, and migration history.
+- Tables include teams, people, projects, tasks, milestones, activities, alerts, users, per-user `user_preferences`, work logs, audit logs, settings, metadata, counters, and migration history.
 - Writes use SQLite transactions, foreign-key checks, WAL journaling, and `synchronous=FULL`.
 - Backups are standalone `.sqlite` files created with `VACUUM INTO`; restore only with Atlas stopped and stale WAL/SHM files handled as documented.
 - Legacy JSON imports are archived under `<ATLAS_DATA_DIR>/legacy/` after commit. Corrupt JSON is moved aside rather than silently parsed as valid data.
 
 ## Fresh verification
 
-- `npm run build` — passed; Vite transformed 218 modules and esbuild produced `dist-desktop/app.mjs`.
-- `TEST_PORT=5193 node scripts/final-validation.mjs` — **29/29 checks passed**. The latest raw record is [`audit-validation-results-2026-10-02.json`](audit-validation-results-2026-10-02.json). It includes production API setup/auth, role-based CRUD, settings import/export, SQLite backup/restore, restart persistence, task-volume reporting, schema migration, explicit legacy work-log minutes, one-time legacy JSON import and archival, setup without data loss, and SQL integrity/FK validation.
-- Sandbox measurements for 160 sequential task writes: **1,830 ms**; bootstrap **7 ms**; weekly report **4 ms**; monthly activity report **40 ms**. These are a single-run sandbox result, not capacity targets.
+- `npm run build` — passed after the client split; Vite transformed 240 modules and esbuild produced `dist-desktop/app.mjs` (197.5 kB).
+- `npm run test:unit` — passed advanced-filter/sort utilities, legacy browser-filter import/merge/cleanup checks, and localization-catalog/translation behavior.
+- `TEST_PORT=5193 node scripts/final-validation.mjs` — **33/33 checks passed**. The latest raw record is [`audit-validation-results-2026-10-02.json`](audit-validation-results-2026-10-02.json). It includes schema v1-to-v2 migration, per-user preference isolation and restart/backup persistence, invalid-preference rejection, injected failed-write rollback, production API setup/auth, role-based CRUD, settings import/export, SQLite backup/restore, task-volume reporting, explicit legacy work-log minutes, one-time legacy JSON import/archive, SQL integrity, and foreign-key checks.
+- Latest sandbox measurements for 160 sequential task writes: **2,412 ms**; bootstrap **6 ms**; weekly report **4 ms**; monthly activity report **30 ms**. These are single-run sandbox results, not capacity targets.
 - `npm audit` and `npm audit --omit=dev` — zero reported vulnerabilities at validation time.
 - `npm ls --depth=0` — all declared top-level dependencies resolve to manifest/lockfile versions; package engine is `>=22.13.0`.
 - `git diff --check` — passed. Build validates the TSX app; JavaScript modules and validation scripts pass Node syntax checks.

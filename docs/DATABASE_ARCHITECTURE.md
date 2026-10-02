@@ -9,7 +9,7 @@ Atlas uses an embedded relational SQLite database for **all runtime persistence*
 | Runtime engine | SQLite through Node's built-in `node:sqlite` / `DatabaseSync` |
 | Web/local database | `<ATLAS_DATA_DIR>/atlas.sqlite`, default `data/atlas.sqlite` |
 | Electron database | `<userData>/data/atlas.sqlite` |
-| Physical database schema | `PRAGMA user_version = 1`, managed in `src/server/database/schema.js` |
+| Physical database schema | `PRAGMA user_version = 2`, managed in `src/server/database/schema.js` |
 | Domain data version | `STORE_SCHEMA_VERSION = 4.0.0`, normalized by `src/server/domain/store.js` |
 | Write model | In-memory workspace snapshot persisted transactionally across relational tables |
 | Backups | Standalone SQLite snapshots created with `VACUUM INTO` under `data/backups/` |
@@ -28,17 +28,23 @@ Atlas does not connect to an external database service. Keep one application pro
 - `src/server/database/schema.js` — table definitions, indexes, foreign keys, and physical migrations.
 - `src/server/database/connection.js` — SQLite connection, durability/security pragmas, private directory setup.
 - `src/server/database/store-repository.js` — record conversion, snapshot reads/writes, backup, integrity, and counts.
+- `src/server/database/user-preferences-repository.js` — per-user SQL preferences, currently saved advanced filters.
 - `src/server/domain/store.js` — default/legacy normalization, generated seed data, integrity validation, and checksums.
 - `src/server/domain/` — settings, workspace mapping/report logic, security, and time services.
-- `src/server/routes/` — API route groups; route handlers use the repository/service composition from `app.tsx`.
+- `src/server/routes/` — role-grouped API route modules, including validated saved-filter preferences.
+- Client modules under `src/api/`, `src/components/`, `src/pages/`, `src/config/`, `src/i18n/`, `src/context/`, and `src/lib/` — API, shared UI, feature pages, workspace defaults, localization, user preferences, and filter/workspace helpers. `src/main.tsx` is the client composition/state root.
 
 ## Schema and tables
 
-The physical schema is migrated transactionally and marked with SQLite's `user_version`. Schema version 1 creates:
+The physical schema is migrated transactionally and marked with SQLite's `user_version`. Schema version 1 creates the workspace, metadata, settings, counters, and migration-history tables. Schema version 2 adds:
+
+- `user_preferences` — one SQL row per account for validated saved-filter conditions, with a foreign key that cascades when the account is deleted.
+
+The relational workspace tables are:
 
 - `teams`, `people`, `projects`, `tasks`, `milestones`, `activities`, `alerts`
 - `users`, `work_logs`, `audit_logs`
-- `workspace_settings` — the single normalized settings document stored as validated JSON text in SQL
+- `workspace_settings` — the normalized workspace settings document stored as validated JSON text in SQL
 - `application_meta` — store metadata and configured status
 - `id_counters` — next project/task numeric identifiers
 - `schema_migrations` — applied physical schema version/name/time
@@ -58,6 +64,7 @@ Known JSON/custom-field properties are stored in JSON-validated SQL columns. Boo
 - `teams 1 ── * people` — team deletion is restricted while referenced.
 - `teams 1 ── * projects` — team deletion is restricted while referenced.
 - `people 1 ── * users` — profile deletion is restricted while referenced.
+- `users 1 ── 0..1 user_preferences` — each account has at most one saved-filter preference row; deleting the account cascades its preferences.
 - `people 1 ── * projects` — owner deletion is restricted while referenced.
 - `people 1 ── * tasks` — assignee deletion is restricted while referenced.
 - `people 1 ── * activities` — person deletion is restricted while referenced.
@@ -78,6 +85,8 @@ Unique indexes enforce non-empty, case-insensitive team names, person/user email
 3. Run the physical schema migration if needed.
 4. Load the singleton settings/metadata/counters and entity tables into the in-memory workspace snapshot.
 5. Normalize application-level defaults and compatibility fields, then write the normalized snapshot back to SQLite without incrementing the write count.
+
+After an authenticated user loads the workspace, Atlas checks the former browser keys `atlas-filter-projects`, `atlas-filter-tasks`, `atlas-filter-people`, `atlas-filter-activity`, and `atlas-filter-alerts`. Valid conditions are imported into that account's `user_preferences` row only when the SQL preference for that filter key does not already exist. The browser keys are removed only after the server confirms the SQL preferences were read or saved. This is a one-time compatibility import; all later filter reads/writes use SQLite. When the same browser is shared by multiple accounts during the upgrade, the first account that completes this import receives the legacy browser-wide filters; existing SQL values always take precedence.
 
 ### One-time legacy JSON import
 
@@ -103,7 +112,7 @@ Every `persist()` operation:
 5. Writes settings, metadata, configured state, and counters.
 6. Runs a foreign-key check and commits; errors roll back the entire write.
 
-This makes one application-level snapshot write transactional. The design currently rewrites/upserts the complete in-memory snapshot rather than issuing narrowly scoped SQL for each request. Public reads/reporting are built from that in-memory view, not independent SQL queries.
+This makes one application-level snapshot write transactional. If SQLite rejects a write, the request fails and the in-memory workspace is restored from the last committed SQL snapshot, preventing a failed mutation from leaking into subsequent reads or writes. Saved-filter preferences use a separate parameterized `INSERT ... ON CONFLICT` against `user_preferences`, so changing a user's filters does not rewrite the workspace snapshot. The workspace design currently rewrites/upserts the complete in-memory snapshot rather than issuing narrowly scoped SQL for each domain request. Public reads/reporting are built from that in-memory view, not independent SQL queries.
 
 ## Backup and restore
 

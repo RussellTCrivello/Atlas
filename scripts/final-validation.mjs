@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
+import { openSqliteDatabase } from '../src/server/database/connection.js'
+import { UserPreferencesRepository } from '../src/server/database/user-preferences-repository.js'
 
 const root = process.cwd()
 const port = Number(process.env.TEST_PORT || 5193)
@@ -12,6 +14,8 @@ const dataDir = path.resolve(process.env.TEST_DATA_DIR || path.join(validationRo
 const databaseFile = path.join(dataDir, 'atlas.sqlite')
 const legacyImportDataDir = path.join(validationRoot, 'legacy-json-import-data')
 const legacyImportDatabaseFile = path.join(legacyImportDataDir, 'atlas.sqlite')
+const schemaMigrationDataDir = path.join(validationRoot, 'schema-migration-data')
+const schemaMigrationDatabaseFile = path.join(schemaMigrationDataDir, 'atlas.sqlite')
 const resultPath = path.resolve(process.env.TEST_RESULT_PATH || path.join(dataDir, 'final-validation-results.json'))
 if (dataDir === root || !dataDir.startsWith(`${validationRoot}${path.sep}`)) throw new Error('Refusing to delete validation data outside .audit-test-data')
 if (resultPath === root || !resultPath.startsWith(`${validationRoot}${path.sep}`)) throw new Error('Refusing to write validation results outside .audit-test-data')
@@ -60,6 +64,35 @@ let server
 let safePathsValidated = false
 
 function record(name, status, detail = {}) { report.checks.push({ name, status, ...detail }) }
+function validateSchemaV1Migration() {
+  assertSafeChildDataDir(schemaMigrationDataDir)
+  fs.rmSync(schemaMigrationDataDir, { recursive: true, force: true })
+  fs.mkdirSync(schemaMigrationDataDir, { recursive: true })
+  const legacyDatabase = new DatabaseSync(schemaMigrationDatabaseFile)
+  legacyDatabase.exec(`
+    CREATE TABLE schema_migrations(version INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT;
+    CREATE TABLE users(id TEXT NOT NULL PRIMARY KEY) STRICT;
+    INSERT INTO schema_migrations(version, name, applied_at) VALUES(1, 'initial-relational-schema', datetime('now'));
+    PRAGMA user_version = 1;
+  `)
+  legacyDatabase.close()
+
+  const database = openSqliteDatabase(schemaMigrationDatabaseFile, { dataDirectory: schemaMigrationDataDir })
+  try {
+    assert.equal(Number(database.prepare('PRAGMA user_version').get().user_version), 2)
+    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 2").get().name, 'user-saved-filters')
+    assert.equal(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'").get().name, 'user_preferences')
+    database.prepare('INSERT INTO users(id) VALUES(?)').run('migration-user')
+    const preferences = new UserPreferencesRepository(database)
+    const filters = { projects: [{ field: 'name', operator: 'contains', join: 'AND', value: 'legacy' }] }
+    assert.deepEqual(preferences.saveFilters('migration-user', filters), filters)
+    database.prepare('DELETE FROM users WHERE id = ?').run('migration-user')
+    assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM user_preferences').get().count), 0)
+  } finally {
+    database.close()
+  }
+  record('SQLite schema v1-to-v2 migration and user-preference cascade', 'pass')
+}
 async function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 async function raw(pathname, options = {}) {
   const started = performance.now()
@@ -202,6 +235,7 @@ async function main() {
   assertSafeDataDir()
   safePathsValidated = true
   fs.mkdirSync(path.dirname(resultPath), { recursive: true })
+  validateSchemaV1Migration()
   await startServer()
   try {
     const publicClient = new Client('public')
@@ -212,7 +246,7 @@ async function main() {
     assert.deepEqual(setupStatus.body, { configured: false, demoAllowed: false, demo: null })
     record('production first-run has no demo credentials', 'pass')
     const runtime = await publicClient.get('/api/runtime-config')
-    assert.equal(runtime.body.database.schemaVersion, 1)
+    assert.equal(runtime.body.database.schemaVersion, 2)
     assert.equal(runtime.body.database.engine, 'SQLite')
     assert.equal(runtime.body.database.transactionalWrites, true)
     assert.equal(runtime.body.designSystem.version, '2.0.0')
@@ -232,6 +266,18 @@ async function main() {
     assert.equal(bootstrap.body.settings.workspace.name, 'Atlas Acceptance')
     assert.ok(bootstrap.body.settings.localization.textDirectionByLanguage.ar === 'rtl')
     record('administrator setup and bootstrap', 'pass')
+
+    const adminFilters = {
+      projects: [{ field: 'name', operator: 'contains', join: 'AND', value: 'Atlas' }],
+      tasks: []
+    }
+    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: {} })
+    assert.deepEqual((await admin.put('/api/preferences', { filters: adminFilters })).body, { filters: adminFilters })
+    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: adminFilters })
+    await admin.put('/api/preferences', { filters: { tasks: [{ field: 'status', operator: 'invalid', value: 'Done' }] } }, 400)
+    await admin.put('/api/preferences', { filters: { tasks: [{ field: 'status', operator: 'equals', join: 'XOR', value: 'Done' }] } }, 400)
+    await admin.put('/api/preferences', { filters: adminFilters, unexpected: true }, 400)
+    record('authenticated SQL saved filters, input validation, and per-user preferences', 'pass')
 
     await admin.post('/api/auth/login', { email: 'admin@example.com', password: 'wrong-password' }, 401)
     record('invalid login rejected', 'pass')
@@ -268,12 +314,27 @@ async function main() {
     await admin2.post('/api/auth/login', { email: 'admin@example.com', password: 'StrongPass123' })
     bootstrap = await admin2.get('/api/bootstrap')
     assert.equal(bootstrap.body.settings.workspace.name, 'Atlas Acceptance Backup Point')
+    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters })
     record('backup restoration and restart persistence', 'pass')
     await admin2.get('/api/no-such-route', 404)
     await admin2.post('/api/audit/export', { title: 'API audit smoke test', format: 'csv', rowCount: 1 })
     record('unknown API route and export audit handling', 'pass')
 
     const team = (await admin2.post('/api/teams', { name: 'Global Delivery', color: 'blue' })).body
+    const failureTriggerDb = new DatabaseSync(databaseFile)
+    try {
+      failureTriggerDb.exec(`CREATE TRIGGER acceptance_abort_person_insert BEFORE INSERT ON people WHEN NEW.email = 'rollback@example.com' BEGIN SELECT RAISE(ABORT, 'injected acceptance failure'); END`)
+    } finally { failureTriggerDb.close() }
+    await admin2.post('/api/people', { name: 'Rolled Back Person', email: 'rollback@example.com', teamId: team.id }, 500)
+    const rollbackCheckDb = new DatabaseSync(databaseFile)
+    try {
+      rollbackCheckDb.exec('DROP TRIGGER acceptance_abort_person_insert')
+      assert.equal(Number(rollbackCheckDb.prepare("SELECT COUNT(*) AS count FROM people WHERE email = 'rollback@example.com'").get().count), 0)
+    } finally { rollbackCheckDb.close() }
+    const rollbackBootstrap = await admin2.get('/api/bootstrap')
+    assert.equal(rollbackBootstrap.body.people.some(person => person.email === 'rollback@example.com'), false)
+    record('failed SQL writes roll back in-memory state to the last committed snapshot', 'pass')
+
     const managerPerson = (await admin2.post('/api/people', { name: 'Mona Manager', email: 'manager@example.com', jobTitle: 'Delivery Manager', teamId: team.id, focus: 'Portfolio health', capacity: 80 })).body
     const developerPerson = (await admin2.post('/api/people', { name: 'ليلى Developer', email: 'developer@example.com', jobTitle: 'Engineer', teamId: team.id, focus: 'Feature delivery', capacity: 75 })).body
     const viewerPerson = (await admin2.post('/api/people', { name: 'Omar Viewer', email: 'viewer@example.com', jobTitle: 'Analyst', teamId: team.id, focus: 'Reporting', capacity: 40 })).body
@@ -288,6 +349,11 @@ async function main() {
 
     const manager = new Client('manager')
     await manager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
+    assert.deepEqual((await manager.get('/api/preferences')).body, { filters: {} })
+    const managerFilters = { tasks: [{ field: 'title', operator: 'contains', join: 'AND', value: 'release' }] }
+    assert.deepEqual((await manager.put('/api/preferences', { filters: managerFilters })).body, { filters: managerFilters })
+    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters })
+    record('saved filters are isolated between authenticated users', 'pass')
     let project = (await manager.post('/api/projects', { name: 'Client Portal مشروع', code: 'CP', description: 'Bilingual delivery project', teamId: team.id, ownerId: managerPerson.id, color: 'purple', status: 'On track' })).body
     await manager.post('/api/milestones', { name: 'Pilot review', projectId: project.numericId, status: 'Upcoming' })
     await manager.post('/api/tasks', { title: 'Required field check', projectId: project.numericId, assigneeId: managerPerson.id, status: 'Draft', priority: 'High', customFields: { client_code: 'MGR-0' } }, 400)
@@ -366,7 +432,11 @@ async function main() {
     assert.ok(finalBootstrap.body.tasks.length >= 162)
     assert.equal(finalBootstrap.body.settings.language, 'ar')
     assert.ok(finalBootstrap.body.settings.customFields.tasks.some(f => f.key === 'client_code'))
-    record('final restart data/settings persistence', 'pass')
+    assert.deepEqual((await admin3.get('/api/preferences')).body, { filters: adminFilters })
+    const persistedManager = new Client('manager-after-final-restart')
+    await persistedManager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
+    assert.deepEqual((await persistedManager.get('/api/preferences')).body, { filters: managerFilters })
+    record('final restart data/settings and per-user filters persistence', 'pass')
 
     await stopServer()
     let preservedWorkLogId = ''
@@ -393,7 +463,7 @@ async function main() {
     if (preservedWorkLogId) assert.equal(migrationReport.body.rows.find(row => row.id === preservedWorkLogId)?.minutes, 45)
     const migrationHealth = await migrated.get('/api/system')
     assert.equal(migrationHealth.body.store.schemaVersion, '4.0.0')
-    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 1)
+    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 2)
     record('legacy work-log migration removes generated rows and preserves explicit minutes', 'pass')
 
     await stopServer()

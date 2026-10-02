@@ -33,19 +33,21 @@ src/server/
   shared/     validated, reusable primitives
 ```
 
-Routes are grouped by responsibility (`system`, `users`, `directory`, `tasks-projects`, `activity-alerts`) and registered through `src/server/routes/index.js`. Cross-cutting dependencies are injected through the route-service object in `app.tsx`; domain factories receive explicit dependencies rather than importing application globals. Keep new logic in the closest responsibility module and wire it at the composition root. Avoid growing `app.tsx` with feature-specific route handlers or domain rules.
+Routes are grouped by responsibility (`system`, `users`, `directory`, `tasks-projects`, `activity-alerts`, and `preferences`) and registered through `src/server/routes/index.js`. Cross-cutting dependencies are injected through the route-service object in `app.tsx`; domain factories receive explicit dependencies rather than importing application globals. Client concerns are grouped by role: API and user-preference services, shared UI/filter/export/form/navigation components, access/settings/operational pages, workspace defaults, localization runtime, and pure helpers each live in focused modules under `src/`. `src/main.tsx` is the React composition and cross-page state root. Keep new logic in the closest responsibility module and wire it at the composition root. Avoid growing `app.tsx` with feature-specific route handlers or domain rules, and avoid reintroducing feature implementations into `src/main.tsx`.
 
 Development mounts Vite middleware in the Node process. Production serves `dist/` static files from the same process. Electron imports `dist-desktop/app.mjs` into its main process and serves the same UI/API locally.
 
 ## SQL persistence and legacy data
 
-All runtime persistence is SQLite at `data/atlas.sqlite` (or `ATLAS_DATA_DIR/atlas.sqlite`). Electron stores it under `<userData>/data/atlas.sqlite`. The SQL database is the only runtime source of truth. The former `atlas-store.json` is read only if no SQLite snapshot exists; successful import commits to SQLite and then moves the source to `data/legacy/`. It is not rewritten or consulted on subsequent starts.
+All runtime persistence is SQLite at `data/atlas.sqlite` (or `ATLAS_DATA_DIR/atlas.sqlite`). Electron stores it under `<userData>/data/atlas.sqlite`. The SQL database is the only runtime source of truth. The former `atlas-store.json` is read only if no SQLite snapshot exists; successful import commits to SQLite and then moves the source to `data/legacy/`. It is not rewritten or consulted on subsequent starts. Per-user advanced filters are stored in the versioned `user_preferences` SQL table. The only remaining browser `localStorage` access is the guarded, one-time import of the former `atlas-filter-*` keys; keys are cleared after the SQL endpoint confirms success, and are never used for ongoing filter reads or saves.
 
 - SQLite DDL and schema versioning: `src/server/database/schema.js`.
 - Node connection/pragmas: `src/server/database/connection.js`.
 - Collection conversion, transactional upsert/delete, integrity and SQLite backups: `src/server/database/store-repository.js`.
+- Per-user advanced-filter persistence: `src/server/database/user-preferences-repository.js` and `src/server/routes/preferences.routes.js`.
 - Domain snapshot normalization and data-schema metadata: `src/server/domain/store.js`.
 - Workspace/settings/security/time rules: `src/server/domain/`.
+- Client organization: API in `src/api/`; shared UI grouped under `src/components/` (common, exports, filters, forms, navigation); access, settings, and operational pages in `src/pages/`; user preferences in `src/context/`; defaults/localization in `src/config/` and `src/i18n/`; pure filter and workspace helpers in `src/lib/`.
 
 When adding a stored collection or a typed property:
 
@@ -91,7 +93,14 @@ This runs:
 
 ```text
 app.tsx                         Runtime composition root and Express startup
-src/main.tsx                    React/TSX interface
+src/main.tsx                    React app composition and cross-page state root
+src/api/                        Browser API client
+src/components/                 Common, export, filter, form and navigation UI
+src/pages/                      Access/setup, settings and operational features
+src/config/                     Workspace defaults and role definitions
+src/i18n/                       Localization catalog and runtime
+src/context/                    User preference provider
+src/lib/                        Filter, migration and workspace helpers
 src/styles.css                  Local design system and responsive/print styles
 src/desktop.js                  Browser/Electron display-mode helper
 src/server/database/            SQLite schema, migration, connection, repository
@@ -131,7 +140,7 @@ docs/                            Product, developer and operations documentation
 
 ### UI and CSS
 
-- Use existing component patterns in `src/main.tsx`.
+- Put reusable controls in `src/components/` and feature-specific screens in `src/pages/`; keep `src/main.tsx` focused on app composition and shared runtime state.
 - Prefer tokens and existing classes in `src/styles.css` over one-off styles.
 - Add role-aware controls and read-only states; server authorization remains authoritative.
 - Keep keyboard focus visible. Do not import external stylesheets/fonts.

@@ -114,7 +114,7 @@ The single app design reduces deployment complexity, supports desktop packaging,
 Atlas uses an embedded, relational SQLite database for all runtime persistence:
 
 - Database: `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`)
-- Physical SQLite schema: version 1; domain store schema: `4.0.0`
+- Physical SQLite schema: version 2; domain store schema: `4.0.0`
 - Snapshot writes: SQLite transactions with foreign-key validation
 - Integrity checks: SQLite and domain-level checks
 - Backup command: `npm run backup:data` creates `.sqlite` backups

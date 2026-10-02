@@ -4,6 +4,7 @@ import express from 'express'
 import cookieParser from 'cookie-parser'
 import { openSqliteDatabase } from './src/server/database/connection.js'
 import { SqliteStoreRepository } from './src/server/database/store-repository.js'
+import { UserPreferencesRepository } from './src/server/database/user-preferences-repository.js'
 import { registerRoutes } from './src/server/routes/index.js'
 import { createSettingsService } from './src/server/domain/settings.js'
 import { createWorkspaceServices } from './src/server/domain/workspace.js'
@@ -60,6 +61,7 @@ const storeRepository = new SqliteStoreRepository(sqliteDatabase, {
   dataDirectory: dataDir,
   backupRetention: DEFAULT_BACKUP_RETENTION
 })
+const userPreferencesRepository = new UserPreferencesRepository(sqliteDatabase)
 function listBackups() { return storeRepository.listBackups() }
 function pruneBackups() { storeRepository.pruneBackups() }
 function createBackup(reason = 'manual') {
@@ -143,7 +145,22 @@ if (process.argv.includes('--backup-data')) {
   process.exit(0)
 }
 store = loadStore()
-function persist(options = {}) { store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === 'true', reason: options.reason || 'persist' }) }
+let lastCommittedStore = structuredClone(store)
+function persist(options = {}) {
+  try {
+    store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === 'true', reason: options.reason || 'persist' })
+    lastCommittedStore = structuredClone(store)
+  } catch (error) {
+    try {
+      const committedSnapshot = storeRepository.loadSnapshot()
+      store = committedSnapshot ? normalizeStore(committedSnapshot) : structuredClone(lastCommittedStore)
+    } catch (restoreError) {
+      store = structuredClone(lastCommittedStore)
+      error.restoreError = restoreError
+    }
+    throw error
+  }
+}
 function auditLog(action, actorId = '', detail = {}) {
   const audit = store?.settings?.audit || {}
   if (audit.enabled === false) return
@@ -217,7 +234,7 @@ const routeServices = {
   root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData,
   rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword,
   configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA,
-  publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, listBackups, auditRead, storeChecksum,
+  publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum,
   validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
   invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor,
   bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path,

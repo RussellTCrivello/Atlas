@@ -196,57 +196,83 @@ function createCollectionTable(tableName2, definition) {
 function toSnakeCase(value) {
   return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
-function migrateDatabase(db) {
-  const currentVersion = Number(db.prepare("PRAGMA user_version").get().user_version || 0);
-  if (currentVersion > 1) throw new Error(`Database schema ${currentVersion} is newer than this application supports (1)`);
-  if (currentVersion === 1) return;
+var CURRENT_SCHEMA_VERSION = 2;
+function applyMigration(db, version, name, migrate) {
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER NOT NULL PRIMARY KEY,
-        name TEXT NOT NULL,
-        applied_at TEXT NOT NULL
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS application_meta (
-        meta_key TEXT NOT NULL PRIMARY KEY,
-        value_json TEXT NOT NULL CHECK(json_valid(value_json))
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS workspace_settings (
-        id INTEGER NOT NULL PRIMARY KEY CHECK(id = 1),
-        settings_json TEXT NOT NULL CHECK(json_valid(settings_json)),
-        updated_at TEXT NOT NULL
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS id_counters (
-        name TEXT NOT NULL PRIMARY KEY,
-        value INTEGER NOT NULL CHECK(value >= 1)
-      ) STRICT;
-    `);
-    for (const [name, definition] of Object.entries(COLLECTIONS)) db.exec(createCollectionTable(definition.table || name, definition));
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_people_team ON people(team_id);
-      CREATE INDEX IF NOT EXISTS idx_users_person ON users(person_id);
-      CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
-      CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
-      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-      CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
-      CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
-      CREATE INDEX IF NOT EXISTS idx_activities_person_date ON activities(person_id, date);
-      CREATE INDEX IF NOT EXISTS idx_alerts_open_created ON alerts(resolved, created_at);
-      CREATE INDEX IF NOT EXISTS idx_work_logs_person_date ON work_logs(person_id, date);
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_people_email_unique ON people(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_code_unique ON projects(code COLLATE NOCASE) WHERE code IS NOT NULL AND trim(code) <> '';
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique ON teams(name COLLATE NOCASE) WHERE name IS NOT NULL AND trim(name) <> '';
-      INSERT INTO schema_migrations(version, name, applied_at) VALUES(1, 'initial-relational-schema', datetime('now'));
-    `);
-    db.exec("PRAGMA user_version = 1");
+    migrate();
+    db.prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES(?, ?, datetime('now'))").run(version, name);
+    db.exec(`PRAGMA user_version = ${version}`);
     db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+    }
     throw error;
+  }
+}
+function createInitialSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER NOT NULL PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS application_meta (
+      meta_key TEXT NOT NULL PRIMARY KEY,
+      value_json TEXT NOT NULL CHECK(json_valid(value_json))
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS workspace_settings (
+      id INTEGER NOT NULL PRIMARY KEY CHECK(id = 1),
+      settings_json TEXT NOT NULL CHECK(json_valid(settings_json)),
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS id_counters (
+      name TEXT NOT NULL PRIMARY KEY,
+      value INTEGER NOT NULL CHECK(value >= 1)
+    ) STRICT;
+  `);
+  for (const [name, definition] of Object.entries(COLLECTIONS)) db.exec(createCollectionTable(definition.table || name, definition));
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_people_team ON people(team_id);
+    CREATE INDEX IF NOT EXISTS idx_users_person ON users(person_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+    CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
+    CREATE INDEX IF NOT EXISTS idx_activities_person_date ON activities(person_id, date);
+    CREATE INDEX IF NOT EXISTS idx_alerts_open_created ON alerts(resolved, created_at);
+    CREATE INDEX IF NOT EXISTS idx_work_logs_person_date ON work_logs(person_id, date);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_people_email_unique ON people(email COLLATE NOCASE) WHERE email IS NOT NULL AND trim(email) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_code_unique ON projects(code COLLATE NOCASE) WHERE code IS NOT NULL AND trim(code) <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique ON teams(name COLLATE NOCASE) WHERE name IS NOT NULL AND trim(name) <> '';
+  `);
+}
+function createUserPreferencesTable(db) {
+  db.exec(`
+    CREATE TABLE user_preferences (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      filters_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(filters_json)),
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+    ) STRICT;
+    CREATE INDEX idx_user_preferences_updated ON user_preferences(updated_at);
+  `);
+}
+function migrateDatabase(db) {
+  let version = Number(db.prepare("PRAGMA user_version").get().user_version || 0);
+  if (version > CURRENT_SCHEMA_VERSION) throw new Error(`Database schema ${version} is newer than this application supports (${CURRENT_SCHEMA_VERSION})`);
+  if (version < 1) {
+    applyMigration(db, 1, "initial-relational-schema", () => createInitialSchema(db));
+    version = 1;
+  }
+  if (version < 2) {
+    applyMigration(db, 2, "user-saved-filters", () => createUserPreferencesTable(db));
   }
 }
 
@@ -567,7 +593,9 @@ var SqliteStoreRepository = class {
     return { ok: result.length === 1 && result[0] === "ok" && foreignKeys.length === 0, result, foreignKeys };
   }
   tableCounts() {
-    return Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]));
+    const counts = Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]));
+    counts.userPreferences = Number(this.db.prepare("SELECT COUNT(*) AS count FROM user_preferences").get().count);
+    return counts;
   }
   databaseInfo() {
     return {
@@ -580,6 +608,35 @@ var SqliteStoreRepository = class {
   }
   close() {
     this.db.close();
+  }
+};
+
+// src/server/database/user-preferences-repository.js
+function parseFilters(value) {
+  if (value === null || value === void 0) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+var UserPreferencesRepository = class {
+  constructor(db) {
+    this.getStatement = db.prepare("SELECT filters_json FROM user_preferences WHERE user_id = ?");
+    this.saveStatement = db.prepare(`
+      INSERT INTO user_preferences(user_id, filters_json, updated_at)
+      VALUES(?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET filters_json = excluded.filters_json, updated_at = excluded.updated_at
+    `);
+  }
+  getFilters(userId) {
+    const row = this.getStatement.get(String(userId));
+    return parseFilters(row?.filters_json);
+  }
+  saveFilters(userId, filters) {
+    this.saveStatement.run(String(userId), JSON.stringify(filters), (/* @__PURE__ */ new Date()).toISOString());
+    return this.getFilters(userId);
   }
 };
 
@@ -1372,6 +1429,55 @@ function registerUserRoutes(app2, services) {
   });
 }
 
+// src/server/routes/preferences.routes.js
+var FILTER_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/;
+var FIELD_PATTERN = /^[a-zA-Z0-9_.-]{1,120}$/;
+var FILTER_OPERATORS = /* @__PURE__ */ new Set(["contains", "equals", "notEquals", "startsWith", "endsWith", "gt", "lt", "gte", "lte"]);
+var FILTER_JOINS = /* @__PURE__ */ new Set(["AND", "OR"]);
+var MAX_FILTERS = 25;
+var MAX_CONDITIONS_PER_FILTER = 30;
+var MAX_FILTER_VALUE_LENGTH = 2e3;
+function normalizeFilters(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > MAX_FILTERS) return null;
+  const normalized = {};
+  for (const [key, conditions] of entries) {
+    if (!FILTER_KEY_PATTERN.test(key) || !Array.isArray(conditions) || conditions.length > MAX_CONDITIONS_PER_FILTER) return null;
+    const normalizedConditions = [];
+    for (const condition of conditions) {
+      if (!condition || typeof condition !== "object" || Array.isArray(condition)) return null;
+      const { field: field2, operator, join, value: filterValue } = condition;
+      if (typeof field2 !== "string" || !FIELD_PATTERN.test(field2)) return null;
+      if (typeof operator !== "string" || !FILTER_OPERATORS.has(operator)) return null;
+      if (join !== void 0 && (typeof join !== "string" || !FILTER_JOINS.has(join))) return null;
+      if (typeof filterValue !== "string" || filterValue.length > MAX_FILTER_VALUE_LENGTH) return null;
+      normalizedConditions.push({
+        field: field2,
+        operator,
+        join: join || "AND",
+        value: filterValue
+      });
+    }
+    normalized[key] = normalizedConditions;
+  }
+  return normalized;
+}
+function registerPreferencesRoutes(app2, services) {
+  const { requireUser: requireUser2, sendError: sendError2, userPreferencesRepository: userPreferencesRepository2 } = services;
+  app2.get("/api/preferences", requireUser2, (req, res) => {
+    res.json({ filters: userPreferencesRepository2.getFilters(req.user.id) });
+  });
+  app2.put("/api/preferences", requireUser2, (req, res) => {
+    if (Object.keys(req.body || {}).some((key) => key !== "filters")) {
+      return sendError2(res, 400, "Only saved filter preferences may be updated");
+    }
+    const filters = normalizeFilters(req.body?.filters);
+    if (!filters) return sendError2(res, 400, "Saved filters contain invalid or oversized conditions");
+    res.json({ filters: userPreferencesRepository2.saveFilters(req.user.id, filters) });
+  });
+}
+
 // src/server/routes/index.js
 function registerRoutes(app2, services) {
   registerSystemRoutes(app2, services);
@@ -1379,6 +1485,7 @@ function registerRoutes(app2, services) {
   registerDirectoryRoutes(app2, services);
   registerActivityAlertRoutes(app2, services);
   registerUserRoutes(app2, services);
+  registerPreferencesRoutes(app2, services);
   app2.use("/api", (_req, res) => services.sendError(res, 404, "API route not found"));
 }
 
@@ -2782,6 +2889,7 @@ var storeRepository = new SqliteStoreRepository(sqliteDatabase, {
   dataDirectory: dataDir,
   backupRetention: DEFAULT_BACKUP_RETENTION
 });
+var userPreferencesRepository = new UserPreferencesRepository(sqliteDatabase);
 function listBackups() {
   return storeRepository.listBackups();
 }
@@ -2867,8 +2975,21 @@ if (process.argv.includes("--backup-data")) {
   process.exit(0);
 }
 store = loadStore();
+var lastCommittedStore = structuredClone(store);
 function persist(options = {}) {
-  store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === "true", reason: options.reason || "persist" });
+  try {
+    store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === "true", reason: options.reason || "persist" });
+    lastCommittedStore = structuredClone(store);
+  } catch (error) {
+    try {
+      const committedSnapshot = storeRepository.loadSnapshot();
+      store = committedSnapshot ? normalizeStore(committedSnapshot) : structuredClone(lastCommittedStore);
+    } catch (restoreError) {
+      store = structuredClone(lastCommittedStore);
+      error.restoreError = restoreError;
+    }
+    throw error;
+  }
 }
 function auditLog(action, actorId = "", detail = {}) {
   const audit = store?.settings?.audit || {};
@@ -2982,6 +3103,7 @@ var routeServices = {
   persist,
   can,
   storeRepository,
+  userPreferencesRepository,
   listBackups,
   auditRead,
   storeChecksum,
