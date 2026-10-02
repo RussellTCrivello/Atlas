@@ -30,6 +30,32 @@ async function capture(fn: () => Promise<unknown>) {
   return lines.join('\n')
 }
 
+describe('operations commands report mistyped settings (DATA-03)', () => {
+  const warnings = async (argv: string[], config: ReturnType<typeof cfg>) => {
+    const lines: string[] = []
+    const original = console.warn
+    console.warn = (...args: unknown[]) => void lines.push(args.join(' '))
+    try {
+      const handled = await capture(() => runCommand(argv, config))
+      return { lines, handled }
+    } finally {
+      console.warn = original
+    }
+  }
+
+  test('a command prints the configuration warning; starting the server leaves that to its banner', async () => {
+    const dir = mkdir()
+    DocumentStore.open(cfg(dir)).close()
+    const bad = cfg(dir, { ATLAS_BACKUP_RETENTION: 'abc' })
+    const command = await warnings(['--list-backups'], bad)
+    assert.ok(command.lines.some(line => line.includes('ATLAS_BACKUP_RETENTION')))
+    const server = await warnings([], bad)
+    assert.deepEqual(server.lines, [], 'no command: nothing printed here, so the banner does not repeat it')
+    const quiet = await warnings(['--list-backups'], cfg(dir))
+    assert.deepEqual(quiet.lines, [])
+  })
+})
+
 describe('demo data is gated (SEC-02/SEC-09)', () => {
   test('--reset-data is refused in production and without the explicit flag', async () => {
     const dir = mkdir()

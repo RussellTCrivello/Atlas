@@ -2,95 +2,11 @@
 // Unlike the unit/integration suites (which start the server in-process from source), these spawn the production bundle
 // as a separate process, exactly as `npm start` and the desktop app do, and exercise the failure modes that matter.
 import assert from 'node:assert/strict'
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import net from 'node:net'
-import os from 'node:os'
 import path from 'node:path'
-import { after, describe, test } from 'node:test'
-import { Api, PASSWORD, SETUP_TOKEN, sleep } from '../helpers/server'
-
-const root = path.join(import.meta.dirname, '..', '..')
-const bundle = path.join(root, 'dist-desktop', 'app.mjs')
-const web = path.join(root, 'dist')
-const built = fs.existsSync(bundle) && fs.existsSync(path.join(web, 'index.html'))
-const skip = built ? false : 'build the project first: npm run build'
-const cleanup: (() => void)[] = []
-after(() => cleanup.forEach(fn => fn()))
-
-const freePort = () =>
-  new Promise<number>(resolve => {
-    const server = net.createServer()
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo
-      server.close(() => resolve(port))
-    })
-  })
-
-interface Running {
-  child: ChildProcess
-  base: string
-  port: number
-  logs: () => string
-  stop(signal?: NodeJS.Signals): Promise<number | null>
-}
-async function start(
-  dataDir: string,
-  options: { cwd?: string; script?: string; staticDir?: string; env?: Record<string, string> } = {}
-): Promise<Running> {
-  const port = await freePort()
-  const child = spawn(process.execPath, [options.script || bundle], {
-    cwd: options.cwd || root,
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      PORT: String(port),
-      ATLAS_DATA_DIR: dataDir,
-      ATLAS_STATIC_DIR: options.staticDir || web,
-      ATLAS_SETUP_TOKEN: SETUP_TOKEN,
-      ATLAS_TIMEZONE: 'Europe/Amsterdam',
-      ...(options.env || {})
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-  let logs = ''
-  child.stdout!.on('data', d => (logs += d))
-  child.stderr!.on('data', d => (logs += d))
-  const base = `http://127.0.0.1:${port}`
-  const running: Running = {
-    child,
-    base,
-    port,
-    logs: () => logs,
-    stop: async (signal: NodeJS.Signals = 'SIGTERM') => {
-      if (child.exitCode !== null) return child.exitCode
-      child.kill(signal)
-      for (let i = 0; i < 60 && child.exitCode === null; i++) await sleep(50)
-      if (child.exitCode === null) child.kill('SIGKILL')
-      return child.exitCode
-    }
-  }
-  cleanup.push(() => child.kill('SIGKILL'))
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${base}/api/health`)).ok) return running
-    } catch {
-      /* not up yet */
-    }
-    if (child.exitCode !== null)
-      throw Object.assign(new Error(`server exited with ${child.exitCode}: ${logs}`), {
-        logs,
-        exitCode: child.exitCode
-      })
-    await sleep(100)
-  }
-  throw new Error(`server did not start: ${logs}`)
-}
-const tmp = (name: string) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `atlas-acc-${name}-`))
-  cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }))
-  return dir
-}
+import { describe, test } from 'node:test'
+import { bundle, root, runCli, skip, start, tmp, web } from '../helpers/bundle'
+import { Api, PASSWORD, SETUP_TOKEN } from '../helpers/server'
 
 describe('production bundle', { skip }, () => {
   test('serves the app with security headers, a working PWA shell, SPA routing and proper 404s', async () => {
@@ -244,10 +160,7 @@ describe('production bundle', { skip }, () => {
       return true
     })
     assert.deepEqual(fs.readFileSync(file), damaged, 'the damaged file was left exactly as it was')
-    const restore = spawnSync(process.execPath, [bundle, '--restore', 'latest'], {
-      env: { ...process.env, NODE_ENV: 'production', ATLAS_DATA_DIR: dir },
-      encoding: 'utf8'
-    })
+    const restore = runCli(dir, ['--restore', 'latest'])
     assert.equal(restore.status, 0, restore.stderr)
     assert.match(restore.stdout, /Restored/)
     const back = await start(dir)
@@ -265,11 +178,7 @@ describe('production bundle', { skip }, () => {
     const server = await start(dir)
     const api = new Api(server.base)
     await api.post('/api/setup', { name: 'Ada', email: 'ada@example.com', password: PASSWORD, token: SETUP_TOKEN })
-    const run = (...args: string[]) =>
-      spawnSync(process.execPath, [bundle, ...args], {
-        env: { ...process.env, NODE_ENV: 'production', ATLAS_DATA_DIR: dir },
-        encoding: 'utf8'
-      })
+    const run = (...args: string[]) => runCli(dir, args)
     try {
       assert.match(run('--backup-data').stdout, /Created backup/)
       assert.match(run('--list-backups').stdout, /manual/)

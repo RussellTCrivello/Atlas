@@ -281,6 +281,16 @@ Usage: node dist-desktop/app.mjs [command]   (or: npm run app / npm start)
   --reset-data                    development only: load demo data (needs ATLAS_ALLOW_DEMO_DATA=true, refused in production)
 `
 
+const COMMAND_FLAGS = [
+  '--backup-data',
+  '--list-backups',
+  '--restore',
+  '--check-data',
+  '--reset-admin-password',
+  '--init-production',
+  '--reset-data'
+]
+
 /** A command-line failure with a user-facing message. `main()` prints it and exits; tests can assert on it. */
 export class CliError extends Error {
   constructor(
@@ -301,6 +311,9 @@ export async function runCommand(argv: string[], config: AtlasConfig): Promise<b
     console.log(HELP)
     return true
   }
+  // The server prints configuration warnings in its start-up banner; commands print them here, so a mistyped
+  // setting (for example ATLAS_BACKUP_RETENTION=abc, which falls back to the default) is never silent.
+  if (COMMAND_FLAGS.some(name => has(argv, name))) config.warnings.forEach(warning => console.warn(`⚠ ${warning}`))
   if (has(argv, '--backup-data')) {
     const backup = createBackupFile(config, 'manual')
     console.log(backup ? `Created backup ${backup}` : `No store found at ${dataFile}`)
