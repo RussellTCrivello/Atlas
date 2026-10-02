@@ -2,7 +2,7 @@
 import { buildTranslationCatalog } from '../shared/i18n/catalog'
 import { RTL_LANGUAGES } from '../shared/i18n/catalog'
 import { withLegacySettings } from '../shared/settings'
-import { type Index, buildIndex, can, formatDate, isDone } from './domain'
+import { type Index, buildIndex, can, canSeePeopleAnalytics, formatDate, isDone } from './domain'
 import {
   activityPublic,
   alertPublic,
@@ -13,7 +13,7 @@ import {
   taskPublic,
   type TaskPublic
 } from './presenters'
-import { reportFor } from './reports'
+import { bucketFor, reportFor } from './reports'
 import type { StoreState, User } from './types'
 import { addDays } from './util'
 
@@ -114,6 +114,25 @@ export function dashboard(
       )
     )
 
+  // "Most active this week": people ranked by the daily updates they logged in the current week (the week starts on the
+  // workspace's configured day). A ranking of individuals is per-person analytics, so it follows the same visibility rule
+  // as the activity report: null (hidden) for people who may only see their own activity (GOV-02).
+  let mostActive: { personId: string; name: string; color: string; updates: number }[] | null = null
+  if (canSeePeopleAnalytics(settings, user)) {
+    const thisWeek = bucketFor('weekly', today, settings)
+    const counts = new Map<string, number>()
+    for (const entry of state.activities)
+      if (bucketFor('weekly', entry.date, settings) === thisWeek)
+        counts.set(entry.personId, (counts.get(entry.personId) || 0) + 1)
+    mostActive = [...counts]
+      .map(([personId, updates]) => {
+        const person = index.people.get(personId)
+        return { personId, name: person?.name || 'Unknown', color: person?.color || 'blue', updates }
+      })
+      .sort((a, b) => b.updates - a.updates || a.name.localeCompare(b.name))
+      .slice(0, 4)
+  }
+
   const mine = open.filter(task => task.assigneeId && task.assigneeId === user.personId)
   return {
     stats: {
@@ -138,6 +157,7 @@ export function dashboard(
         ),
       upcoming
     },
+    mostActive,
     myTasks: mine.slice(0, 6)
   }
 }

@@ -67,16 +67,26 @@ export function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 700)
 }
 
-async function loadFont(url: string): Promise<string> {
-  const buffer = await fetch(url).then(res => {
-    if (!res.ok) throw new Error(`font ${url}: ${res.status}`)
-    return res.arrayBuffer()
-  })
-  let binary = ''
-  new Uint8Array(buffer).forEach(byte => {
-    binary += String.fromCharCode(byte)
-  })
-  return btoa(binary)
+// The two fonts are about 1.4 MB together; fetch and encode each once per page load, and retry after a failure.
+const fontCache = new Map<string, Promise<string>>()
+function loadFont(url: string): Promise<string> {
+  let cached = fontCache.get(url)
+  if (!cached) {
+    cached = fetch(url)
+      .then(res => {
+        if (!res.ok) throw new Error(`font ${url}: ${res.status}`)
+        return res.arrayBuffer()
+      })
+      .then(buffer => {
+        const bytes = new Uint8Array(buffer)
+        let binary = ''
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+        return btoa(binary)
+      })
+    fontCache.set(url, cached)
+    cached.catch(() => fontCache.delete(url))
+  }
+  return cached
 }
 
 export async function exportPdf(
@@ -85,7 +95,7 @@ export async function exportPdf(
   title: string,
   orientation: 'landscape' | 'portrait',
   settings: any = {}
-) {
+): Promise<{ unicodeFont: boolean }> {
   const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
   const autoTable = (autoTableModule as any).default || (autoTableModule as any).autoTable
   const dir = settings.exports?.respectDirection === false ? 'ltr' : textDirection(settings)
@@ -105,7 +115,7 @@ export async function exportPdf(
     font = 'AtlasSans'
     doc.setFont(font, 'normal')
   } catch {
-    /* fall back to the built-in font; Latin text still renders */
+    // Fall back to the built-in font: Latin text still renders, Arabic/Persian/Hebrew do not. The caller tells the user.
   }
   if (dir === 'rtl' && (doc as any).setR2L) (doc as any).setR2L(true)
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -131,6 +141,7 @@ export async function exportPdf(
     bodyStyles: { halign: align }
   })
   doc.save(`${safeFilename(title)}.pdf`)
+  return { unicodeFont: font === 'AtlasSans' }
 }
 
 /**

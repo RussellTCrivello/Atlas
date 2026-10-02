@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
+import { bucketFor } from '../../server/reports'
+import { addDays } from '../../server/util'
 import { Api, type TestServer, launch, makeUser, setupAdmin } from '../helpers/server'
 
 let server: TestServer
@@ -376,5 +378,76 @@ describe('malformed stored data cannot take the server down (VAL-04)', () => {
     assert.equal(row.due, 'not-a-date')
     assert.equal(row.dueDays, null)
     stored.dueDate = '2030-01-01'
+  })
+})
+
+describe('dashboard ranking and report windows (REP-03)', () => {
+  test('"most active" counts this week\'s daily updates only, is ordered, and is hidden from people who may see only their own', async () => {
+    const people = (await admin.get('/api/bootstrap')).body.people
+    const ids = Object.fromEntries(people.map((p: any) => [p.name, p.id])) as Record<string, string>
+    const today = (await boot()).today as string
+    const thisWeek = bucketFor('weekly', today, server.db.state.settings)
+    const lastWeek = addDays(thisWeek, -2)
+    let n = 0
+    const entry = (personId: string, date: string) => ({
+      id: `activity_rank_${++n}`,
+      personId,
+      date,
+      time: '10:00',
+      yesterday: '',
+      today: `Update ${n}`,
+      blocked: '',
+      upcoming: '',
+      status: 'On track'
+    })
+    // Isolate from the updates other tests in this file posted for real; the original list is restored afterwards.
+    const original = server.db.state.activities
+    server.db.commit(
+      state => {
+        state.activities = []
+        for (const [name, count, date] of [
+          ['Dev Dana', 2, today],
+          ['Mia Manager', 4, today],
+          ['Vic Viewer', 9, lastWeek] // busiest overall, but not this week
+        ] as const)
+          for (let i = 0; i < count; i++) state.activities.push(entry(ids[name], date))
+      },
+      { reason: 'test-fixture' }
+    )
+    try {
+      const ranked = (await boot(manager.api)).dashboard.mostActive
+      assert.deepEqual(
+        ranked.map((r: any) => [r.name, r.updates]),
+        [
+          ['Mia Manager', 4],
+          ['Dev Dana', 2]
+        ]
+      )
+      assert.ok(ranked.every((r: any) => r.personId && r.color))
+      assert.deepEqual((await boot(admin)).dashboard.mostActive, ranked)
+      for (const who of [developer.api, viewer.api])
+        assert.equal((await boot(who)).dashboard.mostActive, null, 'no ranking of colleagues for this role')
+      assert.equal((await admin.put('/api/settings', { reports: { activityVisibility: 'everyone' } })).status, 200)
+      assert.deepEqual((await boot(developer.api)).dashboard.mostActive, ranked, 'visible once the workspace opts in')
+      assert.equal((await admin.put('/api/settings', { reports: { activityVisibility: 'managers' } })).status, 200)
+    } finally {
+      server.db.commit(
+        state => {
+          state.activities = original
+        },
+        { reason: 'test-fixture' }
+      )
+      await admin.put('/api/settings', { reports: { activityVisibility: 'managers' } })
+    }
+  })
+
+  test('the delivery report and the activity report cover the same periods', async () => {
+    for (const period of ['daily', 'weekly', 'monthly']) {
+      const delivery = (await manager.api.get(`/api/reports/${period}`)).body.series.map((b: any) => b.key)
+      const activity = (await manager.api.get(`/api/reports/activity/${period}?userId=all`)).body.series.map(
+        (b: any) => b.key
+      )
+      assert.deepEqual(activity, delivery, period)
+    }
   })
 })

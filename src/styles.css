@@ -251,44 +251,6 @@ textarea:focus-visible {
   min-height: 32px;
   flex: 1;
 }
-.upgrade-card {
-  margin: 18px 5px 17px;
-  padding: 13px;
-  border-radius: 11px;
-  background: linear-gradient(135deg, #f3f1ff, #fbfaff);
-  border: 1px solid #e5e1ff;
-}
-.upgrade-icon {
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  background: #e3dfff;
-  color: var(--purple-deep);
-  border-radius: 8px;
-  margin-bottom: 10px;
-}
-.upgrade-card strong {
-  display: block;
-  font-size: 11px;
-}
-.upgrade-card p {
-  margin: 5px 0 11px;
-  color: #737a93;
-  font-size: 10px;
-  line-height: 1.45;
-}
-.upgrade-card button {
-  padding: 0;
-  border: 0;
-  color: var(--purple-deep);
-  background: none;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 800;
-}
 .profile-row {
   border-top: 1px solid var(--line);
   padding: 16px 8px 2px;
@@ -479,19 +441,6 @@ textarea:focus-visible {
   border-radius: 7px;
   font-size: 10px;
   font-weight: 800;
-}
-.desktop-mode-bar {
-  margin-bottom: 12px;
-  padding: 7px 12px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  justify-content: space-between;
-  color: #7d75df;
-  border: 1px solid #e3dfff;
-  border-radius: 7px;
-  background: #f7f5ff;
-  font-size: 9px;
 }
 .quick-action-rail {
   display: flex;
@@ -2988,7 +2937,6 @@ body[data-sidebar='collapsed'] .workspace-switcher > div:not(.workspace-logo),
 body[data-sidebar='collapsed'] .workspace-switcher > .icon,
 body[data-sidebar='collapsed'] .sidebar-section-label,
 body[data-sidebar='collapsed'] .nav-item > span:not(.nav-count):not(.alert-dot),
-body[data-sidebar='collapsed'] .upgrade-card,
 body[data-sidebar='collapsed'] .profile-row > div,
 body[data-sidebar='collapsed'] .logout-button {
   display: none;
@@ -3232,7 +3180,6 @@ body[data-motion='off'] *:after {
   .sidebar,
   .topbar,
   .quick-action-rail,
-  .desktop-mode-bar,
   .toolbar,
   .work-toolbar,
   .modal-backdrop,
@@ -3255,8 +3202,7 @@ body[data-motion='off'] *:after {
     box-shadow: none !important;
     break-inside: avoid;
   }
-  body[data-print-template='compact'] .project-card p,
-  body[data-print-template='compact'] .upgrade-card {
+  body[data-print-template='compact'] .project-card p {
     display: none !important;
   }
   body[data-print-template='executive'] .stat-grid,

@@ -1075,7 +1075,15 @@ function ExportMenu({ rows, columns, title, settings, page = 'data', customField
       if (format === 'xlsx') downloadBlob(await makeXlsx(flatRows, activeColumns), `${name}.xlsx`)
       if (format === 'json')
         downloadBlob(new Blob([JSON.stringify(flatRows, null, 2)], { type: 'application/json' }), `${name}.json`)
-      if (format === 'pdf') await exportPdf(flatRows, activeColumns, fileTitle, orientation as any, settings)
+      if (format === 'pdf') {
+        const { unicodeFont } = await exportPdf(flatRows, activeColumns, fileTitle, orientation as any, settings)
+        if (!unicodeFont)
+          notify({
+            title: 'PDF created with a basic font',
+            body: 'The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.',
+            tone: 'warning'
+          })
+      }
     }, format)
   const print = () =>
     guarded(() => {
@@ -1768,6 +1776,15 @@ function Projects({ data, openModal, canManage }) {
     advanced
   )
   const milestones = data.projects.flatMap(p => p.milestoneRows.map(m => ({ ...m, project: p })))
+  const milestoneClosed = m => m.status === 'Complete' || m.status === 'Completed'
+  // Open milestones first, soonest due date first (undated last); finished ones after them.
+  const orderedMilestones = [...milestones].sort(
+    (a, b) =>
+      Number(milestoneClosed(a)) - Number(milestoneClosed(b)) ||
+      (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31') ||
+      String(a.name).localeCompare(String(b.name))
+  )
+  const [visibleMilestones, setVisibleMilestones] = useState(8)
   return (
     <div className="page-content">
       <div className="toolbar">
@@ -1834,7 +1851,7 @@ function Projects({ data, openModal, canManage }) {
           </div>
         </div>
         <div className="milestone-list">
-          {milestones.slice(0, 8).map(m => (
+          {orderedMilestones.slice(0, visibleMilestones).map(m => (
             <div
               className="milestone-row"
               key={m.id}
@@ -1850,7 +1867,7 @@ function Projects({ data, openModal, canManage }) {
             >
               <div className={`milestone-date ${m.status === 'At risk' ? 'date-warning' : ''}`}>
                 <strong>{m.dueDate?.slice(-2) || '—'}</strong>
-                <span>{m.dueDate?.slice(5, 7) || ''}</span>
+                <span>{localDate(m.dueDate, uiLanguage(settings), { month: 'short' })}</span>
               </div>
               <div className="milestone-copy">
                 <strong>{m.name}</strong>
@@ -1864,6 +1881,14 @@ function Projects({ data, openModal, canManage }) {
             </div>
           ))}
         </div>
+        {orderedMilestones.length > visibleMilestones && (
+          <button type="button" className="text-button show-more" onClick={() => setVisibleMilestones(v => v + 8)}>
+            {tr(settings, 'Show {count} more ({remaining} left)', {
+              count: Math.min(8, orderedMilestones.length - visibleMilestones),
+              remaining: orderedMilestones.length - visibleMilestones
+            })}
+          </button>
+        )}
       </section>
     </div>
   )
@@ -2265,7 +2290,7 @@ function People({ data, openModal, canManage }) {
     { key: 'role', label: 'Role' },
     { key: 'team', label: 'Team' },
     { key: 'status', label: 'Status' },
-    { key: 'load', label: 'Capacity' }
+    { key: 'load', label: 'Planned capacity' }
   ]
   const rows = applyAdvancedFilters(
     data.people.filter(p => team === 'Everyone' || p.team === team),
@@ -2280,12 +2305,12 @@ function People({ data, openModal, canManage }) {
             <span className="eyebrow-dot green" /> Team pulse
           </span>
           <h2>{data.people.length} people, one clear view.</h2>
-          <p>Capacity and focus are shared across dashboards, reports, and exports.</p>
+          <p>Planned capacity is entered by hand on each profile; it is not calculated from assigned work.</p>
         </div>
         <div className="people-stats">
           <div>
             <strong>{avg}%</strong>
-            <span>Avg. capacity</span>
+            <span>Avg. planned capacity</span>
           </div>
           <div>
             <strong>{data.activity.filter(a => a.date === data.today).length}</strong>
@@ -2315,7 +2340,7 @@ function People({ data, openModal, canManage }) {
           )}
           {canManage && (
             <button className="primary-button" onClick={() => openModal('person')}>
-              <Icon name="plus" size={15} /> Invite person
+              <Icon name="plus" size={15} /> Add person
             </button>
           )}
         </div>
@@ -2334,7 +2359,7 @@ function People({ data, openModal, canManage }) {
           <PersonCard person={p} key={p.id} onEdit={canManage ? () => openModal('person', p) : null} />
         ))}
       </div>
-      {!rows.length && <EmptyState title="No people match" message="Clear filters or invite a person." />}
+      {!rows.length && <EmptyState title="No people match" message="Clear filters or add a person." />}
     </div>
   )
 }
@@ -2363,7 +2388,7 @@ function PersonCard({ person, onEdit }) {
       <div className="person-card-foot">
         <span>{person.team}</span>
         <div className="capacity">
-          <span>Capacity</span>
+          <span>Planned capacity</span>
           <strong>{person.load}%</strong>
           <div className="capacity-track">
             <i style={{ width: `${person.load}%` }} />
@@ -2505,22 +2530,25 @@ function ActivityLog({ data, openModal, setPage, canLogActivity = true }) {
               See trend <Icon name="arrow" size={13} />
             </button>
           </section>
-          <section className="panel contributor-card">
-            <div className="section-head compact">
-              <div>
-                <h3>Most active this week</h3>
-                <p>By daily updates</p>
+          {data.dashboard.mostActive && (
+            <section className="panel contributor-card">
+              <div className="section-head compact">
+                <div>
+                  <h3>Most active this week</h3>
+                  <p>By daily updates</p>
+                </div>
               </div>
-            </div>
-            {data.people.slice(0, 4).map((p, i) => (
-              <div className="contributor-row" key={p.id}>
-                <span className="rank">0{i + 1}</span>
-                <Avatar name={p.name} color={p.color} small />
-                <strong>{p.name}</strong>
-                <span>{data.activity.filter(a => a.personId === p.id).length} updates</span>
-              </div>
-            ))}
-          </section>
+              {data.dashboard.mostActive.map((p, i) => (
+                <div className="contributor-row" key={p.personId}>
+                  <span className="rank">0{i + 1}</span>
+                  <Avatar name={p.name} color={p.color} small />
+                  <strong>{p.name}</strong>
+                  <span>{p.updates} updates</span>
+                </div>
+              ))}
+              {!data.dashboard.mostActive.length && <p className="filter-hint">No updates logged this week yet.</p>}
+            </section>
+          )}
         </aside>
       </div>
     </div>
@@ -6472,7 +6500,7 @@ function FormModal({ modal, data, user, onClose, onSave, onDelete }) {
           </label>
           <div className="form-row">
             <label>
-              Capacity
+              Planned capacity (%)
               <input
                 type="number"
                 min="0"

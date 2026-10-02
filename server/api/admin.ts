@@ -16,6 +16,7 @@ import { DESIGN_SYSTEM_VERSION } from '../config'
 import {
   buildIndex,
   can,
+  canSeePeopleAnalytics,
   isAdministrator,
   permissionsFor,
   roleExists,
@@ -135,10 +136,7 @@ export function registerAdminRoutes(app: Express, deps: Deps) {
     const requested = String(req.query.userId || 'all')
     // Per-person analytics are visible to people managers (and administrators), or to everyone when the workspace
     // opted in (Settings > Reports). Everyone can always see their own activity.
-    const everyone =
-      can(settings, user, 'managePeople') ||
-      can(settings, user, 'manageSettings') ||
-      settings.reports?.activityVisibility === 'everyone'
+    const everyone = canSeePeopleAnalytics(settings, user)
     let scope: ActivityScope = { onlyPersonId: null, label: 'All users' }
     if (!everyone) {
       if (requested !== 'all' && requested !== user.personId)

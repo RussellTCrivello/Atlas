@@ -571,7 +571,16 @@
     "No date": "No date",
     "{days} days late": "{days} days late",
     "{days} days": "{days} days",
-    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} completed · {touched} touched · {people} people · {events} events"
+    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} completed · {touched} touched · {people} people · {events} events",
+    "No updates logged this week yet.": "No updates logged this week yet.",
+    "Planned capacity": "Planned capacity",
+    "Avg. planned capacity": "Avg. planned capacity",
+    "Planned capacity is entered by hand on each profile; it is not calculated from assigned work.": "Planned capacity is entered by hand on each profile; it is not calculated from assigned work.",
+    "Planned capacity (%)": "Planned capacity (%)",
+    "Add person": "Add person",
+    "Clear filters or add a person.": "Clear filters or add a person.",
+    "PDF created with a basic font": "PDF created with a basic font",
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX."
   },
   "ar": {
     "Overview": "نظرة عامة",
@@ -1145,7 +1154,16 @@
     "No date": "بلا تاريخ",
     "{days} days late": "متأخر {days} يومًا",
     "{days} days": "{days} يومًا",
-    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} مُنجزة · {touched} تم لمسها · {people} أشخاص · {events} أحداث"
+    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} مُنجزة · {touched} تم لمسها · {people} أشخاص · {events} أحداث",
+    "No updates logged this week yet.": "لم تُسجَّل أي تحديثات هذا الأسبوع بعد.",
+    "Planned capacity": "السعة المخططة",
+    "Avg. planned capacity": "متوسط السعة المخططة",
+    "Planned capacity is entered by hand on each profile; it is not calculated from assigned work.": "تُدخَل السعة المخططة يدويًا في كل ملف شخصي ولا تُحسب من العمل المُسنَد.",
+    "Planned capacity (%)": "السعة المخططة (%)",
+    "Add person": "إضافة شخص",
+    "Clear filters or add a person.": "امسح عوامل التصفية أو أضف شخصًا.",
+    "PDF created with a basic font": "أُنشئ ملف PDF بخط أساسي",
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "تعذّر تحميل خط Unicode، لذا قد لا يظهر النص العربي والفارسي والعبري بشكل صحيح. حاول مرة أخرى أو صدّر إلى XLSX."
   },
   "fa": {
     "Overview": "نمای کلی",
@@ -1719,7 +1737,16 @@
     "No date": "بدون تاریخ",
     "{days} days late": "{days} روز تأخیر",
     "{days} days": "{days} روز",
-    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} تکمیل‌شده · {touched} درگیر · {people} نفر · {events} رویداد"
+    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} تکمیل‌شده · {touched} درگیر · {people} نفر · {events} رویداد",
+    "No updates logged this week yet.": "هنوز هیچ به‌روزرسانی‌ای در این هفته ثبت نشده است.",
+    "Planned capacity": "ظرفیت برنامه‌ریزی‌شده",
+    "Avg. planned capacity": "میانگین ظرفیت برنامه‌ریزی‌شده",
+    "Planned capacity is entered by hand on each profile; it is not calculated from assigned work.": "ظرفیت برنامه‌ریزی‌شده در هر نمایه به‌صورت دستی وارد می‌شود و از کارهای واگذارشده محاسبه نمی‌شود.",
+    "Planned capacity (%)": "ظرفیت برنامه‌ریزی‌شده (%)",
+    "Add person": "افزودن فرد",
+    "Clear filters or add a person.": "فیلترها را پاک کنید یا فردی را اضافه کنید.",
+    "PDF created with a basic font": "فایل PDF با فونت پایه ساخته شد",
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "فونت یونیکد بارگذاری نشد، بنابراین ممکن است متن عربی، فارسی و عبری درست نمایش داده نشود. دوباره تلاش کنید یا به XLSX خروجی بگیرید."
   },
   "he": {
     "Overview": "סקירה",
@@ -2293,6 +2320,15 @@
     "No date": "ללא תאריך",
     "{days} days late": "באיחור של {days} ימים",
     "{days} days": "{days} ימים",
-    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} הושלמו · {touched} נגעו בהן · {people} אנשים · {events} אירועים"
+    "{completed} completed · {touched} touched · {people} people · {events} events": "{completed} הושלמו · {touched} נגעו בהן · {people} אנשים · {events} אירועים",
+    "No updates logged this week yet.": "עדיין לא נרשמו עדכונים השבוע.",
+    "Planned capacity": "קיבולת מתוכננת",
+    "Avg. planned capacity": "קיבולת מתוכננת ממוצעת",
+    "Planned capacity is entered by hand on each profile; it is not calculated from assigned work.": "הקיבולת המתוכננת מוזנת ידנית בכל פרופיל ואינה מחושבת מהעבודה המשויכת.",
+    "Planned capacity (%)": "קיבולת מתוכננת (%)",
+    "Add person": "הוספת אדם",
+    "Clear filters or add a person.": "נקו את המסננים או הוסיפו אדם.",
+    "PDF created with a basic font": "קובץ ה-PDF נוצר בגופן בסיסי",
+    "The Unicode font could not be loaded, so Arabic, Persian and Hebrew text may not display correctly. Try again or export to XLSX.": "לא ניתן היה לטעון את גופן ה-Unicode, ולכן ייתכן שטקסט בערבית, בפרסית ובעברית לא יוצג כראוי. נסו שוב או ייצאו ל-XLSX."
   }
 }

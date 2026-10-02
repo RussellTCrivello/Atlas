@@ -26,6 +26,8 @@ describe('production bundle', { skip }, () => {
         '/icons/icon-192.png',
         '/icons/icon-512.png',
         '/icons/icon-maskable-512.png',
+        '/fonts/AtlasSans-Regular.ttf',
+        '/fonts/AtlasSans-Bold.ttf', // PDF export registers both weights
         '/atlas-icon.svg'
       ])
         assert.equal((await fetch(server.base + asset)).status, 200, asset)

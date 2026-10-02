@@ -38,6 +38,15 @@ export function permissionsFor(settings: any, role: string = 'Viewer'): string[]
 export const can = (settings: any, user: Pick<User, 'role'> | null | undefined, permission: string): boolean =>
   Boolean(user) && permissionsFor(settings, user!.role).includes(permission)
 
+/**
+ * Per-person activity analytics (who logged what, rankings) are visible to people managers and administrators, or to
+ * everyone when the workspace opted in under Settings > Reports. Everybody can always see their own activity (GOV-02).
+ */
+export const canSeePeopleAnalytics = (settings: any, user: Pick<User, 'role'> | null | undefined): boolean =>
+  can(settings, user, 'managePeople') ||
+  can(settings, user, 'manageSettings') ||
+  settings?.reports?.activityVisibility === 'everyone'
+
 export function roleRank(settings: any, role: string): number {
   const registry = settings?.permissions?.roles
   if (own(registry, role) && registry[role]?.rank) return Number(registry[role].rank)

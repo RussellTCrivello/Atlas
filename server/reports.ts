@@ -172,9 +172,8 @@ export function activityReportFor(
     ? String(rawPeriod).toLowerCase()
     : 'weekly'
   const terminal = terminalStates(settings)
-  const buckets = makeBuckets(period, index.today, settings).slice(
-    period === 'daily' ? -14 : period === 'weekly' ? -8 : -12
-  )
+  // The same windows as the delivery report (makeBuckets), so the two reports always cover the same periods.
+  const buckets = makeBuckets(period, index.today, settings)
   const bucketKeys = new Set(buckets.map(bucket => bucket.key))
   const selected = scope.onlyPersonId ?? (!userId || userId === 'all' ? null : userId)
   const include = (personId: string) => selected === null || String(personId) === String(selected)
