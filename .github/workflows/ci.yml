@@ -5,9 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Runner images are pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which should be adopted deliberately (Electron
+# packaging is the part most likely to notice). Action versions are kept current by Dependabot.
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +32,7 @@ jobs:
   # Builds an unpacked desktop package and checks that it contains what the shell needs. Launching the GUI needs a display
   # server and is left as a manual release step (see docs/OPERATIONS_RUNBOOK.md).
   desktop-package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: verify
     steps:
