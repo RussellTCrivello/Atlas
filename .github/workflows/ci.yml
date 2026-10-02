@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The Electron binary is not needed for typechecks, tests or the web/server build.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:acceptance
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  # Builds an unpacked desktop package and checks that it contains what the shell needs. Launching the GUI needs a display
+  # server and is left as a manual release step (see docs/OPERATIONS_RUNBOOK.md).
+  desktop-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx electron-builder --dir --linux
+      - name: Check package contents
+        run: |
+          set -e
+          test -d release/linux-unpacked
+          npx asar list release/linux-unpacked/resources/app.asar | tee /tmp/asar.txt
+          grep -q "dist-desktop/app.mjs" /tmp/asar.txt
+          grep -q "dist/index.html" /tmp/asar.txt
+          grep -q "electron/preload.cjs" /tmp/asar.txt
+          grep -q "electron/security.cjs" /tmp/asar.txt
+          ! grep -q "^/docs/" /tmp/asar.txt

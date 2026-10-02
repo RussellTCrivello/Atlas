@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitAny": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["tests", "server", "shared", "src/lib", "app.tsx"]
+}
