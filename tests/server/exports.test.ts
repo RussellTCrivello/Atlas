@@ -1,11 +1,15 @@
 // Exports and printing (the user's requirement: they draw directly from the database fields, with real formatting, and never
 // print the interface). Black-box through HTTP against a real server, plus unit tests of the formats.
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { unzipSync, strFromU8 } from 'fflate'
 import { JSDOM } from 'jsdom'
 import { after, before, describe, test } from 'node:test'
 import { neutralizeFormula, toCsv } from '../../server/export/formats/csv'
 import { safeFilename } from '../../server/export'
+import { resetFontCache } from '../../server/services/exports/fonts'
 import { auditRows } from '../helpers/db'
 import { Api, type TestServer, launch, makeUser, setupAdmin, sleep } from '../helpers/server'
 
@@ -457,6 +461,47 @@ describe('PDF', () => {
       (await request(manager.api, { dataset: 'tasks', format: 'csv', scope: { projectId: big.numericId } })).status,
       200
     )
+  })
+})
+
+describe('PDF fonts (MIN-03)', () => {
+  test('without the font files a PDF is still produced, the response says so, and the next export retries', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-nofonts-'))
+    resetFontCache() // a fresh process would have nothing cached
+    const bare = await launch({ env: { ATLAS_ROOT: home, ATLAS_STATIC_DIR: home } })
+    try {
+      const api = await setupAdmin(bare)
+      await api.post('/api/projects', { name: 'Fonts', code: 'FNT' })
+      const ask = async () => {
+        const res = await fetch(bare.url + '/api/exports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: api.cookie },
+          body: JSON.stringify({ dataset: 'projects', format: 'pdf' })
+        })
+        return { res, bytes: Buffer.from(await res.arrayBuffer()) }
+      }
+      const first = await ask()
+      assert.equal(first.res.status, 200)
+      assert.equal(first.bytes.subarray(0, 5).toString(), '%PDF-')
+      assert.equal(
+        first.res.headers.get('x-atlas-basic-font'),
+        '1',
+        'the caller is told that Arabic, Persian and Hebrew may not display'
+      )
+      assert.ok(first.bytes.length < 30_000, 'no Unicode font embedded')
+      fs.mkdirSync(path.join(home, 'public', 'fonts'), { recursive: true })
+      for (const file of ['AtlasSans-Regular.ttf', 'AtlasSans-Bold.ttf'])
+        fs.copyFileSync(
+          path.join(import.meta.dirname, '..', '..', 'public', 'fonts', file),
+          path.join(home, 'public', 'fonts', file)
+        )
+      const second = await ask()
+      assert.equal(second.res.headers.get('x-atlas-basic-font'), null, 'the fonts were found this time')
+      assert.ok(second.bytes.length > 100_000)
+    } finally {
+      await bare.cleanup()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 

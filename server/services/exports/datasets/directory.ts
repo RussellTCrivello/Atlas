@@ -56,7 +56,8 @@ export const peopleDataset: DatasetDefinition = {
         if (column.key.startsWith('customFields.')) row[column.key] = customValue(r.custom_fields, column.key.slice(13))
       return row
     })
-    const out = settle(dc, rows)
+    const team = dc.scope('team')
+    const out = settle(dc, team ? rows.filter(row => row.team === team) : rows)
     return {
       sections: [
         {

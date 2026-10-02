@@ -1,0 +1,105 @@
+/* Language selector and the translation console. */
+/* Setup language selector */
+.setup-language-picker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 16px;
+  color: #c8cae7;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.setup-language-picker select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+  outline: none;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.setup-language-picker select:focus {
+  border-color: #a9a1ff;
+  box-shadow: 0 0 0 3px rgba(169, 161, 255, 0.16);
+}
+.setup-language-picker option {
+  color: #11172a;
+}
+
+/* Translation system integration console */
+.i18n-integration-admin {
+  display: grid;
+  gap: 14px;
+}
+.i18n-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.interface-registry-list {
+  display: grid;
+  gap: 8px;
+}
+.interface-registry-row {
+  display: grid;
+  grid-template-columns: 130px repeat(4, minmax(110px, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 8px 24px rgba(25, 31, 50, 0.04);
+}
+.interface-registry-row input {
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0 9px;
+  font-size: 12px;
+}
+.developer-i18n-snippet {
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(135deg, #191b35, #2c2a55);
+  color: #fff;
+}
+.developer-i18n-snippet strong,
+.developer-i18n-snippet span {
+  display: block;
+}
+.developer-i18n-snippet span {
+  color: #c9cae7;
+  font-size: 12px;
+  margin-top: 3px;
+}
+.developer-i18n-snippet pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #e7e8ff;
+  font-size: 11px;
+  line-height: 1.6;
+  direction: ltr;
+  text-align: left;
+}
+@media (max-width: 1100px) {
+  .i18n-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .interface-registry-row {
+    grid-template-columns: 1fr;
+  }
+}

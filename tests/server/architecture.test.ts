@@ -4,6 +4,7 @@
 //   0 foundation   util, fsutil, config          (shared helpers, configuration)
 //   1 security     passwords, throttle
 //   2 domain       pure rules: workflow, permissions, time, ledger and audit-chain math, report windows (no I/O)
+//     export       the export document model and its renderers (CSV, JSON, XLSX, PDF, print HTML): pure, data in, bytes out
 //   3 db           the SQLite driver, schema migrations, backups, open/lock, legacy import
 //   4 repositories SQL, and only SQL: one class per table or aggregate
 //   5 presenters   domain data -> what the browser sees   |  validation: input contracts  |  seed: demo/empty data
@@ -23,6 +24,7 @@ const RANK: Record<string, number> = {
   foundation: 0,
   security: 1,
   domain: 2,
+  export: 2,
   db: 3,
   repositories: 4,
   presenters: 5,
@@ -110,10 +112,11 @@ describe('architecture', () => {
     assert.deepEqual(violations, [])
   })
 
-  test('the domain is pure: it imports no I/O layer', () => {
-    const allowed = new Set(['domain', 'foundation'])
+  test('the domain and the renderers are pure: they import no I/O layer', () => {
+    const allowed = new Set(['domain', 'export', 'foundation'])
     const violations = files
-      .filter(file => layerOf(file) === 'domain')
+
+      .filter(file => ['domain', 'export'].includes(layerOf(file)))
       .flatMap(file =>
         importsOf(file)
           .filter(edge => edge.target && !allowed.has(layerOf(edge.target)))

@@ -1,0 +1,136 @@
+/* Alerts. */
+.alert-count {
+  min-width: 126px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid #fee6ca;
+  border-radius: 10px;
+  background: #fff8ee;
+}
+.alert-count strong {
+  color: #c87922;
+  font-family: 'Atlas Display';
+  font-size: 27px;
+}
+.alert-count span {
+  margin-top: 3px;
+  color: #b58c60;
+  font-size: 9px;
+}
+.alert-list {
+  display: grid;
+  gap: 10px;
+}
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+.alert-row.alert-resolved {
+  opacity: 0.65;
+}
+.alert-type {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 9px;
+}
+.alert-red {
+  color: var(--red);
+  background: var(--red-pale);
+}
+.alert-orange {
+  color: var(--orange);
+  background: var(--orange-pale);
+}
+.alert-yellow {
+  color: var(--yellow);
+  background: var(--yellow-pale);
+}
+.alert-blue {
+  color: var(--blue);
+  background: var(--blue-pale);
+}
+.alert-content {
+  flex: 1;
+  min-width: 0;
+}
+.alert-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.alert-title-row h3 {
+  margin: 0;
+  font-family: 'Atlas Display';
+  font-size: 12px;
+}
+.alert-title-row span {
+  margin-left: auto;
+  color: #a3aab8;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.alert-content p {
+  margin: 6px 0 9px;
+  color: #818a9c;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.alert-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #9ca4b2;
+  font-size: 9px;
+}
+.resolve-button {
+  min-height: 29px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #25835f;
+  border: 1px solid #cceee0;
+  border-radius: 6px;
+  background: #f2fcf8;
+  font-size: 9px;
+  font-weight: 800;
+}
+.empty-state {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 1px dashed #dce1ea;
+  border-radius: 10px;
+}
+.empty-state > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+  border-radius: 50%;
+  background: var(--green-pale);
+}
+.empty-state h3 {
+  margin: 13px 0 3px;
+  font-family: 'Atlas Display';
+  font-size: 14px;
+}
+.empty-state p {
+  margin: 0;
+  color: #9ba3b1;
+  font-size: 10px;
+}

@@ -109,7 +109,8 @@ function createMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: () => mainWindow?.webContents.print() },
+        // Printing a report built from the data (the page decides which one); never a picture of the window.
+        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: () => mainWindow?.webContents.send('atlas:print') },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }])
       ]
     },

@@ -18,7 +18,8 @@ export const PASSWORD_CHANGE_EVENT = 'atlas:password-change-required'
 /** Endpoints whose 401/403 are an expected part of signing in and must not bounce the user to the sign-in screen. */
 const AUTH_PROBES = /^\/api\/(auth\/(me|login)|setup)/
 
-export async function apiRequest(path: string, options: RequestInit = {}) {
+/** Send a request and return the response, turning every failure into an ApiError with a message fit to show a person. */
+export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   let res: Response
   try {
     res = await fetch(path, {
@@ -29,6 +30,7 @@ export async function apiRequest(path: string, options: RequestInit = {}) {
   } catch {
     throw new ApiError(0, 'Cannot reach the Atlas server. Check that it is still running, then try again.', 'NETWORK')
   }
+  if (res.ok) return res
   const text = await res.text()
   let body: any = {}
   try {
@@ -36,13 +38,20 @@ export async function apiRequest(path: string, options: RequestInit = {}) {
   } catch {
     body = {}
   }
-  if (!res.ok) {
-    if (res.status === 401 && !AUTH_PROBES.test(path)) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT))
-    if (res.status === 403 && body.code === 'PASSWORD_CHANGE_REQUIRED')
-      window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_EVENT))
-    throw new ApiError(res.status, body.error || `Request failed (${res.status})`, body.code, body.details)
+  if (res.status === 401 && !AUTH_PROBES.test(path)) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT))
+  if (res.status === 403 && body.code === 'PASSWORD_CHANGE_REQUIRED')
+    window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_EVENT))
+  throw new ApiError(res.status, body.error || `Request failed (${res.status})`, body.code, body.details)
+}
+
+export async function apiRequest(path: string, options: RequestInit = {}) {
+  const res = await apiFetch(path, options)
+  const text = await res.text()
+  try {
+    return text ? JSON.parse(text) : {}
+  } catch {
+    return {}
   }
-  return body
 }
 
 export const api = {

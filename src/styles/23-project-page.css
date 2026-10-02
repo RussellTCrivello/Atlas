@@ -1,0 +1,395 @@
+/* The project page: header, clickable numbers and status bar, the task table, and the side panels. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A project card is one big link: the title carries the link, a stretched pseudo-element makes the whole card clickable, and the
+   edit button stays a separate, keyboard-reachable control above it. */
+.project-card {
+  position: relative;
+}
+.project-card-link {
+  color: inherit;
+  text-decoration: none;
+}
+.project-card-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.project-card-link:hover {
+  text-decoration: underline;
+}
+.project-card-link:focus-visible {
+  outline: none;
+}
+.project-card-link:focus-visible::after {
+  outline: 3px solid rgba(109, 93, 252, 0.45);
+  outline-offset: 2px;
+}
+.project-card .icon-button {
+  position: relative;
+  z-index: 1;
+}
+.project-card {
+  cursor: pointer;
+}
+
+.project-page {
+  display: grid;
+  gap: 16px;
+}
+.breadcrumb {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.breadcrumb a {
+  color: var(--purple-deep);
+  text-decoration: none;
+  font-weight: 700;
+}
+.breadcrumb a:hover {
+  text-decoration: underline;
+}
+.project-hero {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.project-hero .project-symbol {
+  width: 52px;
+  height: 52px;
+  font-size: 18px;
+}
+.project-hero-main {
+  flex: 1 1 340px;
+  min-width: 0;
+}
+.project-hero-title {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.project-hero-title h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+.project-code-chip {
+  padding: 2px 9px;
+  border-radius: 99px;
+  background: var(--purple-pale);
+  color: var(--purple-deep);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.project-hero p {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  max-width: 70ch;
+}
+.project-hero-meta {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.project-hero-meta span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.project-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Numbers you can click: each one filters the task list below it. */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(96px, 1fr));
+  gap: 10px;
+}
+.kpi-progress,
+.kpi-tile {
+  min-width: 0;
+  padding: 12px 14px;
+  text-align: start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.kpi-progress span,
+.kpi-tile span {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.kpi-progress strong,
+.kpi-tile strong {
+  display: block;
+  margin: 2px 0 6px;
+  font-size: 22px;
+  line-height: 1.1;
+}
+.kpi-tile {
+  cursor: pointer;
+}
+.kpi-tile:hover {
+  border-color: #d9d4ff;
+}
+.kpi-tile.selected {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 2px var(--purple-pale);
+}
+.kpi-tile.bad strong {
+  color: var(--red);
+}
+.kpi-tile.warn strong {
+  color: var(--yellow);
+}
+.kpi-tile.good strong {
+  color: var(--green);
+}
+
+.status-bar {
+  display: flex;
+  gap: 4px;
+  min-height: 46px;
+}
+.status-segment {
+  flex: 1 1 0;
+  min-width: 72px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--blue-pale);
+  color: #1e40af;
+  font-size: 12px;
+}
+.status-segment.done {
+  background: var(--green-pale);
+  color: #166534;
+}
+.status-segment.selected {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 2px var(--purple-pale);
+}
+.status-segment strong {
+  font-size: 15px;
+}
+.status-segment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+}
+.project-tasks-panel {
+  padding: 16px 18px;
+  min-width: 0;
+}
+.project-task-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 8px 0 10px;
+}
+.project-task-toolbar select {
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.quick-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.quick-add input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.quick-add input:focus {
+  background: var(--paper);
+  border-style: solid;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.project-tasks-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.project-tasks-table th,
+.project-tasks-table td {
+  padding: 8px 10px;
+  text-align: start;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.project-tasks-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.sort-button {
+  all: unset;
+  cursor: pointer;
+  font-weight: 700;
+}
+.sort-button:focus-visible {
+  outline: 3px solid rgba(109, 93, 252, 0.35);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.task-title-cell {
+  min-width: 220px;
+}
+.blocked-chip {
+  margin-inline-start: 8px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--red-pale);
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 700;
+}
+.owner-cell {
+  white-space: nowrap;
+}
+.status-select {
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  font-size: 12px;
+}
+.row-highlight {
+  background: var(--purple-pale);
+  animation: row-flash 2.4s ease-out 1;
+}
+@keyframes row-flash {
+  from {
+    background: #d9d4ff;
+  }
+  to {
+    background: var(--purple-pale);
+  }
+}
+.table-pager {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 10px;
+  font-size: 12px;
+}
+.table-pager .results-meta {
+  margin-inline-end: auto;
+}
+
+.project-side {
+  display: grid;
+  gap: 12px;
+}
+.project-side .panel {
+  padding: 14px 16px;
+}
+.side-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.side-list li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.side-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.link-button {
+  all: unset;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  color: var(--ink);
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.link-button:focus-visible {
+  outline: 3px solid rgba(109, 93, 252, 0.35);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (max-width: 1100px) {
+  .project-layout {
+    grid-template-columns: 1fr;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .kpi-progress {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 640px) {
+  .kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .status-bar {
+    flex-wrap: wrap;
+  }
+}

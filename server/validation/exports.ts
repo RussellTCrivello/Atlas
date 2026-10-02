@@ -20,7 +20,7 @@ export const conditionSchema = z.object({
     'isEmpty',
     'isNotEmpty'
   ]),
-  value: z.union([z.string().max(500), z.number(), z.boolean()]).transform(value => String(value))
+  value: z.coerce.string().max(500).default('')
 })
 
 export const EXPORT_FORMATS = ['csv', 'xlsx', 'json', 'pdf', 'print'] as const

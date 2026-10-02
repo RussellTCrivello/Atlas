@@ -36,7 +36,15 @@ export const alertsDataset: DatasetDefinition = {
         time: r.created_at,
         body: r.body
       }))
-    const out = settle(dc, rows)
+    const state = dc.scope('state')
+    const out = settle(
+      dc,
+      state === 'open'
+        ? rows.filter(row => !row.resolved)
+        : state === 'resolved'
+          ? rows.filter(row => row.resolved)
+          : rows
+    )
     const columns = alertsDataset.columns(dc)
     const tone = (row: (typeof rows)[number]) =>
       row.resolved

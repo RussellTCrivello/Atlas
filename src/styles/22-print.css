@@ -1,0 +1,89 @@
+/* Printing: the interface is never printed. A report is printed from the document the server builds (see features/export). */
+.export-preview {
+  overflow-x: auto;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 8px;
+  margin: 6px 0;
+}
+.export-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.export-preview th,
+.export-preview td {
+  padding: 4px 8px;
+  text-align: start;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.export-preview thead th {
+  background: var(--surface-muted, #f1f5f9);
+  font-weight: 600;
+}
+.export-preview tbody tr:nth-child(even) td {
+  background: rgba(100, 116, 139, 0.06);
+}
+
+.print-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 2vh 2vw;
+}
+.print-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 96vw);
+  height: 94vh;
+  background: var(--surface, #fff);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+.print-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line, #e2e8f0);
+}
+.print-preview-bar strong {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.print-preview-note {
+  flex: 1;
+  color: var(--muted, #64748b);
+  font-size: 12px;
+}
+.print-preview iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #eef1f6;
+}
+
+/* If someone prints the application window by any other route (the browser menu), they get this notice, not the screen. */
+@media print {
+  #root,
+  .print-preview-backdrop {
+    display: none !important;
+  }
+  body::before {
+    content: 'Atlas does not print its screens. Use “Export / print” on a page (or Ctrl/Cmd+P) to print a report built from your data.';
+    display: block;
+    padding: 24px;
+    font:
+      16px/1.5 system-ui,
+      sans-serif;
+    color: #1f2937;
+  }
+}

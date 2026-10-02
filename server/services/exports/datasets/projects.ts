@@ -67,7 +67,8 @@ export const projectsDataset: DatasetDefinition = {
         if (column.key.startsWith('customFields.')) row[column.key] = customValue(r.custom_fields, column.key.slice(13))
       return row
     })
-    const out = settle(dc, rows)
+    const health = dc.scope('health')
+    const out = settle(dc, health ? rows.filter(row => row.health === health) : rows)
     const section: TableSection = {
       kind: 'table',
       id: 'projects',

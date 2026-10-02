@@ -12,3 +12,6 @@ contextBridge.exposeInMainWorld('atlasDesktop', {
 ipcRenderer.on('atlas:navigate', (_event, page) => {
   if (typeof page === 'string') window.dispatchEvent(new CustomEvent('atlas:navigate', { detail: page }))
 })
+
+// File > Print asks the page to print its report (the page builds it from the database through the server).
+ipcRenderer.on('atlas:print', () => window.dispatchEvent(new CustomEvent('atlas:print')))

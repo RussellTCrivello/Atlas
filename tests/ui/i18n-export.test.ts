@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
-import { toCsv, neutralizeFormula } from '../../src/lib/csv'
 import { safeFilename, slug } from '../../src/lib/format'
 import { Api, type TestServer, launch, makeUser, setupAdmin } from '../helpers/server'
 import { type BootedUI, bootUI, textOf } from '../helpers/ui'
@@ -158,26 +157,31 @@ describe('exports (SEC-07, SEC-08, UX-01)', () => {
     assert.equal(name, 'تقرير-المشاريع.csv')
   })
 
-  test('exporting is recorded with the server before any file is produced', async () => {
+  test('the browser sends a description of the export; the server builds the file and records it', async () => {
     const ui = await open()
     await exportCsv(ui)
-    const beacon = ui.requests.find(r => r.url === '/api/exports/audit')!
-    assert.ok(beacon)
-    const body = JSON.parse(beacon.body!)
+    const request = ui.requests.find(r => r.url === '/api/exports' && !JSON.parse(r.body!).preview)!
+    assert.ok(request, 'the file came from the server')
+    const body = JSON.parse(request.body!)
+    assert.equal(body.dataset, 'tasks')
     assert.equal(body.format, 'csv')
-    assert.ok(body.rows >= 9)
-    assert.ok(ui.requests.indexOf(beacon) < ui.requests.length)
+    assert.ok(Array.isArray(body.columns) && body.columns.includes('title'), 'the chosen columns are named')
+    assert.ok(!('rows' in body), 'no rows are sent: the data is read from the database')
+    const audit = (await admin.get('/api/audit?limit=50')).body.rows
+    assert.ok(
+      audit.some(
+        (entry: any) =>
+          entry.action === 'data.exported' && entry.detail.format === 'csv' && entry.detail.dataset === 'tasks'
+      )
+    )
   })
 
-  test('without the exportData permission there is no export menu', async () => {
+  test('without the exportData permission there is no export menu, and the server refuses anyway', async () => {
     await admin.put('/api/settings', { permissions: { roles: { Reader: { permissions: ['viewReports'] } } } })
     const reader = await makeUser(server, admin, 'Reader', 'Rita Reader')
     const ui = await open({ cookie: reader.api.cookie })
     assert.equal(ui.doc.querySelector('.export-wrap'), null)
-    assert.equal(
-      (await reader.api.post('/api/exports/audit', { page: 'tasks', format: 'csv', rows: 1, columns: 1 })).status,
-      403
-    )
+    assert.equal((await reader.api.post('/api/exports', { dataset: 'tasks', format: 'csv' })).status, 403)
   })
 
   test('the administrator controls which export formats exist', async () => {
@@ -202,14 +206,6 @@ describe('exports (SEC-07, SEC-08, UX-01)', () => {
 })
 
 describe('pure helpers', () => {
-  test('neutralizeFormula / toCsv', () => {
-    assert.equal(neutralizeFormula('=1+1'), "'=1+1")
-    assert.equal(neutralizeFormula('-5'), '-5')
-    assert.equal(neutralizeFormula('+31 20 123 4567'), "'+31 20 123 4567")
-    assert.equal(neutralizeFormula('\tcmd'), "'\tcmd")
-    assert.equal(neutralizeFormula('hello'), 'hello')
-    assert.equal(toCsv([{ key: 'a', label: 'A' }], [{ a: '=x' }, { a: 5 }, { a: null }]), '"A"\r\n"\'=x"\r\n"5"\r\n""')
-  })
   test('safeFilename / slug keep letters from every script', () => {
     assert.equal(safeFilename('تقرير المشاريع'), 'تقرير-المشاريع')
     assert.equal(safeFilename('a/b\\c:d*e?"f<g>h|i'), 'a-b-c-d-e-f-g-h-i'.replace(/-/g, '-'))

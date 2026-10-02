@@ -66,8 +66,14 @@ function collect(file) {
   return found
 }
 
+const sourceFiles = dir =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) return sourceFiles(full)
+    return entry.name.endsWith('.tsx') ? [full] : []
+  })
 const all = new Set([
-  ...collect(path.join(root, 'src', 'main.tsx')),
+  ...sourceFiles(path.join(root, 'src')).flatMap(file => [...collect(file)]),
   ...collect(path.join(root, 'src', 'lib', 'labels.ts'))
 ])
 const missing = [...all].filter(text => !known.has(text)).sort()

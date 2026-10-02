@@ -1,0 +1,153 @@
+/* Configuration field layout. */
+/* Modern configuration field layout polish */
+.advanced-settings-page .settings-card {
+  overflow: hidden;
+}
+.advanced-settings-page .settings-card .section-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.advanced-settings-page .settings-fields.compact-fields {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 13px;
+}
+.advanced-settings-page .settings-fields > label,
+.advanced-settings-page .json-editor > label,
+.setup-card-advanced label {
+  position: relative;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(248, 249, 253, 0.92));
+  color: #566175;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+.advanced-settings-page .settings-fields > label:focus-within,
+.advanced-settings-page .json-editor > label:focus-within,
+.setup-card-advanced label:focus-within {
+  border-color: color-mix(in srgb, var(--purple) 52%, #fff);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--purple-pale) 76%, transparent),
+    0 12px 30px rgba(36, 44, 67, 0.07);
+  transform: translateY(-1px);
+}
+.advanced-settings-page .settings-fields input,
+.advanced-settings-page .settings-fields select,
+.advanced-settings-page .settings-fields textarea,
+.advanced-settings-page .admin-toolbar input,
+.advanced-settings-page .admin-toolbar select,
+.advanced-settings-page .translation-row input,
+.advanced-settings-page .translation-row select,
+.advanced-settings-page .json-editor textarea,
+.setup-card-advanced input,
+.setup-card-advanced select,
+.setup-card-advanced textarea {
+  min-height: 40px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 78%, #fff);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.advanced-settings-page .settings-fields textarea,
+.advanced-settings-page .json-editor textarea,
+.setup-card-advanced textarea {
+  min-height: 104px;
+  line-height: 1.55;
+}
+.advanced-settings-page .settings-fields input:focus,
+.advanced-settings-page .settings-fields select:focus,
+.advanced-settings-page .settings-fields textarea:focus,
+.advanced-settings-page .admin-toolbar input:focus,
+.advanced-settings-page .admin-toolbar select:focus,
+.advanced-settings-page .translation-row input:focus,
+.advanced-settings-page .translation-row select:focus,
+.advanced-settings-page .json-editor textarea:focus,
+.setup-card-advanced input:focus,
+.setup-card-advanced select:focus,
+.setup-card-advanced textarea:focus {
+  outline: none;
+  border-color: var(--purple);
+  box-shadow: 0 0 0 3px var(--purple-pale);
+}
+.advanced-settings-page label small,
+.setup-card-advanced label small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.advanced-settings-page .admin-toolbar {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfcff, #f6f7fb);
+}
+.advanced-settings-page .admin-toolbar label {
+  margin: 0;
+  min-width: 170px;
+}
+.advanced-settings-page .permission-grid .interface-toggle,
+.advanced-settings-page .advanced-toggle,
+.advanced-settings-page .config-row-draggable {
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--paper), #fbfcff);
+}
+.advanced-settings-page .custom-field-head {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #f5f6fb;
+}
+.advanced-settings-page .custom-field-row,
+.advanced-settings-page .workflow-state-row,
+.advanced-settings-page .transition-row,
+.advanced-settings-page .nav-builder-row,
+.advanced-settings-page .language-package-row,
+.advanced-settings-page .integration-row {
+  box-shadow: 0 8px 24px rgba(25, 31, 50, 0.04);
+}
+.advanced-settings-page .drag-handle {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--purple-pale);
+  color: var(--purple);
+  letter-spacing: -0.08em;
+}
+.advanced-settings-page .module-config-card {
+  background: radial-gradient(circle at 100% 0%, var(--purple-pale), transparent 34%), var(--paper);
+  box-shadow: 0 12px 34px rgba(25, 31, 50, 0.06);
+}
+.advanced-settings-page .module-config-head strong {
+  text-transform: capitalize;
+}
+.advanced-settings-page .brand-preview {
+  background: linear-gradient(135deg, #191b35, #2c2a55);
+  color: #fff;
+  border: 0;
+}
+.advanced-settings-page .brand-preview span {
+  color: #c9cae7;
+}
+body[data-density='compact'] .advanced-settings-page .settings-fields > label {
+  padding: 10px;
+}
+html[data-theme='dark'] .advanced-settings-page .settings-fields > label,
+html[data-theme='dark'] .advanced-settings-page .json-editor > label,
+html[data-theme='dark'] .setup-card-advanced label {
+  background: linear-gradient(180deg, #23243f, #1f2038);
+}
+html[data-theme='dark'] .advanced-settings-page .admin-toolbar {
+  background: linear-gradient(180deg, #23243f, #1f2038);
+}
+@media (max-width: 760px) {
+  .advanced-settings-page .settings-fields.compact-fields {
+    grid-template-columns: 1fr;
+  }
+}
