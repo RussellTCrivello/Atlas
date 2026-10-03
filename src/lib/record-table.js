@@ -98,3 +98,14 @@ export function toggleSelection(currentIds, id) {
   else next.add(key)
   return next
 }
+
+export function normalizeImportedValue(value, column) {
+  if (column?.key === 'tags') return Array.isArray(value) ? value : String(value ?? '').split(/[;,]/).map(tag => tag.trim()).filter(Boolean)
+  if (value === '' || value === null || value === undefined) return ''
+  if (column?.type === 'number' || column?.type === 'percent') {
+    const number = Number(value)
+    return Number.isFinite(number) ? number : value
+  }
+  if (column?.type === 'boolean') return value === true || value === 'true' || value === '1' || String(value).toLowerCase() === 'yes'
+  return value
+}

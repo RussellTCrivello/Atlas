@@ -497,7 +497,7 @@ async function main() {
     assert.equal(overlap.body.conflict, true)
     assert.deepEqual(overlap.body.fields.map(field => field.path), ['priority'])
     assert.equal((await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === String(managerTask.numericId)).priority, 'Medium')
-    const conflictAudit = await admin.get('/api/offline-sync/conflicts?limit=100')
+    const conflictAudit = await admin2.get('/api/offline-sync/conflicts?limit=100')
     const auditedOverlap = conflictAudit.body.find(row => row.operationId === conflictOperationId)
     assert.equal(auditedOverlap.status, 'open')
     assert.equal(auditedOverlap.localRecord.priority, 'High')
@@ -507,7 +507,7 @@ async function main() {
       metadata: { operationId: 'offline-conflict-resolution-op-00001', collection: 'syncConflicts', baseRecord: null, enforceConflicts: true }
     })
     assert.equal(resolutionAck.body.status, 'resolved')
-    assert.equal((await admin.get('/api/offline-sync/conflicts?status=resolved')).body.some(row => row.operationId === conflictOperationId), true)
+    assert.equal((await admin2.get('/api/offline-sync/conflicts?status=resolved')).body.some(row => row.operationId === conflictOperationId), true)
 
     const deleteConflictBaseRow = (await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === offlineTaskId)
     const deleteConflictBase = canonicalTask(deleteConflictBaseRow)
@@ -522,6 +522,7 @@ async function main() {
     await stopServer()
     await restartPreservingData()
     await manager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
+    await admin2.post('/api/auth/login', { email: 'admin@example.com', password: 'StrongPass123' })
     const replayAfterRestart = await manager.sync('/api/tasks', { body: offlineCreateBody, metadata: offlineCreateMeta })
     assert.equal(replayAfterRestart.body.numericId, offlineTaskId)
     const receiptDb = new DatabaseSync(databaseFile)
@@ -641,7 +642,7 @@ async function main() {
     if (preservedWorkLogId) assert.equal(migrationReport.body.rows.find(row => row.id === preservedWorkLogId)?.minutes, 45)
     const migrationHealth = await migrated.get('/api/system')
     assert.equal(migrationHealth.body.store.schemaVersion, '4.0.0')
-    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 3)
+    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 4)
     record('legacy work-log migration removes generated rows and preserves explicit minutes', 'pass')
 
     await stopServer()
@@ -703,7 +704,7 @@ async function main() {
     assert.equal(restartedImportBootstrap.body.people.filter(row => row.id === 'legacy-person-1').length, 1)
     assert.equal(fs.existsSync(legacySourceFile), false)
     assert.equal(fs.readdirSync(legacyArchiveDirectory).filter(file => file.startsWith('atlas-store-imported-') && file.endsWith('.json')).length, 1)
-    assert.equal(importedRestartBootstrap.body.settings.workLedger.retentionMonths, 0)
+    assert.equal(restartedImportBootstrap.body.settings.workLedger.retentionMonths, 0)
     record('one-time legacy JSON import, SQL restart persistence, content preservation, archival, and unchanged legacy retention', 'pass', { archivedFile: archivedSources[0] })
 
     await stopServer()

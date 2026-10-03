@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { clampPage, filterRecordRows, parseCsv, selectRange, sortRecordRows, toggleSelection } from './record-table.js'
+import { clampPage, filterRecordRows, normalizeImportedValue, parseCsv, selectRange, sortRecordRows, toggleSelection } from './record-table.js'
 
 const rows = [
   { id: 'a', title: 'Beta', status: 'Open', owner: { name: 'Sam' }, rank: 10 },
@@ -19,6 +19,9 @@ assert.deepEqual([...selectRange(new Set(['a']), ['a', 'b', 'c'], 'a', 'c')], ['
 assert.deepEqual([...selectRange(new Set(['a', 'b', 'c']), ['a', 'b', 'c'], 'a', 'c', { toggle: true })], [])
 assert.deepEqual([...toggleSelection(new Set(['a']), 'a')], [])
 assert.equal(clampPage(9, 3), 2)
+assert.deepEqual(normalizeImportedValue('risk, discovery; support', { key: 'tags', type: 'tags' }), ['risk', 'discovery', 'support'])
+assert.deepEqual(normalizeImportedValue('', { key: 'tags', type: 'tags' }), [])
+assert.equal(normalizeImportedValue('yes', { type: 'boolean' }), true)
 const benchmarkRows = Array.from({ length: 50000 }, (_, index) => ({ id: String(index), title: `Task ${index}`, rank: index }))
 assert.equal(filterRecordRows(benchmarkRows, { query: 'Task 49999', columns: [{ key: 'title' }] }).length, 1)
 assert.equal(sortRecordRows(benchmarkRows, [{ key: 'rank', dir: 'desc' }], [{ key: 'rank', type: 'number' }]).length, 50000)

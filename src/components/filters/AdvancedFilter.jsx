@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../Icon.jsx'
 import { useUserPreferences } from '../../context/user-preferences.jsx'
 import { FIELD_OPERATORS } from '../../lib/advanced-filters.js'
 
 const EMPTY_CONDITIONS = []
 
-export function AdvancedFilter({ filterKey, fields, onApply }) {
+export function AdvancedFilter({ filterKey, fields, onApply, appliedConditions }) {
   const { filters, saveFilter } = useUserPreferences()
   const savedConditions = Array.isArray(filters?.[filterKey]) ? filters[filterKey] : EMPTY_CONDITIONS
   const [open, setOpen] = useState(false)
   const [conditions, setConditions] = useState(savedConditions)
+  const lastAppliedRef = useRef(appliedConditions)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
 
@@ -17,6 +18,11 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
     setConditions(savedConditions)
     onApply(savedConditions)
   }, [filterKey, savedConditions, onApply])
+  useEffect(() => {
+    if (!Array.isArray(appliedConditions) || lastAppliedRef.current === appliedConditions) return
+    lastAppliedRef.current = appliedConditions
+    setConditions(appliedConditions)
+  }, [appliedConditions])
 
   const update = (index, key, value) => setConditions((current) => current.map((condition, rowIndex) => rowIndex === index
     ? { ...condition, [key]: value }
@@ -33,6 +39,7 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
     setSaveError('')
     try {
       await saveFilter(filterKey, nextConditions)
+      lastAppliedRef.current = nextConditions
       setConditions(nextConditions)
       onApply(nextConditions)
       setOpen(false)
@@ -47,10 +54,10 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
   const clear = () => persist([])
 
   return <div className="advanced-filter-wrap">
-    <button type="button" className={`secondary-button ${conditions.length ? 'filter-active' : ''}`} onClick={() => setOpen(!open)}>
+    <button type="button" className={`secondary-button ${conditions.length ? 'filter-active' : ''}`} aria-expanded={open} aria-controls={`advanced-filter-${filterKey}`} onClick={() => setOpen(!open)}>
       <Icon name="filter" size={15}/> Advanced filter {conditions.length > 0 && <span className="filter-badge">{conditions.length}</span>}
     </button>
-    {open && <div className="advanced-filter-panel">
+    {open && <div id={`advanced-filter-${filterKey}`} className="advanced-filter-panel" role="region" aria-label="Advanced filter conditions">
       <div className="advanced-filter-head">
         <strong>Advanced query builder</strong>
         <button type="button" className="icon-button subtle" onClick={() => setOpen(false)} aria-label="Close filter panel"><Icon name="close" size={14}/></button>
@@ -77,7 +84,7 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
         <button type="button" className="primary-button" disabled={saving} onClick={apply}>{saving ? 'Saving…' : 'Apply'}</button>
       </div>
       {saveError && <p className="form-error" role="alert">{saveError}</p>}
-      <p className="filter-hint">Mix AND/OR conditions for precise operational queries.</p>
+      <p className="filter-hint">Conditions are evaluated from top to bottom. Mix AND/OR conditions for precise operational queries.</p>
     </div>}
   </div>
 }
