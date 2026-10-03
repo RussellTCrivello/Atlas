@@ -559,7 +559,7 @@ export const TaskGrid = forwardRef<TaskGridHandle, Props>(function TaskGrid(prop
           }}
           onOpen={task => setDrawerId(task.numericId)}
           onEdit={canWrite ? task => openModal('task', task) : undefined}
-          onDelete={canManage ? deleteFromKeyboard : undefined}
+          onDelete={deleteFromKeyboard}
           onSelectAllMatching={tooMany ? undefined : selectAllMatching}
           onResize={grid.resize}
           onResetWidth={grid.resetWidths}

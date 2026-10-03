@@ -34,9 +34,15 @@ export function EditableCell<Row>({ row, edit, children }: { row: Row; edit: Inl
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement | HTMLSelectElement>(null)
+  // Set once the person has finished with the box (Enter, Escape or leaving it). A browser may also report a blur when the box is
+  // removed from the page; that must neither save a value that was just cancelled nor save the same value twice.
+  const finished = useRef(false)
   useEffect(() => setValue(current), [current])
   useEffect(() => {
-    if (editing) input.current?.focus()
+    if (editing) {
+      finished.current = false
+      input.current?.focus()
+    }
   }, [editing])
   useEffect(() => {
     if (!error) return
@@ -48,6 +54,7 @@ export function EditableCell<Row>({ row, edit, children }: { row: Row; edit: Inl
     if (busy) return
     if (edit.required && !next.trim()) {
       setError(t('This field is required'))
+      finished.current = false
       return
     }
     if (next === current) {
@@ -62,6 +69,7 @@ export function EditableCell<Row>({ row, edit, children }: { row: Row; edit: Inl
     } catch (failure) {
       setError(errorMessage(failure))
       setValue(current)
+      finished.current = false
       if (edit.kind !== 'select') input.current?.focus()
     } finally {
       setBusy(false)
@@ -118,15 +126,21 @@ export function EditableCell<Row>({ row, edit, children }: { row: Row; edit: Inl
           onKeyDown={event => {
             if (event.key === 'Enter') {
               event.preventDefault()
+              finished.current = true
               void commit(value)
             } else if (event.key === 'Escape') {
               event.stopPropagation()
+              finished.current = true
               setValue(current)
               setError('')
               setEditing(false)
             }
           }}
-          onBlur={() => !error && void commit(value)}
+          onBlur={() => {
+            if (finished.current || error) return
+            finished.current = true
+            void commit(value)
+          }}
         />
         {error && (
           <span className="cell-error" role="alert">

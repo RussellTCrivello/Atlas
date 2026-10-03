@@ -67,13 +67,11 @@ export function ImportDialog({ projects, defaultProjectId, onClose, onImported }
     }
   }
   // Once a file has been checked, changing how it is read checks it again, so the numbers on screen are always current.
-  const checked = useRef(false)
+  // (Editing the text, or choosing another file, discards the check instead: the person presses "Check" for the new file.)
+  const hasReport = useRef(false)
+  hasReport.current = Boolean(report)
   useEffect(() => {
-    if (!report) return
-    if (!checked.current) {
-      checked.current = true
-      return
-    }
+    if (!hasReport.current) return
     const timer = setTimeout(check, 200)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -108,7 +106,6 @@ export function ImportDialog({ projects, defaultProjectId, onClose, onImported }
     setError('')
     setFileName(file.name)
     setReport(null)
-    checked.current = false
     setMapping({})
     setText(await file.text())
   }
@@ -183,7 +180,6 @@ export function ImportDialog({ projects, defaultProjectId, onClose, onImported }
                   onChange={event => {
                     setText(event.target.value)
                     setReport(null)
-                    checked.current = false
                     setFileName('')
                   }}
                 />

@@ -120,7 +120,7 @@ describe('the localiser never rewrites user data (UX-03)', () => {
 describe('exports (SEC-07, SEC-08, UX-01)', () => {
   const exportCsv = async (ui: BootedUI, title?: string) => {
     ui.click('.export-wrap > button')
-    await ui.settle(100)
+    await ui.waitFor(() => ui.doc.querySelector('.export-actions .secondary-button')) // the panel is ready once the formats are known
     ui.type('.export-panel select', 'csv')
     if (title) ui.type('.export-panel .tiny-label input', title)
     ui.click('.export-actions .secondary-button')
@@ -189,7 +189,8 @@ describe('exports (SEC-07, SEC-08, UX-01)', () => {
     try {
       const ui = await open()
       ui.click('.export-wrap > button')
-      await ui.settle(100)
+      // the panel is ready once the server has said which formats this person may use (its Export button appears then)
+      await ui.waitFor(() => ui.doc.querySelector('.export-actions .secondary-button'))
       const options = [...ui.doc.querySelectorAll('.export-panel select option')]
         .map(o => (o as HTMLOptionElement).value)
         .filter(v => ['pdf', 'xlsx', 'csv', 'json'].includes(v))

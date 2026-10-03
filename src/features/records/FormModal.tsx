@@ -55,11 +55,13 @@ export function FormModal({ modal, data, user, onClose, onSave, onDelete, onReop
   const [failure, setFailure] = useState('')
   const [busy, setBusy] = useState<SaveMode | ''>('')
   const [tagNames, setTagNames] = useState<string[]>([])
-  const initialForm = useRef('')
+  // What the form looked like when it opened (or was last saved): `dirty` is whether it differs from that.
+  const [baseline, setBaseline] = useState('')
+  const [loadedKey, setLoadedKey] = useState('')
   const dialogRef = useRef<HTMLFormElement>(null)
   const focusedInvalid = useRef(false)
   const titleId = useId()
-  const dirty = Boolean(type) && JSON.stringify(form) !== initialForm.current
+  const dirty = Boolean(type) && JSON.stringify(form) !== baseline
 
   const requestClose = async () => {
     if (
@@ -113,15 +115,20 @@ export function FormModal({ modal, data, user, onClose, onSave, onDelete, onReop
     [data, user, record, settings]
   )
 
-  useEffect(() => {
-    if (!type) return
-    const start = presetsFor(type, context)
-    initialForm.current = JSON.stringify(start)
-    setForm(start)
-    setErrors({})
-    setFailure('')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, record?.numericId, record?.id, modal?.nonce])
+  // When the dialog is pointed at another record (or a new one), the form is rebuilt in the same render, not in an effect after it:
+  // otherwise the heading would already say "Edit task" while the fields still held the old values, and anything typed in between
+  // would be lost (and the form would look edited when it was not).
+  const key = type ? `${type}|${record?.numericId ?? record?.id ?? ''}|${modal?.nonce ?? ''}` : ''
+  if (key !== loadedKey) {
+    setLoadedKey(key)
+    if (type) {
+      const start = presetsFor(type, context)
+      setBaseline(JSON.stringify(start))
+      setForm(start)
+      setErrors({})
+      setFailure('')
+    }
+  }
 
   // Existing tags are offered while typing one (only task forms use them).
   useEffect(() => {
@@ -152,7 +159,7 @@ export function FormModal({ modal, data, user, onClose, onSave, onDelete, onReop
     })
   }
   const reset = () => {
-    setForm(JSON.parse(initialForm.current))
+    setForm(JSON.parse(baseline || '{}'))
     setErrors({})
     setFailure('')
   }
@@ -192,7 +199,7 @@ export function FormModal({ modal, data, user, onClose, onSave, onDelete, onReop
     setBusy(mode)
     try {
       const saved = await onSave(type, record, form)
-      initialForm.current = JSON.stringify(form)
+      setBaseline(JSON.stringify(form))
       if (mode === 'close' || !onReopen) onClose()
       else if (mode === 'stay') onReopen(type, saved && (saved.numericId || saved.id) ? saved : record)
       else onReopen(type, carryOver(type, form))

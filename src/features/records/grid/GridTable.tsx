@@ -164,7 +164,7 @@ export function GridTable<Row>(props: Props<Row>) {
     } else if ((key === 'F2' || (key.toLowerCase() === 'e' && !mod)) && props.onEdit) {
       event.preventDefault()
       props.onEdit(row)
-    } else if ((key === 'Delete' || key === 'Backspace') && props.onDelete) {
+    } else if (key === 'Delete' && props.onDelete) {
       event.preventDefault()
       props.onDelete(row)
     }

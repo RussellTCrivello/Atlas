@@ -256,7 +256,7 @@ describe('working on the project from its page', () => {
 describe('exporting and printing a project come from the database', () => {
   const exportCsv = async (ui: BootedUI) => {
     ui.click('.export-wrap > button', 'Export / print')
-    await ui.settle(200)
+    await ui.waitFor(() => ui.doc.querySelector('.export-actions .secondary-button')) // the panel is ready once the formats are known
     ui.type('.export-panel select', 'csv')
     ui.click('.export-actions .secondary-button')
     await ui.waitFor(() => ui.downloads.length > 0)
@@ -282,7 +282,7 @@ describe('exporting and printing a project come from the database', () => {
     const printed: string[] = []
     ui.w.print = () => printed.push('window')
     ui.click('.export-wrap > button', 'Export / print')
-    await ui.settle(200)
+    await ui.waitFor(() => ui.doc.querySelector('.export-actions .primary-button'))
     ui.click('.export-actions .primary-button', 'Print')
     const frame = (await ui.waitFor(() => ui.doc.querySelector('.print-preview iframe'))) as HTMLIFrameElement
     const html = frame.getAttribute('srcdoc')!
