@@ -614,6 +614,7 @@ export function App() {
                   highlight={highlight}
                   refresh={() => loadData(true)}
                   onBack={() => setPage('projects')}
+                  onDelete={deleteEntity}
                 />
               )}
               {page === 'tasks' && (
@@ -626,7 +627,13 @@ export function App() {
                 />
               )}
               {page === 'people' && (
-                <People data={data} openModal={openModal} canManage={hasPermission(user, 'managePeople')} />
+                <People
+                  data={data}
+                  openModal={openModal}
+                  canManage={hasPermission(user, 'managePeople')}
+                  refresh={() => loadData(true)}
+                  onDelete={deleteEntity}
+                />
               )}
               {page === 'activity' && (
                 <ActivityLog data={data} openModal={openModal} setPage={setPage} canLogActivity={canLogActivity} />
@@ -655,6 +662,7 @@ export function App() {
                   openModal={openModal}
                   canManage={hasPermission(user, 'manageAlerts')}
                   canResolve={hasPermission(user, 'writeTasks') || hasPermission(user, 'manageAlerts')}
+                  onDelete={deleteEntity}
                 />
               )}
               {page === 'settings' &&

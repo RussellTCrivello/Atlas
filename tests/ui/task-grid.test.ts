@@ -147,6 +147,19 @@ describe('selecting records', () => {
     assert.equal(rows(ui).length, 1)
   })
 
+  test('events that arrive before the screen has caught up still build on each other (no lost or resurrected ticks)', async () => {
+    const ui = await open(manager.api)
+    box(ui, 0).click()
+    box(ui, 1).click()
+    await ui.waitFor(() => /2 selected/.test(bar(ui)))
+    ui.click('.selection-summary button', 'Clear selection')
+    box(ui, 5).click() // straight away: nothing has re-rendered in between
+    await ui.waitFor(() => /1 selected/.test(bar(ui)))
+    await ui.settle(200)
+    assert.match(bar(ui), /1 selected/, 'only the row ticked after clearing is selected')
+    assert.equal(box(ui, 0).checked || box(ui, 1).checked, false, 'the cleared ticks did not come back')
+  })
+
   test('with nothing selected the actions that need a selection are disabled and say why; Import is always available', async () => {
     const ui = await open(manager.api)
     for (const label of ['Open', 'Edit', 'Duplicate', 'Status', 'Assign', 'Edit fields', 'Tags', 'Print', 'Delete'])

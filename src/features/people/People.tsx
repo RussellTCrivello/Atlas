@@ -5,8 +5,26 @@ import { AdvancedFilter } from '../export/AdvancedFilter'
 import { ExportMenu } from '../export/ExportMenu'
 import { Icon } from '../../ui/icons'
 import { Avatar, EmptyState } from '../../ui/primitives'
+import { useApp } from '../../ui/app-context'
+import { tr } from '../../lib/i18n'
+import { EntityGrid } from '../records/EntityGrid'
+import { type EntityContext, personActions, personKind } from '../records/entities'
+import { ViewSwitch, useViewMode } from '../records/ViewSwitch'
 
-export function People({ data, openModal, canManage }) {
+export function People({ data, openModal, canManage, refresh = () => {}, onDelete = () => {} }: any) {
+  const { settings, notify } = useApp()
+  const [mode, setMode] = useViewMode('people')
+  const t = (phrase: string, values?: Record<string, unknown>) => tr(settings, phrase, values)
+  const entity: EntityContext = {
+    data,
+    settings,
+    t,
+    notify,
+    openModal,
+    deleteOne: (_type, record) => onDelete('person', record),
+    refresh,
+    can: { managePeople: canManage }
+  }
   const [team, setTeam] = useState('Everyone')
   const [advanced, setAdvanced] = useState([])
   const fields = [
@@ -47,35 +65,45 @@ export function People({ data, openModal, canManage }) {
           </div>
         </div>
       </div>
-      <div className="toolbar">
-        <div className="filter-tabs">
-          {['Everyone', ...data.teams.map(t => t.name)].map(tab => (
-            <button className={team === tab ? 'selected' : ''} onClick={() => setTeam(tab)} key={tab}>
-              {tab}
-            </button>
-          ))}
-        </div>
-        <div className="toolbar-actions">
-          <AdvancedFilter filterKey="people" fields={fields} onApply={setAdvanced} />
-          <ExportMenu
-            dataset="people"
-            title="Atlas people"
-            scope={team === 'Everyone' ? {} : { team }}
-            filters={advanced}
-            rowsHint={rows.length}
-          />
-          {canManage && (
-            <button className="secondary-button" onClick={() => openModal('team')}>
-              <Icon name="team" size={15} /> Manage teams
-            </button>
-          )}
-          {canManage && (
-            <button className="primary-button" onClick={() => openModal('person')}>
-              <Icon name="plus" size={15} /> Add person
-            </button>
-          )}
-        </div>
+      <div className="toolbar view-switch-bar">
+        <ViewSwitch mode={mode} onChange={setMode} />
+        {mode === 'table' && canManage && (
+          <button className="secondary-button" onClick={() => openModal('team')}>
+            <Icon name="team" size={15} /> Manage teams
+          </button>
+        )}
       </div>
+      {mode === 'cards' && (
+        <div className="toolbar">
+          <div className="filter-tabs">
+            {['Everyone', ...data.teams.map(t => t.name)].map(tab => (
+              <button className={team === tab ? 'selected' : ''} onClick={() => setTeam(tab)} key={tab}>
+                {tab}
+              </button>
+            ))}
+          </div>
+          <div className="toolbar-actions">
+            <AdvancedFilter filterKey="people" fields={fields} onApply={setAdvanced} />
+            <ExportMenu
+              dataset="people"
+              title="Atlas people"
+              scope={team === 'Everyone' ? {} : { team }}
+              filters={advanced}
+              rowsHint={rows.length}
+            />
+            {canManage && (
+              <button className="secondary-button" onClick={() => openModal('team')}>
+                <Icon name="team" size={15} /> Manage teams
+              </button>
+            )}
+            {canManage && (
+              <button className="primary-button" onClick={() => openModal('person')}>
+                <Icon name="plus" size={15} /> Add person
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="team-strip">
         {data.teams.map(t => (
           <button className="team-chip" key={t.id} onClick={() => canManage && openModal('team', t)}>
@@ -85,12 +113,18 @@ export function People({ data, openModal, canManage }) {
           </button>
         ))}
       </div>
-      <div className="people-grid">
-        {rows.map(p => (
-          <PersonCard person={p} key={p.id} onEdit={canManage ? () => openModal('person', p) : null} />
-        ))}
-      </div>
-      {!rows.length && <EmptyState title="No people match" message="Clear filters or add a person." />}
+      {mode === 'table' ? (
+        <EntityGrid kind={personKind(entity)} rows={data.people} actions={personActions(entity, () => refresh())} />
+      ) : (
+        <>
+          <div className="people-grid">
+            {rows.map(p => (
+              <PersonCard person={p} key={p.id} onEdit={canManage ? () => openModal('person', p) : null} />
+            ))}
+          </div>
+          {!rows.length && <EmptyState title="No people match" message="Clear filters or add a person." />}
+        </>
+      )}
     </div>
   )
 }

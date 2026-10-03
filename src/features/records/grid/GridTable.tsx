@@ -42,7 +42,8 @@ interface Props<Row> {
   onFilter: (key: string, value: any) => void
   showFilters: boolean
   selection: SelectionState
-  onSelect: (next: SelectionState) => void
+  /** Change the selection by saying how: each change builds on the latest selection, however quickly events arrive. */
+  onSelect: (update: (current: SelectionState) => SelectionState) => void
   onOpen?: (row: Row) => void
   onEdit?: (row: Row) => void
   /** Delete pressed: the grid decides what that means (the selection, or the focused row if nothing is selected). */
@@ -105,14 +106,14 @@ export function GridTable<Row>(props: Props<Row>) {
 
   const tick = (row: Row, event: { shiftKey: boolean }) => {
     const id = rowId(row)
-    props.onSelect(selection.pick(picked, visibleIds, id, { shift: event.shiftKey }))
+    props.onSelect(current => selection.pick(current, visibleIds, id, { shift: event.shiftKey }))
     setFocusId(id)
   }
 
   const onRowClick = (row: Row, event: ReactMouseEvent) => {
     if ((event.target as HTMLElement).closest('button, a, input, select, textarea, label, [data-no-open]')) return
-    if (event.ctrlKey || event.metaKey) props.onSelect(selection.toggle(picked, rowId(row)))
-    else if (event.shiftKey) props.onSelect(selection.pick(picked, visibleIds, rowId(row), { shift: true }))
+    if (event.ctrlKey || event.metaKey) props.onSelect(current => selection.toggle(current, rowId(row)))
+    else if (event.shiftKey) props.onSelect(current => selection.pick(current, visibleIds, rowId(row), { shift: true }))
     else props.onOpen?.(row)
     setFocusId(rowId(row))
   }
@@ -129,12 +130,12 @@ export function GridTable<Row>(props: Props<Row>) {
     if (mod && key.toLowerCase() === 'a' && selectable) {
       event.preventDefault()
       if (state === 'all' && props.onSelectAllMatching) props.onSelectAllMatching()
-      else props.onSelect(selection.selectAll(picked, visibleIds))
+      else props.onSelect(current => selection.selectAll(current, visibleIds))
       return
     }
     if (key === 'Escape' && selection.sizeOf(picked) > 0) {
       event.stopPropagation()
-      props.onSelect(selection.clear())
+      props.onSelect(() => selection.clear())
       return
     }
     const rowEl = target.closest<HTMLElement>('tr[data-row]')
@@ -146,7 +147,8 @@ export function GridTable<Row>(props: Props<Row>) {
     const move = (to: number) => {
       event.preventDefault()
       const next = visibleIds[Math.max(0, Math.min(visibleIds.length - 1, to))]
-      if (event.shiftKey && selectable) props.onSelect(selection.extend(picked, visibleIds, id, to > index ? 1 : -1))
+      if (event.shiftKey && selectable)
+        props.onSelect(current => selection.extend(current, visibleIds, id, to > index ? 1 : -1))
       focusRow(next)
     }
     if (key === 'ArrowDown') move(index + 1)
@@ -225,7 +227,7 @@ export function GridTable<Row>(props: Props<Row>) {
                   checked={state === 'all'}
                   disabled={!rows.length}
                   aria-label={t('Select all {count} rows on this page', { count: rows.length })}
-                  onChange={() => props.onSelect(selection.togglePage(picked, visibleIds))}
+                  onChange={() => props.onSelect(current => selection.togglePage(current, visibleIds))}
                 />
               </th>
             )}

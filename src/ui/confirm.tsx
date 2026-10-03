@@ -21,26 +21,35 @@ export interface ConfirmOptions {
   irreversible?: boolean
   /** Says plainly how it can be undone ("You can undo this for 30 days."). */
   undoHint?: string
+  /** An extra choice shown with the question ("Also copy its tasks"); its answer comes back from `askAction`. */
+  checkbox?: { label: string; checked?: boolean }
   /** The person must type this (usually the number of records) before the button works: for the largest destructive actions. */
   typeToConfirm?: string
 }
 
+export interface Answer {
+  confirmed: boolean
+  /** The state of the extra checkbox, if the question had one. */
+  checked: boolean
+}
 interface Pending extends ConfirmOptions {
-  resolve: (answer: boolean) => void
+  resolve: (answer: Answer) => void
 }
 
 let host: ((options: Pending) => void) | null = null
 
-/** Ask. Resolves true when the person confirms, false when they cancel (button, Escape or backdrop). */
-export function confirmAction(options: ConfirmOptions): Promise<boolean> {
+/** Ask, and get the answer together with the state of the extra checkbox (if the question has one). */
+export function askAction(options: ConfirmOptions): Promise<Answer> {
   if (!host) {
     // The host is mounted with the app; if something asks before that, fall back to the browser rather than act unasked.
-    return Promise.resolve(
-      window.confirm([options.title, options.message].filter(x => typeof x === 'string').join('\n'))
-    )
+    const confirmed = window.confirm([options.title, options.message].filter(x => typeof x === 'string').join('\n'))
+    return Promise.resolve({ confirmed, checked: Boolean(options.checkbox?.checked) })
   }
   return new Promise(resolve => host!({ ...options, resolve }))
 }
+
+/** Ask. Resolves true when the person confirms, false when they cancel (button, Escape or backdrop). */
+export const confirmAction = async (options: ConfirmOptions): Promise<boolean> => (await askAction(options)).confirmed
 export const useConfirm = () => confirmAction
 
 export function ConfirmHost() {
@@ -54,7 +63,7 @@ export function ConfirmHost() {
   }, [])
   const current = queue[0]
   if (!current) return null
-  const answer = (value: boolean) => {
+  const answer = (value: Answer) => {
     current.resolve(value)
     setQueue(list => list.slice(1))
   }
@@ -74,7 +83,7 @@ function ConfirmDialog({
   t
 }: {
   options: Pending
-  onAnswer: (value: boolean) => void
+  onAnswer: (value: Answer) => void
   t: (phrase: string, values?: Record<string, unknown>) => string
 }) {
   const id = useId()
@@ -82,14 +91,16 @@ function ConfirmDialog({
   const cancel = useRef<HTMLButtonElement>(null)
   const confirm = useRef<HTMLButtonElement>(null)
   const [typed, setTyped] = useState('')
+  const [checked, setChecked] = useState(Boolean(options.checkbox?.checked))
+  const say = (confirmed: boolean) => onAnswer({ confirmed, checked })
   const danger = options.tone === 'danger'
   const locked = Boolean(options.typeToConfirm) && typed.trim() !== options.typeToConfirm
   // The safe choice has focus: Enter on a destructive prompt cancels, it never deletes by accident.
-  const onKeyDown = useDialogKeys(dialog, true, () => onAnswer(false), danger ? cancel : confirm)
+  const onKeyDown = useDialogKeys(dialog, true, () => say(false), danger ? cancel : confirm)
   return (
     <div
       className="modal-backdrop confirm-backdrop"
-      onMouseDown={event => event.target === event.currentTarget && onAnswer(false)}
+      onMouseDown={event => event.target === event.currentTarget && say(false)}
     >
       <div
         ref={dialog}
@@ -121,6 +132,12 @@ function ConfirmDialog({
             </p>
           )}
           {options.undoHint && <p className="confirm-undo">{options.undoHint}</p>}
+          {options.checkbox && (
+            <label className="checkbox-label confirm-check">
+              <input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />{' '}
+              {options.checkbox.label}
+            </label>
+          )}
           {options.typeToConfirm && (
             <label className="confirm-type">
               {t('Type {text} to confirm', { text: options.typeToConfirm })}
@@ -135,7 +152,7 @@ function ConfirmDialog({
           )}
         </div>
         <div className="modal-foot">
-          <button ref={cancel} type="button" className="secondary-button" onClick={() => onAnswer(false)}>
+          <button ref={cancel} type="button" className="secondary-button" onClick={() => say(false)}>
             {options.cancelLabel || t('Cancel')}
           </button>
           <button
@@ -143,7 +160,7 @@ function ConfirmDialog({
             type="button"
             className={danger ? 'primary-button danger-solid' : 'primary-button'}
             disabled={locked}
-            onClick={() => onAnswer(true)}
+            onClick={() => say(true)}
           >
             {options.confirmLabel || t('Confirm')}
           </button>

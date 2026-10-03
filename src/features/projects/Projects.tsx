@@ -10,6 +10,9 @@ import { ExportMenu } from '../export/ExportMenu'
 import { Icon } from '../../ui/icons'
 import { Avatar, EmptyState, ProgressBar, StatusPill } from '../../ui/primitives'
 import { projectHash } from '../../app/routes'
+import { EntityGrid } from '../records/EntityGrid'
+import { type EntityContext, projectActions, projectKind } from '../records/entities'
+import { ViewSwitch, useViewMode } from '../records/ViewSwitch'
 import { ProjectPage } from './ProjectPage'
 
 /** `#/projects` shows the list; `#/projects/12` shows project 12 with all of its tasks. */
@@ -21,7 +24,8 @@ export function Projects({
   highlight = null,
   canWriteTasks = false,
   refresh = () => {},
-  onBack = () => {}
+  onBack = () => {},
+  onDelete = () => {}
 }: any) {
   return projectId ? (
     <ProjectPage
@@ -35,12 +39,24 @@ export function Projects({
       onBack={onBack}
     />
   ) : (
-    <ProjectList data={data} openModal={openModal} canManage={canManage} />
+    <ProjectList data={data} openModal={openModal} canManage={canManage} refresh={refresh} onDelete={onDelete} />
   )
 }
 
-function ProjectList({ data, openModal, canManage }) {
-  const { settings } = useApp()
+function ProjectList({ data, openModal, canManage, refresh, onDelete }) {
+  const { settings, notify } = useApp()
+  const [mode, setMode] = useViewMode('projects')
+  const t = (phrase: string, values?: Record<string, unknown>) => tr(settings, phrase, values)
+  const entity: EntityContext = {
+    data,
+    settings,
+    t,
+    notify,
+    openModal,
+    deleteOne: (_type, record) => onDelete('project', record),
+    refresh,
+    can: { manageProjects: canManage }
+  }
   const columns = [
     { key: 'name', label: 'Project' },
     { key: 'code', label: 'Code' },
@@ -73,54 +89,63 @@ function ProjectList({ data, openModal, canManage }) {
   const [visibleMilestones, setVisibleMilestones] = useState(8)
   return (
     <div className="page-content">
-      <div className="toolbar">
-        <div className="filter-tabs">
-          {['All projects', 'On track', 'At risk', 'Completed'].map(tab => (
-            <button key={tab} className={filter === tab ? 'selected' : ''} onClick={() => setFilter(tab)}>
-              {tab}
-              <span>
-                {tab === 'All projects' ? data.projects.length : data.projects.filter(p => p.health === tab).length}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="toolbar-actions">
-          <AdvancedFilter filterKey="projects" fields={columns} onApply={setAdvanced} />
-          <ExportMenu
-            dataset="projects"
-            title="Atlas projects"
-            scope={filter === 'All projects' ? {} : { health: filter }}
-            filters={advanced}
-            rowsHint={rows.length}
+      <div className="toolbar view-switch-bar">
+        <ViewSwitch mode={mode} onChange={setMode} />
+      </div>
+      {mode === 'table' ? (
+        <EntityGrid kind={projectKind(entity)} rows={data.projects} actions={projectActions(entity, () => refresh())} />
+      ) : (
+        <>
+          <div className="toolbar">
+            <div className="filter-tabs">
+              {['All projects', 'On track', 'At risk', 'Completed'].map(tab => (
+                <button key={tab} className={filter === tab ? 'selected' : ''} onClick={() => setFilter(tab)}>
+                  {tab}
+                  <span>
+                    {tab === 'All projects' ? data.projects.length : data.projects.filter(p => p.health === tab).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="toolbar-actions">
+              <AdvancedFilter filterKey="projects" fields={columns} onApply={setAdvanced} />
+              <ExportMenu
+                dataset="projects"
+                title="Atlas projects"
+                scope={filter === 'All projects' ? {} : { health: filter }}
+                filters={advanced}
+                rowsHint={rows.length}
+              />
+              {canManage && (
+                <button className="primary-button" onClick={() => openModal('project')}>
+                  <Icon name="plus" size={15} /> New project
+                </button>
+              )}
+            </div>
+          </div>
+          <FilterChips
+            conditions={advanced}
+            fields={columns}
+            onClear={() => setAdvanced([])}
+            onRemove={i => setAdvanced(c => c.filter((_, idx) => idx !== i))}
           />
-          {canManage && (
-            <button className="primary-button" onClick={() => openModal('project')}>
-              <Icon name="plus" size={15} /> New project
-            </button>
+          <div className="results-meta">
+            <strong>{rows.length}</strong> projects · {filter}
+          </div>
+          <div className="project-grid">
+            {rows.map(p => (
+              <ProjectCard project={p} key={p.numericId} onEdit={canManage ? () => openModal('project', p) : null} />
+            ))}
+          </div>
+          {!rows.length && (
+            <EmptyState
+              title="No projects match"
+              message="Clear filters or create a new project."
+              action="Create project"
+              onAction={() => openModal('project')}
+            />
           )}
-        </div>
-      </div>
-      <FilterChips
-        conditions={advanced}
-        fields={columns}
-        onClear={() => setAdvanced([])}
-        onRemove={i => setAdvanced(c => c.filter((_, idx) => idx !== i))}
-      />
-      <div className="results-meta">
-        <strong>{rows.length}</strong> projects · {filter}
-      </div>
-      <div className="project-grid">
-        {rows.map(p => (
-          <ProjectCard project={p} key={p.numericId} onEdit={canManage ? () => openModal('project', p) : null} />
-        ))}
-      </div>
-      {!rows.length && (
-        <EmptyState
-          title="No projects match"
-          message="Clear filters or create a new project."
-          action="Create project"
-          onAction={() => openModal('project')}
-        />
+        </>
       )}
       <section className="panel project-table">
         <div className="section-head">

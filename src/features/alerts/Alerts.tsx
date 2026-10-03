@@ -7,9 +7,25 @@ import { AdvancedFilter } from '../export/AdvancedFilter'
 import { ExportMenu } from '../export/ExportMenu'
 import { Icon } from '../../ui/icons'
 import { EmptyState, StatusPill } from '../../ui/primitives'
+import { tr } from '../../lib/i18n'
+import { EntityGrid } from '../records/EntityGrid'
+import { type EntityContext, alertActions, alertKind } from '../records/entities'
+import { ViewSwitch, useViewMode } from '../records/ViewSwitch'
 
-export function Alerts({ data, refresh, openModal, canManage, canResolve = false }) {
-  const { notify } = useApp()
+export function Alerts({ data, refresh, openModal, canManage, canResolve = false, onDelete = () => {} }: any) {
+  const { notify, settings } = useApp()
+  const [mode, setMode] = useViewMode('alerts')
+  const t = (phrase: string, values?: Record<string, unknown>) => tr(settings, phrase, values)
+  const entity: EntityContext = {
+    data,
+    settings,
+    t,
+    notify,
+    openModal,
+    deleteOne: (_type, record) => onDelete('alert', record),
+    refresh,
+    can: { manageAlerts: canManage, resolveAlerts: canResolve }
+  }
   const [filter, setFilter] = useState('Open')
   const [advanced, setAdvanced] = useState([])
   const fields = [
@@ -48,74 +64,88 @@ export function Alerts({ data, refresh, openModal, canManage, canResolve = false
           <span>open alerts</span>
         </div>
       </div>
-      <div className="toolbar">
-        <div className="filter-tabs">
-          {['Open', 'All', 'Resolved'].map(tab => (
-            <button className={filter === tab ? 'selected' : ''} key={tab} onClick={() => setFilter(tab)}>
-              {tab}
-              <span>
-                {tab === 'Open'
-                  ? data.alerts.filter(a => !a.resolved).length
-                  : tab === 'Resolved'
-                    ? data.alerts.filter(a => a.resolved).length
-                    : data.alerts.length}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="toolbar-actions">
-          <AdvancedFilter filterKey="alerts" fields={fields} onApply={setAdvanced} />
-          <ExportMenu
-            dataset="alerts"
-            title="Atlas alerts"
-            scope={filter === 'All' ? {} : { state: filter.toLowerCase() }}
-            filters={advanced}
-            rowsHint={rows.length}
-          />
-          {canManage && (
-            <button className="primary-button" onClick={() => openModal('alert')}>
-              <Icon name="plus" size={15} /> New alert
-            </button>
-          )}
-        </div>
+      <div className="toolbar view-switch-bar">
+        <ViewSwitch mode={mode} onChange={setMode} first="List" />
       </div>
-      <div className="alert-list">
-        {rows.map(alert => (
-          <div className={`alert-row ${alert.resolved ? 'alert-resolved' : ''}`} key={alert.id}>
-            <span className={`alert-type alert-${alert.tone}`}>
-              <Icon
-                name={
-                  alert.type === 'blocker' || alert.type === 'risk' || alert.type === 'overdue' ? 'warning' : 'alerts'
-                }
-                size={18}
-              />
-            </span>
-            <div className="alert-content">
-              <div className="alert-title-row">
-                <h3>{alert.title}</h3>
-                <span>{alert.time}</span>
-              </div>
-              <p>{alert.body}</p>
-              <div className="alert-meta">
-                <span>{alert.project}</span>
-                {alert.resolved && <StatusPill tone="resolved">Resolved</StatusPill>}
-              </div>
+      {mode === 'table' ? (
+        <EntityGrid kind={alertKind(entity)} rows={data.alerts} actions={alertActions(entity, () => refresh())} />
+      ) : (
+        <>
+          <div className="toolbar">
+            <div className="filter-tabs">
+              {['Open', 'All', 'Resolved'].map(tab => (
+                <button className={filter === tab ? 'selected' : ''} key={tab} onClick={() => setFilter(tab)}>
+                  {tab}
+                  <span>
+                    {tab === 'Open'
+                      ? data.alerts.filter(a => !a.resolved).length
+                      : tab === 'Resolved'
+                        ? data.alerts.filter(a => a.resolved).length
+                        : data.alerts.length}
+                  </span>
+                </button>
+              ))}
             </div>
-            {canResolve && (
-              <button className={alert.resolved ? 'secondary-button' : 'resolve-button'} onClick={() => toggle(alert)}>
-                {alert.resolved ? 'Re-open' : 'Mark resolved'}
-                {!alert.resolved && <Icon name="check" size={14} />}
-              </button>
-            )}
-            {canManage && (
-              <button aria-label="Edit" className="icon-button subtle" onClick={() => openModal('alert', alert)}>
-                <Icon name="more" size={16} />
-              </button>
-            )}
+            <div className="toolbar-actions">
+              <AdvancedFilter filterKey="alerts" fields={fields} onApply={setAdvanced} />
+              <ExportMenu
+                dataset="alerts"
+                title="Atlas alerts"
+                scope={filter === 'All' ? {} : { state: filter.toLowerCase() }}
+                filters={advanced}
+                rowsHint={rows.length}
+              />
+              {canManage && (
+                <button className="primary-button" onClick={() => openModal('alert')}>
+                  <Icon name="plus" size={15} /> New alert
+                </button>
+              )}
+            </div>
           </div>
-        ))}
-        {!rows.length && <EmptyState title="All clear" message="No alerts in this view." />}
-      </div>
+          <div className="alert-list">
+            {rows.map(alert => (
+              <div className={`alert-row ${alert.resolved ? 'alert-resolved' : ''}`} key={alert.id}>
+                <span className={`alert-type alert-${alert.tone}`}>
+                  <Icon
+                    name={
+                      alert.type === 'blocker' || alert.type === 'risk' || alert.type === 'overdue'
+                        ? 'warning'
+                        : 'alerts'
+                    }
+                    size={18}
+                  />
+                </span>
+                <div className="alert-content">
+                  <div className="alert-title-row">
+                    <h3>{alert.title}</h3>
+                    <span>{alert.time}</span>
+                  </div>
+                  <p>{alert.body}</p>
+                  <div className="alert-meta">
+                    <span>{alert.project}</span>
+                    {alert.resolved && <StatusPill tone="resolved">Resolved</StatusPill>}
+                  </div>
+                </div>
+                {canResolve && (
+                  <button
+                    className={alert.resolved ? 'secondary-button' : 'resolve-button'}
+                    onClick={() => toggle(alert)}
+                  >
+                    {alert.resolved ? 'Re-open' : 'Mark resolved'}
+                    {!alert.resolved && <Icon name="check" size={14} />}
+                  </button>
+                )}
+                {canManage && (
+                  <button aria-label="Edit" className="icon-button subtle" onClick={() => openModal('alert', alert)}>
+                    <Icon name="more" size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {!rows.length && <EmptyState title="All clear" message="No alerts in this view." />}
+          </div>
+        </>
+      )}
     </div>
   )
 }
