@@ -1,0 +1,179 @@
+/* Honesty, accessibility and states: focus, reduced motion, contrast, keyboard-reachable cards. */
+/* ---- additions: honesty, accessibility and states ---- */
+.setting-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fff4e9;
+  color: #8a5300;
+  border: 1px solid #f2d3a8;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+:root[data-theme='dark'] .setting-badge {
+  background: #3a2a14;
+  color: #ffd6a0;
+  border-color: #6b4a1f;
+}
+
+/* Keyboard focus must be clearly visible everywhere, even where a component rule removed the default outline. */
+:focus-visible {
+  outline: 2px solid var(--purple-deep) !important;
+  outline-offset: 2px !important;
+}
+.skip-link {
+  position: absolute;
+  inset-inline-start: 8px;
+  top: -48px;
+  z-index: 1000;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 8px;
+}
+.main:focus {
+  outline: none !important;
+}
+
+/* Honour the operating system's accessibility preferences, not only the administrator's toggle. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --ink: #05070d;
+    --ink-soft: #263143;
+    --muted: #465266;
+    --line: #8a94a6;
+  }
+}
+
+/* Board cards: reachable by keyboard, with an explicit "move to" control instead of mouse-only drag and drop. */
+.board-card:focus-visible {
+  box-shadow: 0 0 0 2px var(--purple-deep);
+}
+.board-card .card-move {
+  width: 100%;
+  margin-top: 8px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+.show-more {
+  display: block;
+  margin: 8px auto 4px;
+}
+.view-toggle small,
+.filter-chip small {
+  opacity: 0.7;
+}
+.form-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--blue-pale);
+  color: #1d4ea0;
+  font-size: 13px;
+}
+.error-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+.error-details {
+  margin: 16px auto 0;
+  max-width: 720px;
+  font-size: 12px;
+}
+.error-details pre {
+  overflow: auto;
+  max-height: 240px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--canvas);
+  white-space: pre-wrap;
+}
+.password-meter.strength-weak span {
+  background: var(--orange);
+}
+.password-meter.strength-fair span {
+  background: #d9a400;
+}
+.password-meter.strength-strong span {
+  background: var(--green);
+}
+.password-form {
+  display: grid;
+  gap: 10px;
+  max-width: 420px;
+}
+.save-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.unsaved-note {
+  font-size: 12px;
+  color: #8a5300;
+}
+.report-definitions {
+  margin: 16px 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.report-definitions dt {
+  margin-top: 8px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.report-definitions dd {
+  margin: 2px 0 0;
+}
+.audit-trail {
+  display: grid;
+  gap: 10px;
+}
+.audit-table {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.audit-row {
+  display: grid;
+  grid-template-columns: 170px 1.4fr 1fr 110px;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.backup-list ul {
+  margin: 6px 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+}
+.muted-text {
+  color: var(--muted);
+}

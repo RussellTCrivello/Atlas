@@ -1,0 +1,231 @@
+/* Configurable platform administration. */
+/* Configurable platform administration */
+.settings-card-wide {
+  grid-column: 1 / -1;
+}
+.settings-admin-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 18px;
+}
+.settings-admin-summary > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+.settings-admin-summary strong {
+  display: block;
+  font-family: 'Atlas Display';
+  font-size: 22px;
+  letter-spacing: -0.7px;
+}
+.settings-admin-summary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.admin-toolbar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.admin-toolbar label {
+  min-width: 150px;
+  margin: 0;
+}
+.admin-toolbar input,
+.admin-toolbar select {
+  min-height: 35px;
+}
+.translation-manager,
+.permissions-admin,
+.custom-fields-admin {
+  display: grid;
+  gap: 12px;
+}
+.translation-add {
+  display: flex;
+  gap: 8px;
+}
+.translation-add input {
+  flex: 1;
+}
+.translation-list {
+  max-height: 430px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcff;
+}
+.translation-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(180px, 1fr) minmax(240px, 1.3fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.translation-row:last-child {
+  border-bottom: 0;
+}
+.translation-row code {
+  color: var(--purple-deep);
+  font-size: 10px;
+  white-space: normal;
+}
+.translation-row small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+.workflow-preview {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px dashed #d8d3ff;
+  border-radius: 10px;
+  background: #faf9ff;
+}
+.workflow-preview span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+.module-admin-grid,
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.module-toggle {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+.module-toggle input {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+.module-toggle strong {
+  font-size: 12px;
+}
+.module-toggle span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.config-list {
+  display: grid;
+  gap: 8px;
+}
+.config-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.8fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.config-row code {
+  color: var(--purple-deep);
+  font-size: 10px;
+}
+.custom-field-runtime {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 11px;
+  background: #fcfcff;
+}
+.custom-field-runtime strong {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--muted);
+}
+html[dir='rtl'] body {
+  direction: rtl;
+}
+html[dir='rtl'] .app-shell,
+html[dir='rtl'] .topbar,
+html[dir='rtl'] .section-head,
+html[dir='rtl'] .toolbar,
+html[dir='rtl'] .admin-toolbar {
+  direction: rtl;
+}
+html[dir='rtl'] .sidebar {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+html[dir='rtl'] .main {
+  direction: rtl;
+}
+html[dir='rtl'] .nav-item.active:before {
+  left: auto;
+  right: 0;
+  border-radius: 3px 0 0 3px;
+}
+html[dir='rtl'] .top-actions {
+  margin-left: 0;
+  margin-right: auto;
+}
+html[dir='rtl'] .sidebar .icon,
+html[dir='rtl'] .topbar .icon {
+  transform: scaleX(-1);
+}
+body[data-contrast='high'] {
+  --ink: #05070d;
+  --ink-soft: #263143;
+  --muted: #465266;
+  --line: #a7b0c0;
+  --canvas: #f4f6fa;
+}
+body[data-motion='off'] *,
+body[data-motion='off'] *:before,
+body[data-motion='off'] *:after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+@media (max-width: 980px) {
+  .settings-admin-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .translation-row,
+  .config-row {
+    grid-template-columns: 1fr;
+  }
+  .module-admin-grid,
+  .permission-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.translation-import {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+.translation-import textarea {
+  min-height: 70px;
+}
+@media (max-width: 760px) {
+  .translation-import {
+    grid-template-columns: 1fr;
+  }
+}

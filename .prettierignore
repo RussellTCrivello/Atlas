@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-desktop
+release
+data
+tmp
+package-lock.json
+docs/final-validation-results.json
+docs/AUDIT_REPORT_2026-10-02.md
+public/fonts

@@ -1,0 +1,131 @@
+/* Advanced setup. */
+/* Advanced setup refinement */
+.setup-shell-advanced {
+  padding: 18px;
+}
+.setup-layout-advanced {
+  width: min(1160px, 100%);
+  grid-template-columns: 330px minmax(520px, 1fr);
+}
+.setup-card-advanced {
+  gap: 12px;
+  min-height: 590px;
+}
+.setup-card-advanced .setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 12px;
+}
+.setup-card-advanced select,
+.setup-card-advanced textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+}
+.setup-card-advanced select {
+  height: 42px;
+  padding: 0 11px;
+}
+.setup-card-advanced textarea {
+  min-height: 120px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+.setup-steps-vertical {
+  display: grid;
+  gap: 8px;
+  margin: 22px 0;
+}
+.setup-steps-vertical button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #bfc1df;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: left;
+}
+.setup-steps-vertical button span {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+.setup-steps-vertical button.active {
+  color: #fff;
+  border-color: #8f86ff;
+  background: rgba(143, 134, 255, 0.22);
+}
+.setup-steps-vertical button.done {
+  color: #fff;
+  cursor: pointer;
+}
+.setup-summary {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.setup-summary > div,
+.setup-review {
+  padding: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.065);
+}
+.setup-summary strong,
+.setup-summary span,
+.setup-review strong,
+.setup-review span {
+  display: block;
+}
+.setup-summary strong,
+.setup-review strong {
+  color: #fff;
+  font-size: 12px;
+}
+.setup-summary span,
+.setup-review span {
+  margin-top: 3px;
+  color: #c0c2df;
+  font-size: 10px;
+}
+.setup-module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.setup-card-advanced .workflow-preview {
+  margin-top: -2px;
+}
+.setup-card-advanced .setup-review {
+  background: #252544;
+}
+@media (max-width: 1000px) {
+  .setup-layout-advanced {
+    grid-template-columns: 1fr;
+  }
+  .setup-card-advanced {
+    min-height: auto;
+  }
+}
+@media (max-width: 640px) {
+  .setup-card-advanced .setup-grid,
+  .setup-module-grid {
+    grid-template-columns: 1fr;
+  }
+}
+html[dir='rtl'] .setup-steps-vertical button {
+  text-align: right;
+}

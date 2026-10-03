@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      react:
+        patterns: ['react', 'react-dom', '@types/react*']
+      tooling:
+        patterns: ['vite', '@vitejs/*', 'esbuild', 'tsx', 'typescript', 'prettier']
+    ignore:
+      # Electron majors need a deliberate upgrade (runtime, security and packaging review).
+      - dependency-name: electron
+        update-types: ['version-update:semver-major']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

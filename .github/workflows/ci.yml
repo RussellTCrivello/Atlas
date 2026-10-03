@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Runner images are pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which should be adopted deliberately (Electron
+# packaging is the part most likely to notice). Action versions are kept current by Dependabot.
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The Electron binary is not needed for typechecks, tests or the web/server build.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:acceptance
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  # The same end-to-end tests in three real browsers, against the built bundle (see playwright.config.ts).
+  e2e:
+    name: e2e (${{ matrix.browser }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run build
+      - run: npx playwright test --project=${{ matrix.browser }}
+      - name: Keep the report and traces when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.browser }}
+          path: |
+            tmp/e2e-report
+            tmp/e2e-results
+          retention-days: 7
+
+  # Builds an unpacked desktop package and checks that it contains what the shell needs. Launching the GUI needs a display
+  # server and is left as a manual release step (see docs/OPERATIONS_RUNBOOK.md).
+  desktop-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx electron-builder --dir --linux
+      - name: Check package contents
+        run: |
+          set -e
+          test -d release/linux-unpacked
+          npx asar list release/linux-unpacked/resources/app.asar | tee /tmp/asar.txt
+          grep -q "dist-desktop/app.mjs" /tmp/asar.txt
+          grep -q "dist/index.html" /tmp/asar.txt
+          grep -q "electron/preload.cjs" /tmp/asar.txt
+          grep -q "electron/security.cjs" /tmp/asar.txt
+          ! grep -q "^/docs/" /tmp/asar.txt

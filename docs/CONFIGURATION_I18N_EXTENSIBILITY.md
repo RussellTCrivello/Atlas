@@ -1,5 +1,12 @@
 # Configuration, Internationalization, and Extensibility Architecture
 
+> **Partly out of date.** Written before the remediation release (store schema 3.1.0). Where it disagrees with
+> [`PRODUCTION.md`](../PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`API_REFERENCE.md`](API_REFERENCE.md) or
+> [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), those win. Known differences: effort **minutes no longer exist** (the old
+> figures were fixed constants, not measurements); setup requires a one-time token; the interface localiser never rewrites
+> user-entered data and each person can choose a language and theme for themselves; settings labelled "Not applied yet" are stored
+> but do nothing; workspace data is no longer sent in full to every role.
+
 ## Purpose
 
 Atlas Workspace is now structured as a configurable operations platform rather than a fixed application. Organizations can administer workspace identity, interface behavior, languages, translations, modules, workflows, permissions, reports, exports, integrations, storage, security, audit, and custom fields through the Settings interface.
@@ -128,11 +135,11 @@ Supported multilingual areas include:
 Initial language package support includes:
 
 | Language | Code | Direction |
-| --- | --- | --- |
-| English | `en` | LTR |
-| Arabic | `ar` | RTL |
-| Persian | `fa` | RTL |
-| Hebrew | `he` | RTL |
+| -------- | ---- | --------- |
+| English  | `en` | LTR       |
+| Arabic   | `ar` | RTL       |
+| Persian  | `fa` | RTL       |
+| Hebrew   | `he` | RTL       |
 
 The interface dynamically sets `html.lang`, `html.dir`, and `body.dir` from localization settings.
 
@@ -403,4 +410,3 @@ A feature is incomplete until it includes:
 - migration/normalization support
 - documentation updates
 - smoke-test validation
-

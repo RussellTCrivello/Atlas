@@ -1,82 +1,154 @@
-const { app: electronApp, BrowserWindow, shell, dialog, Menu } = require('electron')
+const crypto = require('node:crypto')
+const fs = require('node:fs')
 const path = require('node:path')
-const net = require('node:net')
-const http = require('node:http')
 const { pathToFileURL } = require('node:url')
+const { app: electronApp, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron')
+const { isSafeExternalUrl, sameOrigin } = require('./security.cjs')
 
-let mainWindow
-let atlasPort
-let serverStarted = false
+const devToolsAllowed = !electronApp.isPackaged || process.env.ATLAS_DEVTOOLS === '1'
+let mainWindow = null
+let running = null // the embedded Atlas server
+let origin = ''
+let quitting = false
+const setupToken = crypto.randomBytes(16).toString('base64url')
 
-function appRoot() {
-  return electronApp.isPackaged ? electronApp.getAppPath() : path.join(__dirname, '..')
-}
+const appRoot = () => (electronApp.isPackaged ? electronApp.getAppPath() : path.join(__dirname, '..'))
+const dataDir = () => path.join(electronApp.getPath('userData'), 'data')
+const stateFile = () => path.join(electronApp.getPath('userData'), 'desktop.json')
 
-function findOpenPort(start = 5173) {
-  return new Promise(resolve => {
-    const server = net.createServer()
-    server.unref()
-    server.on('error', () => resolve(findOpenPort(start + 1)))
-    server.listen(start, '127.0.0.1', () => {
-      const { port } = server.address()
-      server.close(() => resolve(port))
-    })
+// ---- one instance only: two servers on one data directory would overwrite each other's changes -------------------------
+if (!electronApp.requestSingleInstanceLock()) {
+  electronApp.quit()
+} else {
+  electronApp.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
   })
 }
 
-function waitForServer(port, timeout = 15000) {
-  const startedAt = Date.now()
-  return new Promise((resolve, reject) => {
-    const attempt = () => {
-      const request = http.get(`http://127.0.0.1:${port}/api/setup/status`, response => {
-        response.resume()
-        if (response.statusCode && response.statusCode < 500) resolve()
-        else retry()
-      })
-      request.on('error', retry)
-      request.setTimeout(900, () => { request.destroy(); retry() })
-    }
-    const retry = () => {
-      if (Date.now() - startedAt > timeout) reject(new Error('Atlas local application did not start in time.'))
-      else setTimeout(attempt, 250)
-    }
-    attempt()
-  })
+function readState() {
+  try {
+    return JSON.parse(fs.readFileSync(stateFile(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+function writeState(state) {
+  try {
+    fs.mkdirSync(path.dirname(stateFile()), { recursive: true })
+    fs.writeFileSync(stateFile(), JSON.stringify(state))
+  } catch {
+    /* the remembered port is a convenience only */
+  }
 }
 
-async function startAtlasServer() {
-  if (serverStarted) return atlasPort
-  atlasPort = await findOpenPort(Number(process.env.PORT || 5173))
-  const root = appRoot()
+/** A stable but unpredictable port: remembered between launches (so the page origin, and what the browser stores for it, stays the same). */
+function preferredPort() {
+  if (process.env.PORT) return Number(process.env.PORT)
+  const saved = Number(readState().port)
+  return Number.isInteger(saved) && saved >= 1024 ? saved : 49152 + crypto.randomInt(0, 16000)
+}
+
+async function loadServerModule() {
   process.env.NODE_ENV = 'production'
-  process.env.PORT = String(atlasPort)
-  process.env.ATLAS_ROOT = root
-  process.env.ATLAS_STATIC_DIR = path.join(root, 'dist')
-  process.env.ATLAS_DATA_DIR = path.join(electronApp.getPath('userData'), 'data')
-  await import(pathToFileURL(path.join(root, 'dist-desktop', 'app.mjs')).href)
-  await waitForServer(atlasPort)
-  serverStarted = true
-  return atlasPort
+  process.env.ATLAS_ROOT = appRoot()
+  process.env.ATLAS_STATIC_DIR = path.join(appRoot(), 'dist')
+  process.env.ATLAS_DATA_DIR = dataDir()
+  process.env.ATLAS_HOST = '127.0.0.1'
+  process.env.ATLAS_SETUP_TOKEN = setupToken
+  process.env.PORT = String(preferredPort())
+  return import(pathToFileURL(path.join(appRoot(), 'dist-desktop', 'app.mjs')).href)
+}
+
+async function startAtlas() {
+  const server = await loadServerModule()
+  const config = server.loadConfig(process.env)
+  try {
+    running = await server.startServer(config, { portFallback: true })
+  } catch (error) {
+    const recovered = await offerRecovery(error, server, config)
+    if (!recovered) throw error
+    running = await server.startServer(config, { portFallback: true })
+  }
+  origin = new URL(running.url).origin
+  writeState({ ...readState(), port: running.port })
+  return running
+}
+
+/** An unreadable store is never replaced silently; the person decides, with the backups listed. */
+async function offerRecovery(error, server, config) {
+  if (!error || (error.name !== 'StoreCorruptError' && error.name !== 'StoreMissingError')) return false
+  const backups = (error.backups || [])
+    .slice(0, 5)
+    .map(b => `  ${b.createdAt}  ${b.reason}`)
+    .join('\n')
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: 'Atlas cannot open your data',
+    message: 'Your Atlas data file could not be read.',
+    detail: `${error.message}\n\nNothing was changed or deleted.${backups ? `\n\nNewest backups:\n${backups}` : ''}`,
+    buttons: backups ? ['Restore the newest backup', 'Open the data folder', 'Quit'] : ['Open the data folder', 'Quit'],
+    defaultId: 0,
+    cancelId: backups ? 2 : 1
+  })
+  const choice = backups ? ['restore', 'folder', 'quit'][response] : ['folder', 'quit'][response]
+  if (choice === 'restore') {
+    server.restoreBackup(config, 'latest')
+    return true
+  }
+  if (choice === 'folder') await shell.openPath(config.dataDir)
+  return false
 }
 
 function createMenu() {
+  const isMac = process.platform === 'darwin'
+  const go = page => () => mainWindow?.webContents.send('atlas:navigate', page)
   const template = [
-    { label: 'Atlas', submenu: [
-      { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => mainWindow?.reload() },
-      { label: 'Open DevTools', accelerator: 'CmdOrCtrl+Shift+I', click: () => mainWindow?.webContents.openDevTools({ mode: 'detach' }) },
-      { type: 'separator' },
-      { label: 'Quit', role: 'quit' }
-    ]},
-    { label: 'Reports', submenu: [
-      { label: 'Open Reports', accelerator: 'CmdOrCtrl+Alt+R', click: () => mainWindow?.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('atlas:navigate',{detail:'reports'}))") },
-      { label: 'Print', accelerator: 'CmdOrCtrl+P', click: () => mainWindow?.webContents.print() }
-    ]}
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    {
+      label: 'File',
+      submenu: [
+        // Printing a report built from the data (the page decides which one); never a picture of the window.
+        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: () => mainWindow?.webContents.send('atlas:print') },
+        ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }])
+      ]
+    },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        ...(devToolsAllowed ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : [])
+      ]
+    },
+    {
+      label: 'Go',
+      submenu: [
+        { label: 'Overview', accelerator: 'CmdOrCtrl+1', click: go('overview') },
+        { label: 'Projects', accelerator: 'CmdOrCtrl+2', click: go('projects') },
+        { label: 'My work', accelerator: 'CmdOrCtrl+3', click: go('tasks') },
+        { label: 'People', accelerator: 'CmdOrCtrl+4', click: go('people') },
+        { label: 'Reports', accelerator: 'CmdOrCtrl+Alt+R', click: go('reports') }
+      ]
+    },
+    { role: 'windowMenu' }
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-async function createWindow() {
-  const port = await startAtlasServer()
+function hardenSession() {
+  // The window only needs its own page: it asks for no camera, microphone, location, notifications or device access.
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
+}
+
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -85,26 +157,56 @@ async function createWindow() {
     show: false,
     title: 'Atlas Workspace',
     backgroundColor: '#101827',
+    icon: path.join(appRoot(), 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true,
+      devTools: devToolsAllowed,
+      webviewTag: false,
+      spellcheck: true
     }
   })
   mainWindow.once('ready-to-show', () => mainWindow.show())
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(`http://127.0.0.1:${port}`)) return { action: 'allow' }
-    shell.openExternal(url)
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+  const contents = mainWindow.webContents
+  // Links open in the system browser; the app window never navigates away from the local server.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (sameOrigin(url, origin)) return { action: 'allow' }
+    if (isSafeExternalUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
-  await mainWindow.loadURL(`http://127.0.0.1:${port}`)
+  const guard = (event, url) => {
+    if (sameOrigin(url, origin)) return
+    event.preventDefault()
+    if (isSafeExternalUrl(url)) shell.openExternal(url)
+  }
+  contents.on('will-navigate', guard)
+  contents.on('will-redirect', guard)
+  return mainWindow.loadURL(origin)
 }
 
+// The setup token is only ever given to our own page.
+ipcMain.handle('atlas:setup-token', event => (sameOrigin(event.senderFrame?.url || '', origin) ? setupToken : ''))
+
+electronApp.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', event => event.preventDefault())
+})
+
 electronApp.whenReady().then(async () => {
+  if (process.platform === 'win32') electronApp.setAppUserModelId('ai.arena.atlasworkspace')
+  hardenSession()
   createMenu()
-  try { await createWindow() }
-  catch (error) { dialog.showErrorBox('Atlas failed to start', error.message); electronApp.quit() }
+  try {
+    await startAtlas()
+    await createWindow()
+  } catch (error) {
+    dialog.showErrorBox('Atlas failed to start', String(error && error.message ? error.message : error))
+    electronApp.quit()
+  }
 })
 
 electronApp.on('window-all-closed', () => {
@@ -112,5 +214,16 @@ electronApp.on('window-all-closed', () => {
 })
 
 electronApp.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  if (running && BrowserWindow.getAllWindows().length === 0) void createWindow()
+})
+
+// Flush queued audit events and sessions and release the data-directory lock before exiting.
+electronApp.on('before-quit', event => {
+  if (quitting || !running) return
+  event.preventDefault()
+  quitting = true
+  running
+    .close()
+    .catch(() => {})
+    .finally(() => electronApp.quit())
 })

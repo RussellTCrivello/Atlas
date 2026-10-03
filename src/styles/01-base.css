@@ -1,0 +1,83 @@
+/* Design tokens, fonts and the browser reset. */
+@font-face {
+  font-family: 'Atlas Sans';
+  src: url('/fonts/AtlasSans-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atlas Sans';
+  src: url('/fonts/AtlasSans-Bold.ttf') format('truetype');
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atlas Display';
+  src: url('/fonts/AtlasSans-Bold.ttf') format('truetype');
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  --ink: #172033;
+  --ink-soft: #586276;
+  --muted: #66708a; /* 4.9:1 on white (was #8992a5 at 3.1:1, below the WCAG AA minimum of 4.5:1) */
+  --line: #e9ecf2;
+  --line-strong: #dfe4ed;
+  --paper: #fff;
+  --canvas: #f7f8fb;
+  --purple: #6d5dfc;
+  --purple-deep: #5144dd;
+  --purple-pale: #f0eeff;
+  --blue: #3b82f6;
+  --blue-pale: #ebf3ff;
+  --green: #28a778;
+  --green-pale: #e9f8f2;
+  --orange: #f2994a;
+  --orange-pale: #fff4e9;
+  --red: #df5c62;
+  --red-pale: #fff0f0;
+  --yellow: #d79a18;
+  --yellow-pale: #fff8e7;
+  /* Text versions of the semantic colours: the fills above are for backgrounds and bars, these meet 4.5:1 as text on white and on the tints. */
+  --red-text: #b4232a;
+  --orange-text: #a35703;
+  --green-text: #17724f;
+  --yellow-text: #8a5a00;
+  --blue-text: #1e56b8;
+  --shadow: 0 1px 2px rgba(31, 41, 62, 0.02), 0 8px 26px rgba(38, 43, 72, 0.055);
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  font-family: 'Atlas Sans', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button {
+  color: inherit;
+  cursor: pointer;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(109, 93, 252, 0.22);
+  outline-offset: 2px;
+}
+.icon {
+  flex: 0 0 auto;
+}

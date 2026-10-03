@@ -1,0 +1,367 @@
+/* Role-based access, launch and permission surfaces. */
+/* Role-based access, launch, and permission surfaces */
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+.role-administrator {
+  color: #5144dd;
+  background: #efedff;
+}
+.role-manager {
+  color: #2563c7;
+  background: #e8f1ff;
+}
+.role-developer {
+  color: #1d7755;
+  background: #e8f8f1;
+}
+.role-viewer {
+  color: #9d5c1b;
+  background: #fff2df;
+}
+.permission-notice {
+  margin: 0 0 14px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #8f5d19;
+  border: 1px solid #f4dbb9;
+  border-radius: 10px;
+  background: #fff8ec;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.readonly-pill {
+  min-height: 31px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ead7b9;
+  border-radius: 999px;
+  background: #fff8ec;
+  color: #915f1a;
+  font-size: 10px;
+  font-weight: 900;
+}
+.auth-principles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 20px;
+}
+.auth-principles span {
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: #d8d5ff;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  font-weight: 800;
+}
+.demo-account-grid {
+  display: grid;
+  gap: 7px;
+  margin-top: 9px;
+}
+.demo-account-grid button {
+  width: 100%;
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.demo-account-grid button:hover,
+.demo-account-grid button.selected {
+  border-color: #cfc9ff;
+  background: #f8f7ff;
+}
+.demo-account-grid span {
+  font-size: 10px;
+  font-weight: 900;
+}
+.demo-account-grid small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 9px;
+}
+.setup-layout {
+  width: min(1040px, 100%);
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(380px, 1.1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+.setup-preview {
+  position: relative;
+  overflow: hidden;
+  padding: 30px;
+  border-radius: 18px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 85% 10%, rgba(167, 151, 255, 0.28), transparent 33%),
+    linear-gradient(145deg, #232247, #14172d);
+  box-shadow: 0 20px 55px rgba(41, 40, 82, 0.12);
+}
+.setup-preview:after {
+  content: '';
+  position: absolute;
+  right: -120px;
+  bottom: -130px;
+  width: 330px;
+  height: 330px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+}
+.setup-preview .setup-brand {
+  color: #fff;
+  margin-bottom: 30px;
+}
+.setup-preview .eyebrow {
+  color: #6861b3;
+}
+.setup-preview h1 {
+  margin: 12px 0;
+  font-family: 'Atlas Display';
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -1.6px;
+}
+.setup-preview p {
+  max-width: 390px;
+  color: #b8bbdc;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.setup-steps {
+  display: flex;
+  gap: 8px;
+  margin: 22px 0;
+}
+.setup-steps span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  color: #6562a1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 10px;
+  font-weight: 900;
+}
+.setup-steps span.active {
+  color: #fff;
+  border-color: #8f86ff;
+  background: rgba(143, 134, 255, 0.2);
+}
+.role-matrix {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+}
+.role-matrix > div {
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.role-matrix span:last-child {
+  color: #c4c6e2;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.setup-card-wide {
+  width: 100%;
+}
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.password-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef0f5;
+}
+.password-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--orange), var(--green));
+}
+.setup-small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.design-principles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.design-principles > div {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.design-principles strong,
+.design-principles span {
+  display: block;
+}
+.design-principles strong {
+  font-size: 11px;
+}
+.design-principles span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+.access-card {
+  grid-column: 1/-1;
+}
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+.permission-card {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+.permission-card p {
+  min-height: 48px;
+  margin: 9px 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.permission-card div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.permission-card div span {
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: var(--purple-pale);
+  color: var(--purple-deep);
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+.access-table {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.access-table-head,
+.access-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) 110px 1fr 90px 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 13px;
+}
+.access-table-head {
+  color: #5f6a81;
+  background: #fbfcfe;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.access-row {
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+}
+.access-row > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.access-row strong,
+.access-row small {
+  display: block;
+}
+.access-row strong {
+  font-size: 11px;
+}
+.access-row small {
+  color: var(--muted);
+  font-size: 9px;
+}
+.access-row > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 3px;
+}
+.danger-icon:hover {
+  color: #b33a3f;
+  background: #fff0f0;
+}
+html[data-theme='dark'] .permission-notice,
+html[data-theme='dark'] .readonly-pill {
+  background: #2b2419;
+  border-color: #4c3820;
+  color: #f4bd79;
+}
+html[data-theme='dark'] .demo-account-grid button,
+html[data-theme='dark'] .design-principles > div,
+html[data-theme='dark'] .permission-card,
+html[data-theme='dark'] .access-table-head {
+  background: #171d2b;
+}
+@media (max-width: 1000px) {
+  .setup-layout {
+    grid-template-columns: 1fr;
+  }
+  .permission-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .setup-preview {
+    padding: 23px 18px;
+  }
+  .setup-preview h1 {
+    font-size: 28px;
+  }
+  .design-principles,
+  .permission-grid {
+    grid-template-columns: 1fr;
+  }
+  .access-table-head {
+    display: none;
+  }
+  .access-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .access-row > div:last-child {
+    justify-content: flex-start;
+  }
+}

@@ -1,0 +1,238 @@
+/* Modals, forms, the command palette and toasts. */
+.modal-backdrop,
+.command-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(28, 35, 53, 0.38);
+  backdrop-filter: blur(4px);
+}
+.modal-backdrop {
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.modal {
+  width: min(100%, 470px);
+  border: 1px solid #e4e6ef;
+  border-radius: 13px;
+  background: var(--paper);
+  box-shadow: 0 18px 60px rgba(18, 24, 42, 0.22);
+  animation: modal-in 0.2s ease both;
+}
+.modal-head {
+  padding: 22px 23px 17px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-head h2 {
+  margin: 7px 0 0;
+  font-family: 'Atlas Display';
+  font-size: 19px;
+}
+.modal-head p {
+  margin: 6px 0 0;
+  color: #626b7f;
+  font-size: 10px;
+}
+.form-fields {
+  padding: 19px 23px 21px;
+  display: grid;
+  gap: 15px;
+}
+.form-fields label {
+  display: grid;
+  gap: 6px;
+  color: #626c7e;
+  font-size: 10px;
+  font-weight: 800;
+}
+.form-fields input,
+.form-fields select,
+.form-fields textarea {
+  width: 100%;
+  padding: 10px 11px;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  outline: none;
+  background: var(--paper);
+  font-size: 11px;
+  font-weight: 400;
+  resize: vertical;
+}
+.form-fields input:focus,
+.form-fields select:focus,
+.form-fields textarea:focus {
+  border-color: #b1aaff;
+  box-shadow: 0 0 0 3px #f0eeff;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+.checkbox-label input {
+  width: 15px;
+  height: 15px;
+}
+.form-error,
+.global-error {
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #a05624;
+  border: 1px solid #f5dfc5;
+  border-radius: 6px;
+  background: #fff8ef;
+  font-size: 10px;
+  font-weight: 700;
+}
+.global-error {
+  margin-bottom: 16px;
+}
+.global-error button {
+  margin-left: auto;
+  padding: 4px 8px;
+  color: #a55820;
+  border: 1px solid #f0cfa6;
+  border-radius: 5px;
+  background: #fffaf4;
+  font-size: 10px;
+  font-weight: 800;
+}
+.modal-foot {
+  padding: 13px 23px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfe;
+  border-radius: 0 0 13px 13px;
+}
+.modal-foot span {
+  flex: 1;
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.command-backdrop {
+  display: grid;
+  place-items: start center;
+  padding: 12vh 16px 16px;
+}
+.command-panel {
+  width: min(640px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+.command-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.command-input input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+.command-sections {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 10px;
+}
+.command-sections h4 {
+  margin: 0 0 6px 6px;
+  color: #5f6a81;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.command-sections button {
+  width: 100%;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+  font-size: 12px;
+}
+.command-sections button:hover {
+  background: var(--purple-pale);
+}
+.command-sections small {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.toast-host {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 120;
+  display: grid;
+  gap: 8px;
+  width: min(340px, calc(100vw - 28px));
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  animation: toast-in 0.22s ease;
+}
+.toast strong {
+  display: block;
+  font-size: 12px;
+}
+.toast span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.toast-success {
+  border-color: #9be2c2;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

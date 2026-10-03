@@ -1,5 +1,12 @@
 # Atlas Workspace Design System and Interface Standards
 
+> **Partly out of date.** Written before the remediation release (store schema 3.1.0). Where it disagrees with
+> [`PRODUCTION.md`](../PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`API_REFERENCE.md`](API_REFERENCE.md) or
+> [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md), those win. Known differences: effort **minutes no longer exist** (the old
+> figures were fixed constants, not measurements); setup requires a one-time token; the interface localiser never rewrites
+> user-entered data and each person can choose a language and theme for themselves; settings labelled "Not applied yet" are stored
+> but do nothing; workspace data is no longer sent in full to every role.
+
 ## Purpose
 
 Atlas Workspace must feel like a polished production operations product, not a prototype. Every surface should help users answer four questions quickly:
@@ -13,11 +20,11 @@ The design system applies to every interface: setup, login, dashboard, projects,
 
 ## Non-negotiable design principles
 
-### 1. Local-first professionalism
+### 1. Self-contained professionalism
 
 - Fonts, icons, manifest, service worker, styles, UI code, and report assets must be served locally.
 - No Google Fonts, CDN stylesheets, remote UI libraries, remote image dependencies, or externally hosted design assets are permitted for core UI rendering.
-- The application must remain usable when offline after assets are available locally.
+- The interface shell and its assets load from the Atlas server with no external dependency. Working without the server is not supported: offline, the service worker shows a notice page (see D12 in `DECISIONS_AND_OPEN_QUESTIONS.md`).
 
 ### 2. Clarity before density
 
@@ -34,7 +41,7 @@ The design system applies to every interface: setup, login, dashboard, projects,
 ### 4. Data confidence
 
 - Reports must show time period, selected user/project scope, totals, and detailed evidence rows.
-- Activity reports must preserve project, task, user, action, status movement, minutes, and source.
+- Activity reports must preserve project, task, user, action, status movement, and source (never an invented effort figure).
 - System information must expose data-store integrity and schema version to administrators.
 
 ### 5. Fast, low-friction workflows
@@ -63,23 +70,23 @@ The canonical tokens live in `src/styles.css`. They are intentionally CSS custom
 ### Typography
 
 - Primary font: `Atlas Sans`, loaded from `public/fonts/AtlasSans-Regular.ttf` and `public/fonts/AtlasSans-Bold.ttf`.
-- Display font: `Atlas Display`, loaded from `public/fonts/AtlasDisplay-Bold.ttf`.
+- Display font: `Atlas Display`, loaded from `public/fonts/AtlasSans-Bold.ttf` (the same bold face).
 - System fallback: `system-ui, sans-serif`.
 - Headings use Atlas Display with tight tracking.
 - Body, controls, labels, navigation, and table content use Atlas Sans.
 
 ### Color tokens
 
-| Token | Use |
-| --- | --- |
-| `--ink` | Primary text and highest-emphasis labels. |
-| `--ink-soft` | Secondary text, descriptions, and supporting metadata. |
-| `--muted` | Low-emphasis helper copy and placeholders. |
-| `--line` | Default border and separators. |
-| `--line-strong` | Stronger form/table borders. |
-| `--paper` | Cards, panels, sidebar, and topbar. |
-| `--canvas` | Main application background. |
-| `--purple` / `--purple-deep` / `--purple-pale` | Primary brand action and selected state. |
+| Token                                                         | Use                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------ |
+| `--ink`                                                       | Primary text and highest-emphasis labels.              |
+| `--ink-soft`                                                  | Secondary text, descriptions, and supporting metadata. |
+| `--muted`                                                     | Low-emphasis helper copy and placeholders.             |
+| `--line`                                                      | Default border and separators.                         |
+| `--line-strong`                                               | Stronger form/table borders.                           |
+| `--paper`                                                     | Cards, panels, sidebar, and topbar.                    |
+| `--canvas`                                                    | Main application background.                           |
+| `--purple` / `--purple-deep` / `--purple-pale`                | Primary brand action and selected state.               |
 | `--blue`, `--green`, `--orange`, `--red`, `--yellow` families | Status, priority, health, alerts, and semantic states. |
 
 ### Elevation
@@ -225,4 +232,3 @@ Use this before considering a feature production-ready:
 - [ ] Local fonts/assets render without network access.
 - [ ] Print/export output remains legible and complete.
 - [ ] Mobile/tablet layouts do not hide essential workflows.
-
