@@ -15,6 +15,8 @@ import { boundedInteger, id, parseNumber, normalizeEmail, isValidEmail, validIso
 import { createRateLimitMiddleware } from './src/server/http/rate-limit.js'
 import { createAuthMiddleware } from './src/server/http/auth-middleware.js'
 import { createWorkflowService } from './src/server/domain/workflows.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { createOfflineSyncMiddleware, offlineCreateId } from './src/server/domain/offline-sync.js'
 
 const root = process.env.ATLAS_ROOT || process.cwd()
 const dataDir = process.env.ATLAS_DATA_DIR || path.join(root, 'data')
@@ -23,6 +25,7 @@ const databaseFile = process.env.ATLAS_DB_PATH || path.join(dataDir, 'atlas.sqli
 const legacyDataFile = path.join(dataDir, 'atlas-store.json')
 let store = null
 const loginRateLimits = new Map()
+const offlineSyncContext = new AsyncLocalStorage()
 const setupRateLimits = new Map()
 const i18nRateLimits = new Map()
 const isProduction = process.env.NODE_ENV === 'production'
@@ -52,7 +55,7 @@ const workflowService = createWorkflowService({ getStore: () => store, defaultTa
 const { taskWorkflowDefinitions, taskWorkflowStates, terminalTaskStates, isDone } = workflowService
 
 const storeServices = createStoreService({ getStore: () => store, todayLA, timeLA, addDays, id, parseNumber, isPlainObject, defaultSettings, normalizeSettings, hashPassword, normalizeUserSecrets, allowDemoData, STORE_SCHEMA_VERSION, DATABASE_MODEL, DESIGN_SYSTEM_VERSION, configuredBackupRetention })
-const { newStoreMeta, buildSeedWorkLogs, logWorkEvent, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum } = storeServices
+const { newStoreMeta, buildSeedWorkLogs, logWorkEvent, pruneWorkLedger, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum } = storeServices
 const databaseExistedBeforeStartup = fs.existsSync(databaseFile)
 ensureDir()
 const sqliteDatabase = openSqliteDatabase(databaseFile, { dataDirectory: dataDir })
@@ -75,7 +78,8 @@ function saveStore(next, options = {}) {
   normalized.meta.updatedAt = new Date().toISOString()
   storeRepository.writeSnapshot(normalized, {
     backup: options.backup === true && storeRepository.hasSnapshot(),
-    backupReason: options.reason || 'write'
+    backupReason: options.reason || 'write',
+    syncOperation: options.syncOperation || null
   })
   return normalized
 }
@@ -148,7 +152,10 @@ store = loadStore()
 let lastCommittedStore = structuredClone(store)
 function persist(options = {}) {
   try {
-    store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === 'true', reason: options.reason || 'persist' })
+    store = saveStore(store, {
+      backup: process.env.ATLAS_BACKUP_ON_WRITE === 'true', reason: options.reason || 'persist',
+      syncOperation: offlineSyncContext.getStore() || null
+    })
     lastCommittedStore = structuredClone(store)
   } catch (error) {
     try {
@@ -221,10 +228,16 @@ app.use((req, res, next) => {
   next()
 })
 app.use(cookieParser())
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({ limit: '16mb' }))
 app.use('/api', (req, res, next) => {
   if (req.body !== undefined && !isPlainObject(req.body)) return sendError(res, 400, 'Request body must be a JSON object')
   if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body === undefined) return sendError(res, 400, 'A JSON object request body is required')
+  if (req.body && Object.hasOwn(req.body, '__atlasSync')) {
+    if (!isPlainObject(req.body.__atlasSync)) return sendError(res, 400, 'Offline sync metadata must be an object')
+    const { __atlasSync, ...body } = req.body
+    req.atlasSync = __atlasSync
+    req.body = body
+  }
   next()
 })
 
@@ -250,10 +263,12 @@ const routeServices = {
   validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
   invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor,
   bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path,
-  validOptionalDate, personReferenceExists, customFieldInputError, nextProjectId, nextTaskId, taskPublic, projectPublic, taskById, taskWorkflowStates,
+  validOptionalDate, personReferenceExists, customFieldInputError, nextProjectId, nextTaskId, taskPublic, projectPublic, taskById, taskWorkflowStates, pruneWorkLedger,
   terminalTaskStates, isDone, logWorkEvent, taskReferenceExists, validDateValue, dueTone, validEmail, teamReferenceExists,
-  projectReferenceExists, personById, personPublic, activityPublic, alertPublic, createActivityBlockerAlert, requireManager, teamById
+  projectReferenceExists, personById, personPublic, activityPublic, alertPublic, createActivityBlockerAlert, requireManager, teamById,
+  offlineCreateId
 }
+app.use('/api', createOfflineSyncMiddleware({ getStore: () => store, sessions, storeRepository, operationContext: offlineSyncContext, sendError, can }))
 registerRoutes(app, routeServices)
 app.use((error, req, res, next) => {
   if (!req.path.startsWith('/api')) return next(error)

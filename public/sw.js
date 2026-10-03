@@ -1,4 +1,4 @@
-const CACHE = 'atlas-local-v6-offline-shell'
+const CACHE = 'atlas-local-v7-offline-shell'
 const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/atlas-icon.svg', '/fonts/AtlasSans-Regular.ttf', '/fonts/AtlasSans-Bold.ttf', '/fonts/AtlasDisplay-Bold.ttf']
 const isVersionedAsset = url => url.pathname.startsWith('/assets/') || url.pathname.startsWith('/fonts/') || url.pathname === '/atlas-icon.svg' || url.pathname === '/manifest.webmanifest'
 self.addEventListener('install', event => {

@@ -196,7 +196,7 @@ function createCollectionTable(tableName2, definition) {
 function toSnakeCase(value) {
   return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
-var CURRENT_SCHEMA_VERSION = 2;
+var CURRENT_SCHEMA_VERSION = 4;
 function applyMigration(db, version, name, migrate) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -273,6 +273,51 @@ function migrateDatabase(db) {
   }
   if (version < 2) {
     applyMigration(db, 2, "user-saved-filters", () => createUserPreferencesTable(db));
+    version = 2;
+  }
+  if (version < 3) {
+    applyMigration(db, 3, "offline-sync-idempotency", () => {
+      db.exec(`
+        CREATE TABLE sync_operations (
+          operation_id TEXT NOT NULL PRIMARY KEY,
+          actor_id TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('applied', 'completed')),
+          response_status INTEGER,
+          response_json TEXT CHECK(response_json IS NULL OR json_valid(response_json)),
+          created_at TEXT NOT NULL,
+          completed_at TEXT
+        ) STRICT;
+        CREATE INDEX idx_sync_operations_actor ON sync_operations(actor_id, created_at);
+      `);
+    });
+    version = 3;
+  }
+  if (version < 4) {
+    applyMigration(db, 4, "offline-sync-conflict-audit", () => {
+      db.exec(`
+        CREATE TABLE sync_conflicts (
+          operation_id TEXT NOT NULL PRIMARY KEY,
+          actor_id TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          entity_id TEXT,
+          method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          conflict_code TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('open', 'resolved', 'discarded')),
+          base_json TEXT CHECK(base_json IS NULL OR json_valid(base_json)),
+          local_json TEXT CHECK(local_json IS NULL OR json_valid(local_json)),
+          server_json TEXT CHECK(server_json IS NULL OR json_valid(server_json)),
+          fields_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fields_json)),
+          resolution_json TEXT CHECK(resolution_json IS NULL OR json_valid(resolution_json)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          resolved_at TEXT
+        ) STRICT;
+        CREATE INDEX idx_sync_conflicts_status_created ON sync_conflicts(status, created_at);
+        CREATE INDEX idx_sync_conflicts_actor_created ON sync_conflicts(actor_id, created_at);
+      `);
+    });
   }
 }
 
@@ -474,7 +519,7 @@ var SqliteStoreRepository = class {
     }
     return snapshot;
   }
-  writeSnapshot(snapshot, { backup = false, backupReason = "write" } = {}) {
+  writeSnapshot(snapshot, { backup = false, backupReason = "write", syncOperation = null } = {}) {
     if (!snapshot || typeof snapshot !== "object") throw new TypeError("A workspace snapshot is required");
     if (backup) this.createBackup(backupReason);
     this.db.exec("BEGIN IMMEDIATE");
@@ -483,6 +528,13 @@ var SqliteStoreRepository = class {
       for (const collection of TABLES_IN_WRITE_ORDER) this.#upsertCollection(collection, snapshot[collection] || []);
       for (const collection of TABLES_IN_DELETE_ORDER) this.#deleteMissing(collection, snapshot[collection] || []);
       this.#writeSingletons(snapshot);
+      if (syncOperation?.operationId && syncOperation?.actorId && syncOperation?.requestHash) {
+        this.db.prepare(`
+          INSERT INTO sync_operations(operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at)
+          VALUES(?, ?, ?, 'applied', NULL, NULL, ?, NULL)
+          ON CONFLICT(operation_id) DO NOTHING
+        `).run(syncOperation.operationId, syncOperation.actorId, syncOperation.requestHash, (/* @__PURE__ */ new Date()).toISOString());
+      }
       const brokenReferences = this.db.prepare("PRAGMA foreign_key_check").all();
       if (brokenReferences.length) throw new Error(`SQLite foreign-key validation failed: ${brokenReferences.length} invalid relationship(s)`);
       this.db.exec("COMMIT");
@@ -552,6 +604,113 @@ var SqliteStoreRepository = class {
       writeCounter.run(name, number);
     }
   }
+  getSyncOperation(operationId) {
+    const row = this.db.prepare("SELECT operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at FROM sync_operations WHERE operation_id = ?").get(String(operationId));
+    if (!row) return null;
+    let responseBody = null;
+    if (row.response_json !== null) {
+      try {
+        responseBody = JSON.parse(row.response_json);
+      } catch {
+      }
+    }
+    return {
+      operationId: row.operation_id,
+      actorId: row.actor_id,
+      requestHash: row.request_hash,
+      status: row.status,
+      responseStatus: row.response_status === null ? null : Number(row.response_status),
+      responseBody,
+      createdAt: row.created_at,
+      completedAt: row.completed_at
+    };
+  }
+  getSyncConflict(operationId) {
+    const row = this.db.prepare("SELECT * FROM sync_conflicts WHERE operation_id = ?").get(String(operationId));
+    if (!row) return null;
+    return {
+      operationId: row.operation_id,
+      actorId: row.actor_id,
+      collection: row.collection,
+      entityId: row.entity_id,
+      method: row.method,
+      path: row.path,
+      code: row.conflict_code,
+      status: row.status,
+      baseRecord: jsonParse(row.base_json, null),
+      localRecord: jsonParse(row.local_json, null),
+      serverRecord: jsonParse(row.server_json, null),
+      fields: jsonParse(row.fields_json, []),
+      resolution: jsonParse(row.resolution_json, null),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      resolvedAt: row.resolved_at
+    };
+  }
+  recordSyncConflict(conflict) {
+    if (!conflict?.operationId || !conflict?.actorId || !conflict?.collection || !conflict?.code) throw new TypeError("A complete offline-sync conflict is required");
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const asJson = (value) => value === void 0 || value === null ? null : json(value);
+    this.db.prepare(`
+      INSERT INTO sync_conflicts(operation_id, actor_id, collection, entity_id, method, path, conflict_code, status, base_json, local_json, server_json, fields_json, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(operation_id) DO NOTHING
+    `).run(
+      String(conflict.operationId),
+      String(conflict.actorId),
+      String(conflict.collection),
+      conflict.entityId == null ? null : String(conflict.entityId),
+      String(conflict.method || "POST"),
+      String(conflict.path || ""),
+      String(conflict.code),
+      asJson(conflict.baseRecord),
+      asJson(conflict.localRecord),
+      asJson(conflict.serverRecord),
+      json(conflict.fields || []),
+      now,
+      now
+    );
+    return this.getSyncConflict(conflict.operationId);
+  }
+  resolveSyncConflict(operationId, actorId, resolution) {
+    const action = String(resolution?.action || "");
+    const status = action === "keep-server" || action === "discard" ? "discarded" : "resolved";
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const existing = this.getSyncConflict(operationId);
+    if (!existing || existing.actorId !== String(actorId)) return null;
+    if (existing.status === "open") {
+      this.db.prepare(`
+        UPDATE sync_conflicts SET status = ?, resolution_json = ?, updated_at = ?, resolved_at = ?
+        WHERE operation_id = ? AND actor_id = ? AND status = 'open'
+      `).run(status, json(resolution || {}), now, now, String(operationId), String(actorId));
+    }
+    return this.getSyncConflict(operationId);
+  }
+  pruneSyncConflicts(retentionDays = 365) {
+    const requestedDays = Number(retentionDays);
+    const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(3650, Math.floor(requestedDays))) : 365;
+    const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+    return this.db.prepare("DELETE FROM sync_conflicts WHERE status <> 'open' AND resolved_at IS NOT NULL AND resolved_at < ?").run(cutoff).changes;
+  }
+  listSyncConflicts({ limit = 500, status = "" } = {}) {
+    const count = Math.max(1, Math.min(5e3, Number(limit) || 500));
+    const rows = status ? this.db.prepare("SELECT operation_id FROM sync_conflicts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(String(status), count) : this.db.prepare("SELECT operation_id FROM sync_conflicts ORDER BY created_at DESC LIMIT ?").all(count);
+    return rows.map((row) => this.getSyncConflict(row.operation_id)).filter(Boolean);
+  }
+  completeSyncOperation(operation, responseStatus, responseBody) {
+    if (!operation?.operationId || !operation?.actorId || !operation?.requestHash) throw new TypeError("A complete offline-sync operation receipt is required");
+    const responseJson = JSON.stringify(responseBody ?? null);
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    this.db.prepare(`
+      INSERT INTO sync_operations(operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at)
+      VALUES(?, ?, ?, 'completed', ?, ?, ?, ?)
+      ON CONFLICT(operation_id) DO UPDATE SET
+        status = 'completed', response_status = excluded.response_status,
+        response_json = excluded.response_json, completed_at = excluded.completed_at
+      WHERE sync_operations.actor_id = excluded.actor_id AND sync_operations.request_hash = excluded.request_hash
+    `).run(operation.operationId, operation.actorId, operation.requestHash, Number(responseStatus), responseJson, now, now);
+    return this.getSyncOperation(operation.operationId);
+  }
   createBackup(reason = "manual") {
     fs2.mkdirSync(path2.join(this.dataDirectory, "backups"), { recursive: true });
     const safeReason = String(reason).replace(/[^a-z0-9_-]+/gi, "-").slice(0, 32) || "snapshot";
@@ -595,6 +754,7 @@ var SqliteStoreRepository = class {
   tableCounts() {
     const counts = Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]));
     counts.userPreferences = Number(this.db.prepare("SELECT COUNT(*) AS count FROM user_preferences").get().count);
+    counts.syncOperations = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sync_operations").get().count);
     return counts;
   }
   databaseInfo() {
@@ -642,9 +802,9 @@ var UserPreferencesRepository = class {
 
 // src/server/routes/system.routes.js
 function registerSystemRoutes(app2, services) {
-  const { store: store2, getStore, setStore, root: root2, databaseFile: databaseFile2, DATABASE_MODEL: DATABASE_MODEL2, STORE_SCHEMA_VERSION: STORE_SCHEMA_VERSION2, DESIGN_SYSTEM_VERSION: DESIGN_SYSTEM_VERSION2, configuredBackupRetention: configuredBackupRetention2, allowDemoData: allowDemoData2, rateLimitMiddleware: rateLimitMiddleware2, setupRateLimits: setupRateLimits2, loginRateLimits: loginRateLimits2, i18nRateLimits: i18nRateLimits2, sendError: sendError2, normalizeEmail: normalizeEmail2, isValidEmail: isValidEmail2, validatePassword: validatePassword2, configuredPasswordMinLength: configuredPasswordMinLength2, settingsInputError: settingsInputError2, mergeDeep: mergeDeep2, defaultSettings: defaultSettings2, normalizeSettings: normalizeSettings2, hashPassword: hashPassword2, todayLA: todayLA2, timeLA: timeLA2, publicUser: publicUser2, newSession: newSession2, sessionCookieOptions: sessionCookieOptions2, auditLog: auditLog2, persist: persist2, can: can2, storeRepository: storeRepository2, listBackups: listBackups2, auditRead: auditRead2, storeChecksum: storeChecksum2, validateStoreState: validateStoreState2, requireUser: requireUser2, requireAdmin: requireAdmin2, requirePermission: requirePermission2, createBackup: createBackup2, roleRank: roleRank2, publicAccessUser: publicAccessUser2, verifyPassword: verifyPassword2, invalidateUserSessions: invalidateUserSessions2, sessions: sessions2, normalizeUserSecrets: normalizeUserSecrets2, projectById: projectById2, validText: validText2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, activityReportFor: activityReportFor2, reportFor: reportFor2, bootstrapFor: bootstrapFor2, settingsForUser: settingsForUser2, demoStore: demoStore2, id: id2, MAX_I18N_KEY_LENGTH: MAX_I18N_KEY_LENGTH2, I18N_MISSING_LIMIT: I18N_MISSING_LIMIT2, isPlainObject: isPlainObject2, path: path4 } = services;
+  const { store: store2, getStore, setStore, root: root2, databaseFile: databaseFile2, DATABASE_MODEL: DATABASE_MODEL2, STORE_SCHEMA_VERSION: STORE_SCHEMA_VERSION2, DESIGN_SYSTEM_VERSION: DESIGN_SYSTEM_VERSION2, configuredBackupRetention: configuredBackupRetention2, allowDemoData: allowDemoData2, rateLimitMiddleware: rateLimitMiddleware2, setupRateLimits: setupRateLimits2, loginRateLimits: loginRateLimits2, i18nRateLimits: i18nRateLimits2, sendError: sendError2, normalizeEmail: normalizeEmail2, isValidEmail: isValidEmail2, validatePassword: validatePassword2, configuredPasswordMinLength: configuredPasswordMinLength2, settingsInputError: settingsInputError2, mergeDeep: mergeDeep2, defaultSettings: defaultSettings2, normalizeSettings: normalizeSettings2, hashPassword: hashPassword2, todayLA: todayLA2, timeLA: timeLA2, publicUser: publicUser2, newSession: newSession2, sessionCookieOptions: sessionCookieOptions2, auditLog: auditLog2, persist: persist2, pruneWorkLedger: pruneWorkLedger2, can: can2, storeRepository: storeRepository2, listBackups: listBackups2, auditRead: auditRead2, storeChecksum: storeChecksum2, validateStoreState: validateStoreState2, requireUser: requireUser2, requireAdmin: requireAdmin2, requirePermission: requirePermission2, createBackup: createBackup2, roleRank: roleRank2, publicAccessUser: publicAccessUser2, verifyPassword: verifyPassword2, invalidateUserSessions: invalidateUserSessions2, sessions: sessions2, normalizeUserSecrets: normalizeUserSecrets2, projectById: projectById2, validText: validText2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, activityReportFor: activityReportFor2, reportFor: reportFor2, bootstrapFor: bootstrapFor2, settingsForUser: settingsForUser2, demoStore: demoStore2, id: id2, MAX_I18N_KEY_LENGTH: MAX_I18N_KEY_LENGTH2, I18N_MISSING_LIMIT: I18N_MISSING_LIMIT2, isPlainObject: isPlainObject2, path: path4 } = services;
   app2.get("/api/health", (req, res) => res.json({ ok: true, name: "Atlas Workspace", version: "1.0.0", mode: process.env.NODE_ENV || "development", desktopReady: process.env.ATLAS_DESKTOP === "true", time: (/* @__PURE__ */ new Date()).toISOString() }));
-  app2.get("/api/runtime-config", (req, res) => {
+  app2.get("/api/runtime-config", requireUser2, requireAdmin2, (req, res) => {
     const databaseInfo = storeRepository2.databaseInfo();
     res.json({
       packagingMode: process.env.ATLAS_DESKTOP === "true" ? "electron-desktop" : process.env.NODE_ENV === "production" ? "production-web" : "development-web",
@@ -709,7 +869,7 @@ function registerSystemRoutes(app2, services) {
     }
     const sid = newSession2(user.id);
     res.cookie("atlas_sid", sid, sessionCookieOptions2());
-    res.json({ setup: { configured: true }, user: publicUser2(user) });
+    res.json({ setup: { configured: true }, user: publicUser2(user), sessionExpiresAt: sessions2.get(sid)?.expiresAt || Date.now() });
   });
   app2.post("/api/auth/login", rateLimitMiddleware2(loginRateLimits2, 20, 15 * 60 * 1e3), (req, res) => {
     const { email, password } = req.body;
@@ -723,7 +883,7 @@ function registerSystemRoutes(app2, services) {
     persist2({ reason: "login" });
     const sid = newSession2(user.id);
     res.cookie("atlas_sid", sid, sessionCookieOptions2());
-    res.json({ user: publicUser2(user) });
+    res.json({ user: publicUser2(user), sessionExpiresAt: sessions2.get(sid)?.expiresAt || Date.now() });
   });
   app2.post("/api/auth/logout", (req, res) => {
     const sessionId = req.cookies.atlas_sid;
@@ -731,7 +891,7 @@ function registerSystemRoutes(app2, services) {
     res.clearCookie("atlas_sid", sessionCookieOptions2());
     res.json({ ok: true });
   });
-  app2.get("/api/auth/me", requireUser2, (req, res) => res.json({ user: publicUser2(req.user) }));
+  app2.get("/api/auth/me", requireUser2, (req, res) => res.json({ user: publicUser2(req.user), sessionExpiresAt: sessions2.get(req.cookies?.atlas_sid)?.expiresAt || Date.now() }));
   app2.get("/api/bootstrap", requireUser2, (req, res) => {
     auditRead2("bootstrap", req.user.id);
     res.json(bootstrapFor2(req.user));
@@ -742,14 +902,21 @@ function registerSystemRoutes(app2, services) {
   });
   app2.get("/api/reports/activity/:period", requireUser2, requirePermission2("viewReports"), (req, res) => {
     auditRead2("activity-report", req.user.id);
-    res.json(activityReportFor2(req.params.period, req.query.userId || "all"));
+    const isAdministrator = req.user.role === "Administrator";
+    const scope = isAdministrator ? req.query.userId || "all" : String(req.user.personId || `unlinked:${req.user.id}`);
+    res.json(activityReportFor2(req.params.period, scope));
   });
   app2.post("/api/audit/export", requireUser2, requirePermission2("exportData"), (req, res) => {
     const { title, format, rowCount } = req.body;
-    if (!validText2(title, 200) || !["csv", "xlsx", "json", "pdf", "print"].includes(format) || !Number.isInteger(rowCount) || rowCount < 0 || rowCount > 1e6) return sendError2(res, 400, "A title, supported export format, and valid row count are required");
+    if (!validText2(title, 200) || !["csv", "xlsx", "json", "pdf", "print"].includes(format) || !Number.isSafeInteger(rowCount) || rowCount < 0) return sendError2(res, 400, "A title, supported export format, and valid row count are required");
     auditLog2("export.data", req.user.id, { title: title.trim(), format, rowCount });
     persist2({ reason: "export-audit" });
     res.json({ ok: true });
+  });
+  app2.get("/api/offline-sync/conflicts", requireUser2, requireAdmin2, (req, res) => {
+    storeRepository2.pruneSyncConflicts(store2?.settings?.audit?.retentionDays);
+    auditRead2("offline-sync-conflicts", req.user.id);
+    res.json(storeRepository2.listSyncConflicts({ limit: Number(req.query.limit) || 500, status: req.query.status || "" }));
   });
   app2.get("/api/system", requireUser2, requireAdmin2, (req, res) => {
     auditRead2("system", req.user.id);
@@ -772,7 +939,10 @@ function registerSystemRoutes(app2, services) {
     const imported = req.body.settings || req.body;
     const error = settingsInputError2(imported);
     if (error) return sendError2(res, 400, error);
+    const existingWorkLedgerRetention = store2.settings.workLedger?.retentionMonths ?? 0;
     store2.settings = normalizeSettings2(imported);
+    if (!isPlainObject2(imported.workLedger) || !Object.hasOwn(imported.workLedger, "retentionMonths")) store2.settings.workLedger.retentionMonths = existingWorkLedgerRetention;
+    pruneWorkLedger2(store2);
     auditLog2("settings.imported", req.user.id, { keys: Object.keys(imported) });
     persist2({ reason: "settings-import" });
     res.json(store2.settings);
@@ -806,7 +976,7 @@ function registerSystemRoutes(app2, services) {
     const totalMissing = Object.values(missing).reduce((sum, rows) => sum + rows.length, 0);
     res.json({ fallback, keys: baseKeys, missing, totalMissing, byLanguage: missing });
   });
-  app2.get("/api/i18n/catalog", (req, res) => res.json(translationCatalogPayload(req.query.language || req.query.lang || null)));
+  app2.get("/api/i18n/catalog", requireUser2, requireAdmin2, (req, res) => res.json(translationCatalogPayload(req.query.language || req.query.lang || null)));
   app2.post("/api/i18n/missing", rateLimitMiddleware2(i18nRateLimits2, 30, 10 * 60 * 1e3), (req, res) => {
     if (!store2.configured) return res.json({ ok: true, ignored: true });
     const localization = store2.settings.localization || {};
@@ -904,6 +1074,7 @@ function registerSystemRoutes(app2, services) {
     const error = settingsInputError2(req.body);
     if (error) return sendError2(res, 400, error);
     store2.settings = normalizeSettings2(mergeDeep2(store2.settings, req.body));
+    pruneWorkLedger2(store2);
     auditLog2("settings.updated", req.user.id, { branches: Object.keys(req.body) });
     persist2({ reason: "settings" });
     res.json(store2.settings);
@@ -951,15 +1122,21 @@ function registerSystemRoutes(app2, services) {
 
 // src/server/routes/tasks-projects.routes.js
 function registerTaskProjectRoutes(app2, services) {
-  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validOptionalDate: validOptionalDate2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, nextProjectId: nextProjectId2, nextTaskId: nextTaskId2, id: id2, taskPublic: taskPublic2, projectPublic: projectPublic2, projectById: projectById2, taskById: taskById2, taskWorkflowStates: taskWorkflowStates2, terminalTaskStates: terminalTaskStates2, isDone: isDone2, logWorkEvent: logWorkEvent2, auditLog: auditLog2, persist: persist2, can: can2, taskReferenceExists: taskReferenceExists2, validDateValue: validDateValue2, personById: personById2, dueTone: dueTone2, createDatabaseExportContext: createDatabaseExportContext2, auditRead: auditRead2 } = services;
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validOptionalDate: validOptionalDate2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, nextProjectId: nextProjectId2, nextTaskId: nextTaskId2, id: id2, taskPublic: taskPublic2, projectPublic: projectPublic2, projectById: projectById2, taskById: taskById2, taskWorkflowStates: taskWorkflowStates2, terminalTaskStates: terminalTaskStates2, isDone: isDone2, logWorkEvent: logWorkEvent2, auditLog: auditLog2, persist: persist2, can: can2, taskReferenceExists: taskReferenceExists2, validDateValue: validDateValue2, personById: personById2, dueTone: dueTone2, createDatabaseExportContext: createDatabaseExportContext2, auditRead: auditRead2, offlineCreateId: offlineCreateId2 } = services;
   app2.get("/api/projects/:id/tasks", requireUser2, (req, res) => {
     const context = createDatabaseExportContext2();
     const project = context.snapshot.projects.find((row) => String(row.id) === String(req.params.id));
     if (!project) return sendError2(res, 404, "Project not found");
-    const tasks = context.snapshot.tasks.filter((task) => String(task.projectId) === String(project.id)).map((task) => context.workspace.taskPublic(task, context.today)).sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")) || a.title.localeCompare(b.title));
+    const indexes = {
+      people: new Map(context.snapshot.people.map((person) => [String(person.id), person])),
+      projects: new Map(context.snapshot.projects.map((row) => [String(row.id), row])),
+      teams: new Map(context.snapshot.teams.map((team) => [String(team.id), team]))
+    };
+    const projectTasks = context.snapshot.tasks.filter((task) => String(task.projectId) === String(project.id));
+    const tasks = projectTasks.map((task) => context.workspace.taskPublic(task, context.today, indexes)).sort((left, right) => String(left.dueDate || "").localeCompare(String(right.dueDate || "")) || left.title.localeCompare(right.title));
     const milestones = context.snapshot.milestones.filter((milestone) => String(milestone.projectId) === String(project.id)).map((milestone) => ({ ...milestone, project: project.name }));
     auditRead2("project-tasks", req.user.id);
-    res.json({ source: "sqlite", project: context.workspace.projectPublic(project, context.today), tasks, milestones, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    res.json({ source: "sqlite", project: context.workspace.projectPublic(project, context.today, projectTasks, indexes), tasks, milestones, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
   });
   app2.post("/api/tasks", requireUser2, requirePermission2("manageTasks"), (req, res) => {
     const body = req.body;
@@ -977,10 +1154,12 @@ function registerTaskProjectRoutes(app2, services) {
     if (!validOptionalDate2(dueDate)) return sendError2(res, 400, "Task due date must be a valid calendar date");
     if (body.type !== void 0 && !validText2(body.type, 80)) return sendError2(res, 400, "Task type must be between 1 and 80 characters");
     if (body.blocked !== void 0 && typeof body.blocked !== "boolean") return sendError2(res, 400, "Blocked must be a boolean");
+    if (body.tags !== void 0 && (!Array.isArray(body.tags) || body.tags.length > 50 || body.tags.some((tag) => !validText2(tag, 60)))) return sendError2(res, 400, "Tags must contain up to 50 values of 60 characters or fewer");
+    const tags = body.tags === void 0 ? [] : [...new Map(body.tags.map((tag) => [tag.trim().toLocaleLowerCase(), tag.trim()])).values()];
     const customFieldError = customFieldInputError2("tasks", body.customFields || {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
     const task = {
-      id: nextTaskId2(),
+      id: offlineCreateId2(req, "tasks", nextTaskId2),
       title,
       projectId: project.id,
       assigneeId,
@@ -989,6 +1168,7 @@ function registerTaskProjectRoutes(app2, services) {
       status,
       type: body.type || "Development",
       blocked: body.blocked === true,
+      tags,
       customFields: body.customFields || {},
       createdAt: todayLA2(),
       sample: false
@@ -1018,9 +1198,11 @@ function registerTaskProjectRoutes(app2, services) {
     if (!validOptionalDate2(dueDate)) return sendError2(res, 400, "Task due date must be a valid calendar date");
     if (body.type !== void 0 && !validText2(body.type, 80)) return sendError2(res, 400, "Task type must be between 1 and 80 characters");
     if (body.blocked !== void 0 && typeof body.blocked !== "boolean") return sendError2(res, 400, "Blocked must be a boolean");
+    if (body.tags !== void 0 && (!Array.isArray(body.tags) || body.tags.length > 50 || body.tags.some((tag) => !validText2(tag, 60)))) return sendError2(res, 400, "Tags must contain up to 50 values of 60 characters or fewer");
+    const tags = body.tags === void 0 ? task.tags || [] : [...new Map(body.tags.map((tag) => [tag.trim().toLocaleLowerCase(), tag.trim()])).values()];
     const customFieldError = customFieldInputError2("tasks", body.customFields ?? task.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const previous = { status: task.status, assigneeId: task.assigneeId, projectId: task.projectId, title: task.title, priority: task.priority, dueDate: task.dueDate, type: task.type, blocked: task.blocked, customFields: task.customFields };
+    const previous = { status: task.status, assigneeId: task.assigneeId, projectId: task.projectId, title: task.title, priority: task.priority, dueDate: task.dueDate, type: task.type, blocked: task.blocked, tags: task.tags || [], customFields: task.customFields };
     const wasDone = isDone2(task);
     Object.assign(task, {
       title,
@@ -1031,11 +1213,12 @@ function registerTaskProjectRoutes(app2, services) {
       status,
       type: body.type ?? task.type,
       blocked: body.blocked ?? task.blocked,
+      tags,
       customFields: body.customFields ?? task.customFields ?? {}
     });
     const isNowDone = isDone2(task);
     task.completedAt = isNowDone ? wasDone ? task.completedAt || todayLA2() : todayLA2() : void 0;
-    if (JSON.stringify(previous) !== JSON.stringify({ status: task.status, assigneeId: task.assigneeId, projectId: task.projectId, title: task.title, priority: task.priority, dueDate: task.dueDate, type: task.type, blocked: task.blocked, customFields: task.customFields })) {
+    if (JSON.stringify(previous) !== JSON.stringify({ status: task.status, assigneeId: task.assigneeId, projectId: task.projectId, title: task.title, priority: task.priority, dueDate: task.dueDate, type: task.type, blocked: task.blocked, tags: task.tags || [], customFields: task.customFields })) {
       logWorkEvent2({ personId: req.user.personId, actorUserId: req.user.id, taskId: task.id, projectId: task.projectId, action: "Updated task", statusFrom: previous.status, statusTo: task.status, summary: task.title, minutes: 0 });
       auditLog2("task.updated", req.user.id, { taskId: task.id, previousStatus: previous.status, status: task.status });
       persist2({ reason: "task-update" });
@@ -1066,6 +1249,119 @@ function registerTaskProjectRoutes(app2, services) {
     persist2({ reason: "task-status" });
     res.json(taskPublic2(task, todayLA2()));
   });
+  app2.post("/api/tasks/bulk", requireUser2, (req, res) => {
+    const body = req.body || {};
+    const action = body.action;
+    const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(String))] : [];
+    if (!ids.length || ids.length > 1e3 || ids.some((value) => !value || value.length > 200)) return sendError2(res, 400, "Select between 1 and 1000 task records per bulk request");
+    if (!["edit", "delete"].includes(action)) return sendError2(res, 400, "Unsupported task bulk operation");
+    if (action === "delete") {
+      if (!can2(req.user, "manageTasks")) return sendError2(res, 403, "Task management access is required for bulk deletion");
+      const selected = new Set(ids);
+      const existing = store2.tasks.filter((task) => selected.has(String(task.id)));
+      const found = new Set(existing.map((task) => String(task.id)));
+      const failures2 = ids.filter((taskId) => !found.has(taskId)).map((id3) => ({ id: id3, error: "Task not found" }));
+      if (existing.length) {
+        store2.tasks = store2.tasks.filter((task) => !selected.has(String(task.id)));
+        store2.alerts = store2.alerts.filter((alert) => !selected.has(String(alert.taskId || "")));
+        auditLog2("tasks.bulk.deleted", req.user.id, { requested: ids.length, affected: existing.length, taskIds: existing.map((task) => task.id) });
+        persist2({ reason: "tasks-bulk-delete" });
+      }
+      return res.json({ requested: ids.length, affected: existing.length, succeeded: existing.map((task) => task.id), failures: failures2 });
+    }
+    const changes = body.changes;
+    const allowedFields = /* @__PURE__ */ new Set(["title", "projectId", "assigneeId", "priority", "dueDate", "status", "type", "blocked", "tags"]);
+    if (!changes || typeof changes !== "object" || Array.isArray(changes) || !Object.keys(changes).length || Object.keys(changes).some((key) => !allowedFields.has(key))) return sendError2(res, 400, "Bulk task edits contain unsupported fields");
+    const statusOnly = Object.keys(changes).every((key) => key === "status");
+    if (statusOnly ? !can2(req.user, "writeTasks") : !can2(req.user, "manageTasks")) return sendError2(res, 403, statusOnly ? "Task workflow access is required" : "Task management access is required for these bulk fields");
+    const failures = [];
+    const succeeded = [];
+    const changedFields = Object.keys(changes);
+    const tasksById = new Map(store2.tasks.map((task) => [String(task.id), task]));
+    for (const taskId of ids) {
+      const task = tasksById.get(taskId);
+      if (!task) {
+        failures.push({ id: taskId, error: "Task not found" });
+        continue;
+      }
+      if (!can2(req.user, "manageTasks") && String(task.assigneeId || "") !== String(req.user.personId || "")) {
+        failures.push({ id: taskId, error: "You may only update tasks assigned to your profile" });
+        continue;
+      }
+      const next = { ...task };
+      const candidate = changes;
+      if (Object.hasOwn(candidate, "title")) next.title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (Object.hasOwn(candidate, "projectId")) {
+        const project = projectById2(candidate.projectId);
+        if (!project) {
+          failures.push({ id: taskId, error: "A valid project is required" });
+          continue;
+        }
+        next.projectId = project.id;
+      }
+      if (Object.hasOwn(candidate, "assigneeId")) {
+        const assigneeId = String(candidate.assigneeId || "");
+        if (!personReferenceExists2(assigneeId)) {
+          failures.push({ id: taskId, error: "The selected task owner does not exist" });
+          continue;
+        }
+        next.assigneeId = assigneeId;
+      }
+      if (Object.hasOwn(candidate, "priority")) next.priority = candidate.priority;
+      if (Object.hasOwn(candidate, "dueDate")) next.dueDate = candidate.dueDate;
+      if (Object.hasOwn(candidate, "status")) next.status = candidate.status;
+      if (Object.hasOwn(candidate, "type")) next.type = candidate.type;
+      if (Object.hasOwn(candidate, "blocked")) next.blocked = candidate.blocked;
+      if (Object.hasOwn(candidate, "tags")) {
+        if (!Array.isArray(candidate.tags) || candidate.tags.length > 50 || candidate.tags.some((tag) => !validText2(tag, 60))) {
+          failures.push({ id: taskId, error: "Tags must contain up to 50 values of 60 characters or fewer" });
+          continue;
+        }
+        next.tags = [...new Map(candidate.tags.map((tag) => [tag.trim().toLocaleLowerCase(), tag.trim()])).values()];
+      }
+      if (!validText2(next.title, 200)) {
+        failures.push({ id: taskId, error: "Task title is required and must be 200 characters or fewer" });
+        continue;
+      }
+      if (!taskWorkflowStates2().includes(next.status)) {
+        failures.push({ id: taskId, error: "Invalid task workflow state" });
+        continue;
+      }
+      if (!["High", "Medium", "Low"].includes(next.priority)) {
+        failures.push({ id: taskId, error: "Invalid task priority" });
+        continue;
+      }
+      if (!validOptionalDate2(next.dueDate)) {
+        failures.push({ id: taskId, error: "Task due date must be a valid calendar date" });
+        continue;
+      }
+      if (candidate.type !== void 0 && !validText2(next.type, 80)) {
+        failures.push({ id: taskId, error: "Task type must be between 1 and 80 characters" });
+        continue;
+      }
+      if (candidate.blocked !== void 0 && typeof next.blocked !== "boolean") {
+        failures.push({ id: taskId, error: "Blocked must be a boolean" });
+        continue;
+      }
+      const changed = changedFields.some((field3) => JSON.stringify(task[field3]) !== JSON.stringify(next[field3]));
+      if (!changed) {
+        succeeded.push(task.id);
+        continue;
+      }
+      const wasDone = isDone2(task);
+      const previousStatus = task.status;
+      Object.assign(task, next);
+      const isNowDone = isDone2(task);
+      task.completedAt = isNowDone ? wasDone ? task.completedAt || todayLA2() : todayLA2() : void 0;
+      logWorkEvent2({ personId: req.user.personId, actorUserId: req.user.id, taskId: task.id, projectId: task.projectId, action: "Bulk updated task", statusFrom: previousStatus === task.status ? void 0 : previousStatus, statusTo: previousStatus === task.status ? void 0 : task.status, summary: task.title, minutes: 0 });
+      succeeded.push(task.id);
+    }
+    if (succeeded.length) {
+      auditLog2("tasks.bulk.updated", req.user.id, { requested: ids.length, affected: succeeded.length, fields: changedFields });
+      persist2({ reason: "tasks-bulk-update" });
+    }
+    res.json({ requested: ids.length, affected: succeeded.length, succeeded, failures });
+  });
   app2.delete("/api/tasks/:id", requireUser2, requirePermission2("manageTasks"), (req, res) => {
     const task = taskById2(req.params.id);
     if (!task) return sendError2(res, 404, "Task not found");
@@ -1092,7 +1388,7 @@ function registerTaskProjectRoutes(app2, services) {
     if (body.description !== void 0 && (typeof body.description !== "string" || body.description.length > 3e3)) return sendError2(res, 400, "Project description must be 3000 characters or fewer");
     const customFieldError = customFieldInputError2("projects", body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const project = { id: nextProjectId2(), name, code, description: body.description || "", teamId, ownerId, color: body.color || "purple", status, deadline, createdAt: todayLA2(), customFields: body.customFields || {}, sample: false };
+    const project = { id: offlineCreateId2(req, "projects", nextProjectId2), name, code, description: body.description || "", teamId, ownerId, color: body.color || "purple", status, deadline, createdAt: todayLA2(), customFields: body.customFields || {}, sample: false };
     store2.projects.push(project);
     auditLog2("project.created", req.user.id, { projectId: project.id });
     persist2({ reason: "project-create" });
@@ -1138,7 +1434,7 @@ function registerTaskProjectRoutes(app2, services) {
 
 // src/server/routes/directory.routes.js
 function registerDirectoryRoutes(app2, services) {
-  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, projectReferenceExists: projectReferenceExists2, taskReferenceExists: taskReferenceExists2, customFieldInputError: customFieldInputError2, teamById: teamById2, todayLA: todayLA2, validOptionalDate: validOptionalDate2, id: id2, personById: personById2, projectById: projectById2, taskById: taskById2, personPublic: personPublic2, auditLog: auditLog2, persist: persist2 } = services;
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, validText: validText2, validEmail: validEmail2, teamReferenceExists: teamReferenceExists2, personReferenceExists: personReferenceExists2, projectReferenceExists: projectReferenceExists2, taskReferenceExists: taskReferenceExists2, customFieldInputError: customFieldInputError2, teamById: teamById2, todayLA: todayLA2, validOptionalDate: validOptionalDate2, id: id2, personById: personById2, projectById: projectById2, taskById: taskById2, personPublic: personPublic2, auditLog: auditLog2, persist: persist2, offlineCreateId: offlineCreateId2 } = services;
   app2.post("/api/people", requireUser2, requirePermission2("managePeople"), (req, res) => {
     const body = req.body;
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -1153,7 +1449,7 @@ function registerDirectoryRoutes(app2, services) {
     if (!["On track", "Needs attention"].includes(status)) return sendError2(res, 400, "Invalid person status");
     const customFieldError = customFieldInputError2("people", body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const person = { id: id2("person"), name, email, jobTitle: typeof body.jobTitle === "string" ? body.jobTitle.trim().slice(0, 120) : "Contributor", teamId, focus: typeof body.focus === "string" ? body.focus.trim().slice(0, 300) : "", capacity, status, color: typeof body.color === "string" ? body.color.slice(0, 40) : "purple", customFields: body.customFields || {}, sample: false };
+    const person = { id: offlineCreateId2(req, "people", () => id2("person")), name, email, jobTitle: typeof body.jobTitle === "string" ? body.jobTitle.trim().slice(0, 120) : "Contributor", teamId, focus: typeof body.focus === "string" ? body.focus.trim().slice(0, 300) : "", capacity, status, color: typeof body.color === "string" ? body.color.slice(0, 40) : "purple", customFields: body.customFields || {}, sample: false };
     store2.people.push(person);
     auditLog2("person.created", req.user.id, { personId: person.id });
     persist2({ reason: "person-create" });
@@ -1196,7 +1492,7 @@ function registerDirectoryRoutes(app2, services) {
     if (store2.teams.some((team2) => team2.name.toLowerCase() === name.toLowerCase())) return sendError2(res, 409, "A team with this name already exists");
     const customFieldError = customFieldInputError2("teams", req.body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const team = { id: id2("team"), name, color: typeof req.body.color === "string" ? req.body.color.slice(0, 40) : "purple", customFields: req.body.customFields || {}, sample: false };
+    const team = { id: offlineCreateId2(req, "teams", () => id2("team")), name, color: typeof req.body.color === "string" ? req.body.color.slice(0, 40) : "purple", customFields: req.body.customFields || {}, sample: false };
     store2.teams.push(team);
     auditLog2("team.created", req.user.id, { teamId: team.id });
     persist2({ reason: "team-create" });
@@ -1235,7 +1531,7 @@ function registerDirectoryRoutes(app2, services) {
     if (!["Upcoming", "At risk", "Complete"].includes(status)) return sendError2(res, 400, "Invalid milestone status");
     const customFieldError = customFieldInputError2("milestones", req.body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const milestone = { id: id2("milestone"), name, projectId: project.id, dueDate, status, customFields: req.body.customFields || {}, sample: false };
+    const milestone = { id: offlineCreateId2(req, "milestones", () => id2("milestone")), name, projectId: project.id, dueDate, status, customFields: req.body.customFields || {}, sample: false };
     store2.milestones.push(milestone);
     auditLog2("milestone.created", req.user.id, { milestoneId: milestone.id });
     persist2({ reason: "milestone-create" });
@@ -1271,7 +1567,7 @@ function registerDirectoryRoutes(app2, services) {
 
 // src/server/routes/activity-alerts.routes.js
 function registerActivityAlertRoutes(app2, services) {
-  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, requireManager: requireManager2, validText: validText2, validEmail: validEmail2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, timeLA: timeLA2, id: id2, personById: personById2, taskById: taskById2, projectById: projectById2, projectReferenceExists: projectReferenceExists2, taskReferenceExists: taskReferenceExists2, activityPublic: activityPublic2, alertPublic: alertPublic2, createActivityBlockerAlert: createActivityBlockerAlert2, can: can2, auditLog: auditLog2, persist: persist2 } = services;
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, requireManager: requireManager2, validText: validText2, validEmail: validEmail2, customFieldInputError: customFieldInputError2, todayLA: todayLA2, timeLA: timeLA2, id: id2, personById: personById2, taskById: taskById2, projectById: projectById2, projectReferenceExists: projectReferenceExists2, taskReferenceExists: taskReferenceExists2, activityPublic: activityPublic2, alertPublic: alertPublic2, createActivityBlockerAlert: createActivityBlockerAlert2, can: can2, auditLog: auditLog2, persist: persist2, offlineCreateId: offlineCreateId2 } = services;
   app2.post("/api/activity", requireUser2, requirePermission2("logActivity"), (req, res) => {
     const body = req.body;
     const personId = body.personId === void 0 ? String(req.user.personId || "") : String(body.personId || "");
@@ -1283,7 +1579,7 @@ function registerActivityAlertRoutes(app2, services) {
     const [yesterday, today, blocked, upcoming] = values;
     const customFieldError = customFieldInputError2("activities", body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const activity = { id: id2("activity"), personId, date: todayLA2(), time: timeLA2(), yesterday, today, blocked, upcoming, status: "Confirmed", customFields: body.customFields || {}, sample: false };
+    const activity = { id: offlineCreateId2(req, "activities", () => id2("activity")), personId, date: todayLA2(), time: timeLA2(), yesterday, today, blocked, upcoming, status: "Confirmed", customFields: body.customFields || {}, sample: false };
     store2.activities.push(activity);
     const blockerResult = createActivityBlockerAlert2(activity);
     if (blockerResult?.created) auditLog2("alert.activity-blocker.created", req.user.id, { alertId: blockerResult.alert.id, activityId: activity.id });
@@ -1291,9 +1587,40 @@ function registerActivityAlertRoutes(app2, services) {
     persist2({ reason: "activity" });
     res.json(activityPublic2(activity, todayLA2()));
   });
+  app2.put("/api/activity/:id", requireUser2, (req, res) => {
+    const activity = store2.activities.find((row) => String(row.id) === String(req.params.id));
+    if (!activity) return sendError2(res, 404, "Activity not found");
+    const isAdministrator = req.user.role === "Administrator" && can2(req.user, "manageSettings");
+    const isOwner = String(activity.personId || "") === String(req.user.personId || "");
+    if (!isAdministrator && (!isOwner || !can2(req.user, "logActivity"))) return sendError2(res, 403, "You may only edit activity records for your own profile");
+    const allowedFields = /* @__PURE__ */ new Set(["personId", "yesterday", "today", "blocked", "upcoming", "customFields"]);
+    if (Object.keys(req.body || {}).some((key) => !allowedFields.has(key))) return sendError2(res, 400, "Activity updates contain unsupported fields");
+    const personId = req.body.personId === void 0 ? String(activity.personId || "") : String(req.body.personId || "");
+    if (personId !== String(activity.personId || "") && !isAdministrator) return sendError2(res, 403, "Only an administrator may change the person associated with activity");
+    if (!personId || !personById2(personId)) return sendError2(res, 400, "A valid person is required for this activity update");
+    const values = ["yesterday", "today", "blocked", "upcoming"].map((key) => req.body[key] === void 0 ? String(activity[key] || "") : typeof req.body[key] === "string" ? req.body[key].trim() : null);
+    if (values.some((value) => value === null || value.length > 2e3)) return sendError2(res, 400, "Activity fields must be text of 2000 characters or fewer");
+    if (!values.some(Boolean)) return sendError2(res, 400, "Add at least one update before saving");
+    const customFields = req.body.customFields ?? activity.customFields ?? {};
+    const customFieldError = customFieldInputError2("activities", customFields);
+    if (customFieldError) return sendError2(res, 400, customFieldError);
+    const keys = ["yesterday", "today", "blocked", "upcoming"];
+    const changedFields = keys.filter((key, index) => String(activity[key] || "") !== values[index]);
+    const previousBlocked = String(activity.blocked || "");
+    Object.assign(activity, Object.fromEntries(keys.map((key, index) => [key, values[index]])), { personId, customFields });
+    if (String(activity.blocked || "") !== previousBlocked && String(activity.blocked || "").trim()) {
+      const blockerResult = createActivityBlockerAlert2(activity);
+      if (blockerResult?.created) auditLog2("alert.activity-blocker.created", req.user.id, { alertId: blockerResult.alert.id, activityId: activity.id });
+    }
+    auditLog2("activity.updated", req.user.id, { activityId: activity.id, personId, fields: changedFields });
+    persist2({ reason: "activity-update" });
+    res.json(activityPublic2(activity, todayLA2()));
+  });
   app2.delete("/api/activity/:id", requireUser2, requirePermission2("manageTasks"), (req, res) => {
     const activity = store2.activities.find((row) => String(row.id) === String(req.params.id));
     if (!activity) return sendError2(res, 404, "Activity not found");
+    const isAdministrator = req.user.role === "Administrator" && can2(req.user, "manageSettings");
+    if (!isAdministrator && String(activity.personId || "") !== String(req.user.personId || "")) return sendError2(res, 403, "You may only delete activity records for your own profile");
     store2.activities = store2.activities.filter((row) => row !== activity);
     auditLog2("activity.deleted", req.user.id, { activityId: activity.id });
     persist2({ reason: "activity-delete" });
@@ -1314,7 +1641,7 @@ function registerActivityAlertRoutes(app2, services) {
     if (typeof body.body !== "undefined" && (typeof body.body !== "string" || body.body.length > 4e3)) return sendError2(res, 400, "Alert details may not exceed 4000 characters");
     const customFieldError = customFieldInputError2("alerts", body.customFields ?? {});
     if (customFieldError) return sendError2(res, 400, customFieldError);
-    const alert = { id: id2("alert"), title, body: body.body || "", type, tone: body.tone || (type === "risk" || type === "blocker" ? "orange" : "blue"), projectId: project?.id || "", taskId: task?.id || "", resolved: false, createdAt: todayLA2(), customFields: body.customFields || {}, sample: false };
+    const alert = { id: offlineCreateId2(req, "alerts", () => id2("alert")), title, body: body.body || "", type, tone: body.tone || (type === "risk" || type === "blocker" ? "orange" : "blue"), projectId: project?.id || "", taskId: task?.id || "", resolved: false, createdAt: todayLA2(), customFields: body.customFields || {}, sample: false };
     store2.alerts.push(alert);
     auditLog2("alert.created", req.user.id, { alertId: alert.id });
     persist2({ reason: "alert-create" });
@@ -1366,12 +1693,12 @@ function registerActivityAlertRoutes(app2, services) {
 
 // src/server/routes/users.routes.js
 function registerUserRoutes(app2, services) {
-  const { store: store2, sendError: sendError2, requireUser: requireUser2, requirePermission: requirePermission2, normalizeEmail: normalizeEmail2, validEmail: validEmail2, configuredPasswordMinLength: configuredPasswordMinLength2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, hashPassword: hashPassword2, publicAccessUser: publicAccessUser2, personById: personById2, id: id2, auditLog: auditLog2, persist: persist2, invalidateUserSessions: invalidateUserSessions2, auditRead: auditRead2, validText: validText2 } = services;
-  app2.get("/api/users", requireUser2, requirePermission2("manageUsers"), (req, res) => {
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, requireAdmin: requireAdmin2, normalizeEmail: normalizeEmail2, validEmail: validEmail2, configuredPasswordMinLength: configuredPasswordMinLength2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, hashPassword: hashPassword2, publicAccessUser: publicAccessUser2, personById: personById2, id: id2, auditLog: auditLog2, persist: persist2, invalidateUserSessions: invalidateUserSessions2, auditRead: auditRead2, validText: validText2 } = services;
+  app2.get("/api/users", requireUser2, requireAdmin2, (req, res) => {
     auditRead2("users", req.user.id);
     res.json(store2.users.map(publicAccessUser2));
   });
-  app2.post("/api/users", requireUser2, requirePermission2("manageUsers"), (req, res) => {
+  app2.post("/api/users", requireUser2, requireAdmin2, (req, res) => {
     const body = req.body;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -1395,7 +1722,7 @@ function registerUserRoutes(app2, services) {
     persist2({ reason: "user-create" });
     res.json(publicAccessUser2(user));
   });
-  app2.put("/api/users/:id", requireUser2, requirePermission2("manageUsers"), (req, res) => {
+  app2.put("/api/users/:id", requireUser2, requireAdmin2, (req, res) => {
     const user = store2.users.find((item) => String(item.id) === String(req.params.id));
     if (!user) return sendError2(res, 404, "User not found");
     const body = req.body;
@@ -1425,7 +1752,7 @@ function registerUserRoutes(app2, services) {
     persist2({ reason: "user-update" });
     res.json(publicAccessUser2(user));
   });
-  app2.delete("/api/users/:id", requireUser2, requirePermission2("manageUsers"), (req, res) => {
+  app2.delete("/api/users/:id", requireUser2, requireAdmin2, (req, res) => {
     if (String(req.params.id) === String(req.user.id)) return sendError2(res, 400, "You cannot delete your own account");
     const target = store2.users.find((user) => String(user.id) === String(req.params.id));
     if (!target) return sendError2(res, 404, "User not found");
@@ -1513,6 +1840,7 @@ var EXPORT_FIELD_SCHEMAS = {
     dueDate: field2("Due date", "date"),
     type: field2("Type"),
     blocked: field2("Blocked", "boolean"),
+    tags: field2("Tags"),
     createdAt: field2("Created", "date"),
     completedAt: field2("Completed", "date")
   },
@@ -1630,15 +1958,27 @@ function rowsForDataset(dataset, context, query) {
   const peopleById = new Map(snapshot.people.map((person) => [String(person.id), person]));
   const teamsById = new Map(snapshot.teams.map((team) => [String(team.id), team]));
   const projectsById = new Map(snapshot.projects.map((project) => [String(project.id), project]));
-  const projects = () => snapshot.projects.map((project) => ({ ...workspace.projectPublic(project, today), __recordId: project.id, deadline: project.deadline || "", createdAt: project.createdAt || "" }));
-  const tasks = () => snapshot.tasks.map((task) => ({ ...workspace.taskPublic(task, today), __recordId: task.id, due: task.dueDate || "" }));
+  const indexes = { people: peopleById, teams: teamsById, projects: projectsById };
+  const tasksByProject = /* @__PURE__ */ new Map();
+  snapshot.tasks.forEach((task) => {
+    const key = String(task.projectId);
+    if (!tasksByProject.has(key)) tasksByProject.set(key, []);
+    tasksByProject.get(key).push(task);
+  });
+  const projects = () => snapshot.projects.map((project) => ({
+    ...workspace.projectPublic(project, today, tasksByProject.get(String(project.id)) || [], indexes),
+    __recordId: project.id,
+    deadline: project.deadline || "",
+    createdAt: project.createdAt || ""
+  }));
+  const tasks = () => snapshot.tasks.map((task) => ({ ...workspace.taskPublic(task, today, indexes), __recordId: task.id, due: task.dueDate || "" }));
   if (dataset === "projects") return projects();
   if (dataset === "tasks") {
     const projectId = query.projectId == null ? "" : String(query.projectId);
     return tasks().filter((task) => !projectId || String(task.projectId) === projectId);
   }
   if (dataset === "people") return snapshot.people.map((person) => ({ ...workspace.personPublic(person), __recordId: person.id }));
-  if (dataset === "activity") return snapshot.activities.map((activity) => ({ ...workspace.activityPublic(activity, today), __recordId: activity.id }));
+  if (dataset === "activity") return snapshot.activities.filter((activity) => !query.personId || query.personId === "all" || String(activity.personId || "") === String(query.personId)).map((activity) => ({ ...workspace.activityPublic(activity, today), __recordId: activity.id }));
   if (dataset === "alerts") return snapshot.alerts.map((alert) => ({ ...workspace.alertPublic(alert), __recordId: alert.id, time: alert.createdAt || "" }));
   if (dataset === "milestones") return snapshot.milestones.map((milestone) => {
     const project = projectsById.get(String(milestone.projectId)) || {};
@@ -1682,7 +2022,6 @@ function prepareDatabaseExport({ context, dataset, recordIds, fields, query = {}
     rows = rows.filter((row) => selected.has(String(sourceId(dataset, row))));
   }
   if (Array.isArray(recordIds) && rows.length !== new Set(recordIds.map(String)).size) throw new Error("One or more selected database records are no longer available");
-  if (rows.length > 25e3) throw new Error("An export is limited to 25,000 database records at a time");
   const columns = requested.map((key) => ({ key, ...schema[key] }));
   const data = rows.map((row) => Object.fromEntries(requested.map((key) => [key, objectValue(row, key) ?? null])));
   return {
@@ -1705,7 +2044,7 @@ function registerExportRoutes(app2, services) {
   app2.post("/api/exports/prepare", requireUser2, requirePermission2("exportData"), (req, res) => {
     const { dataset, recordIds, fields, query: inputQuery } = req.body || {};
     if (typeof dataset !== "string" || dataset.length > 80) return sendError2(res, 400, "A supported export dataset is required");
-    if (recordIds !== void 0 && (!Array.isArray(recordIds) || recordIds.length > 25e3 || recordIds.some((id2) => !["string", "number"].includes(typeof id2) || String(id2).length > 200))) return sendError2(res, 400, "Selected record IDs are invalid");
+    if (recordIds !== void 0 && (!Array.isArray(recordIds) || recordIds.some((id2) => !["string", "number"].includes(typeof id2) || String(id2).length > 200))) return sendError2(res, 400, "Selected record IDs are invalid");
     if (fields !== void 0 && (!Array.isArray(fields) || fields.length > 250 || fields.some((key) => typeof key !== "string" || key.length > 120 || !/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)))) return sendError2(res, 400, "Selected export fields are invalid");
     if (inputQuery !== void 0 && !isPlainObject2(inputQuery)) return sendError2(res, 400, "Export query must be an object");
     const query = inputQuery || {};
@@ -1716,6 +2055,10 @@ function registerExportRoutes(app2, services) {
     if (query.projectId !== void 0 && !["string", "number"].includes(typeof query.projectId)) return sendError2(res, 400, "Invalid project scope");
     try {
       const context = createDatabaseExportContext2();
+      const isAdministrator = req.user.role === "Administrator";
+      const ownPersonId = String(req.user.personId || `unlinked:${req.user.id}`);
+      const isPersonActivityDataset = dataset === "activity" || dataset === "activity-evidence" || dataset === "activity-summary";
+      const personId = isAdministrator ? query.personId || "all" : isPersonActivityDataset ? ownPersonId : "all";
       const result = prepareDatabaseExport({
         context,
         dataset,
@@ -1723,13 +2066,13 @@ function registerExportRoutes(app2, services) {
         fields,
         query: {
           period: String(query.period || "weekly").toLowerCase(),
-          personId: query.personId || "all",
+          personId,
           projectId: query.projectId
         }
       });
       res.json(result);
     } catch (error) {
-      const status = /unsupported export dataset|fields are unavailable|export field is required|selected database records|limited to 25,000/i.test(error.message) ? 400 : 500;
+      const status = /unsupported export dataset|fields are unavailable|export field is required|selected database records/i.test(error.message) ? 400 : 500;
       sendError2(res, status, status === 500 ? "Database export preparation failed" : error.message);
     }
   });
@@ -1862,7 +2205,8 @@ function createSettingsService({
       integrations: { registry: [], webhooks: [], apiAccess: false },
       storage: { model: DATABASE_MODEL2, schemaVersion: STORE_SCHEMA_VERSION2, backupRetention: DEFAULT_BACKUP_RETENTION2, importExportEnabled: true },
       security: { passwordMinLength: MIN_PASSWORD_LENGTH2, sessionDays: 14, cookieSecure: cookieSecure2, allowDemoData: allowDemoData2, requireApprovalForRoleChanges: false },
-      audit: { enabled: true, retentionDays: 365, trackReads: false, trackWrites: true, trackExports: true }
+      audit: { enabled: true, retentionDays: 365, trackReads: false, trackWrites: true, trackExports: true },
+      workLedger: { retentionMonths: 24 }
     };
     return withLegacySettings2(settings);
   }
@@ -1931,6 +2275,7 @@ function createSettingsService({
     next.security.cookieSecure = next.security.cookieSecure === true || cookieSecure2;
     next.storage.backupRetention = boundedInteger2(next.storage.backupRetention, DEFAULT_BACKUP_RETENTION2, 3, 100);
     next.audit.retentionDays = boundedInteger2(next.audit.retentionDays, 365, 1, 3650);
+    next.workLedger.retentionMonths = boundedInteger2(next.workLedger.retentionMonths, 24, 0, 120);
     next.interface.tableBehavior.pageSize = boundedInteger2(next.interface.tableBehavior.pageSize, 50, 1, 500);
     const activeLanguages = Array.isArray(next.localization.activeLanguages) ? next.localization.activeLanguages.filter((code) => typeof code === "string" && /^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(code)) : ["en"];
     next.localization.activeLanguages = [...new Set(activeLanguages.length ? activeLanguages : ["en"])];
@@ -1982,6 +2327,8 @@ function createSettingsService({
     if (backupRetention !== void 0 && (!Number.isInteger(Number(backupRetention)) || Number(backupRetention) < 3 || Number(backupRetention) > 100)) return "Backup retention must be between 3 and 100 files";
     const auditRetention = value.audit?.retentionDays;
     if (auditRetention !== void 0 && (!Number.isInteger(Number(auditRetention)) || Number(auditRetention) < 1 || Number(auditRetention) > 3650)) return "Audit retention must be between 1 and 3650 days";
+    const workLedgerRetention = value.workLedger?.retentionMonths;
+    if (workLedgerRetention !== void 0 && (!Number.isInteger(Number(workLedgerRetention)) || Number(workLedgerRetention) < 0 || Number(workLedgerRetention) > 120)) return "Work-ledger retention must be 0 (keep indefinitely) or 1 to 120 months";
     const states = value.workflows?.task?.states;
     if (states !== void 0) {
       if (!Array.isArray(states) || states.length < 1 || states.length > 50) return "Task workflow must contain between 1 and 50 states";
@@ -2118,20 +2465,19 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
     if (diff < 0) return `${Math.abs(diff)}d late`;
     return fmt(task.dueDate);
   }
-  function projectProgress2(project) {
-    const tasks = store2.tasks.filter((t) => String(t.projectId) === String(project.id));
-    if (!tasks.length) return 0;
-    return Math.round(tasks.filter(isDone2).length / tasks.length * 100);
+  function projectProgress2(project, projectTasks = store2.tasks.filter((task) => String(task.projectId) === String(project.id))) {
+    if (!projectTasks.length) return 0;
+    return Math.round(projectTasks.filter(isDone2).length / projectTasks.length * 100);
   }
-  function projectHealth2(project, today) {
+  function projectHealth2(project, today, projectTasks = store2.tasks.filter((task) => String(task.projectId) === String(project.id))) {
     if (project.status === "Completed") return "Completed";
     if (project.status === "At risk") return "At risk";
-    const overdue = store2.tasks.some((t) => String(t.projectId) === String(project.id) && !isDone2(t) && t.dueDate && t.dueDate < today);
+    const overdue = projectTasks.some((task) => !isDone2(task) && task.dueDate && task.dueDate < today);
     return overdue ? "At risk" : "On track";
   }
-  function taskPublic2(task, today) {
-    const project = projectById2(task.projectId) || {};
-    const person = personById2(task.assigneeId) || {};
+  function taskPublic2(task, today, indexes = {}) {
+    const project = indexes.projects?.get(String(task.projectId)) || projectById2(task.projectId) || {};
+    const person = indexes.people?.get(String(task.assigneeId)) || personById2(task.assigneeId) || {};
     return {
       numericId: task.id,
       id: `${project.code || "TASK"}-${String(task.id).padStart(3, "0")}`,
@@ -2148,18 +2494,19 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
       status: task.status || "To do",
       type: task.type || "Development",
       blocked: Boolean(task.blocked),
+      tags: Array.isArray(task.tags) ? task.tags : [],
       createdAt: task.createdAt,
       completedAt: task.completedAt || "",
       customFields: task.customFields || {}
     };
   }
-  function projectPublic2(project, today) {
-    const team = teamById2(project.teamId) || {};
-    const owner = personById2(project.ownerId) || {};
-    const taskRows = store2.tasks.filter((t) => String(t.projectId) === String(project.id));
-    const memberIds = [...new Set(taskRows.map((t) => t.assigneeId).concat(project.ownerId).filter(Boolean))];
-    const members = memberIds.map((id2) => personById2(id2)).filter(Boolean);
-    const milestoneRows = store2.milestones.filter((m) => String(m.projectId) === String(project.id)).map((m) => ({ ...m, projectId: project.id }));
+  function projectPublic2(project, today, taskRows = void 0, indexes = {}) {
+    const projectTasks = taskRows || store2.tasks.filter((task) => String(task.projectId) === String(project.id));
+    const team = indexes.teams?.get(String(project.teamId)) || teamById2(project.teamId) || {};
+    const owner = indexes.people?.get(String(project.ownerId)) || personById2(project.ownerId) || {};
+    const memberIds = [...new Set(projectTasks.map((task) => task.assigneeId).concat(project.ownerId).filter(Boolean))];
+    const members = memberIds.map((id2) => indexes.people?.get(String(id2)) || personById2(id2)).filter(Boolean);
+    const milestoneRows = store2.milestones.filter((milestone) => String(milestone.projectId) === String(project.id)).map((milestone) => ({ ...milestone, projectId: project.id }));
     const diff = project.deadline ? daysBetween2(today, project.deadline) : null;
     return {
       id: `project-${project.id}`,
@@ -2167,14 +2514,15 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
       name: project.name,
       code: project.code,
       description: project.description,
+      createdAt: project.createdAt || "",
       teamId: project.teamId,
       team: team.name || "Workspace",
       ownerId: project.ownerId,
       owner: owner.name || "Unassigned",
       color: project.color || team.color || "purple",
       status: project.status,
-      health: projectHealth2(project, today),
-      progress: projectProgress2(project),
+      health: projectHealth2(project, today, projectTasks),
+      progress: projectProgress2(project, projectTasks),
       deadlineDate: project.deadline,
       deadline: fmt(project.deadline),
       days: diff == null ? "No date" : diff < 0 ? `${Math.abs(diff)} days late` : `${diff} days`,
@@ -2296,53 +2644,185 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
       activities: store2.activities.filter((a) => buckets.some((b) => b.key === bucketFor2(period, a.date, today))).length
     };
   }
-  function dashboard2(today, tasksPublic, projectsPublic, alertsPublic) {
-    const openTasks = tasksPublic.filter((t) => !isDone2(t)).length;
-    const activeProjects = projectsPublic.filter((p) => p.health !== "Completed").length;
-    const atRisk = projectsPublic.filter((p) => p.health === "At risk").length;
+  function dashboard2(today, tasksPublic, projectsPublic, alertsPublic, user) {
+    const openTasks = tasksPublic.filter((task) => !isDone2(task)).length;
+    const activeProjects = projectsPublic.filter((project) => project.health !== "Completed").length;
+    const atRisk = projectsPublic.filter((project) => project.health === "At risk").length;
     const onTrack = activeProjects ? Math.round((activeProjects - atRisk) / activeProjects * 100) : 100;
-    const todayActivities = store2.activities.filter((a) => a.date === today);
-    const yesterdayActivities = store2.activities.filter((a) => a.date === addDays2(today, -1));
+    const isAdministrator = user?.role === "Administrator";
+    const personId = String(user?.personId || "");
+    const visibleActivities = isAdministrator ? store2.activities : personId ? store2.activities.filter((activity) => String(activity.personId || "") === personId) : [];
+    const todayActivities = visibleActivities.filter((activity) => activity.date === today);
+    const yesterdayActivities = visibleActivities.filter((activity) => activity.date === addDays2(today, -1));
+    const visibleTasks = personId ? tasksPublic.filter((task) => String(task.assigneeId || "") === personId) : [];
     const pulseItem = (activity, key, icon = "bolt") => {
       const person = personById2(activity.personId) || {};
       return { title: person.name || "Unknown", detail: activity[key] || "No update", time: activity.time || "", icon };
     };
+    const weekStart = addDays2(today, -6);
+    const teamActivity = store2.activities.filter((activity) => activity.date >= weekStart && activity.date <= today);
+    const teamAggregate = {
+      updatesToday: store2.activities.filter((activity) => activity.date === today).length,
+      updatesYesterday: store2.activities.filter((activity) => activity.date === addDays2(today, -1)).length,
+      updatesThisWeek: teamActivity.length,
+      blockersToday: store2.activities.filter((activity) => activity.date === today && Boolean(activity.blocked)).length,
+      blockedTasks: store2.tasks.filter((task) => task.blocked && !isDone2(task)).length
+    };
+    const blockedTasks = isAdministrator ? tasksPublic.filter((task) => task.blocked && !isDone2(task)) : visibleTasks.filter((task) => task.blocked && !isDone2(task));
     return {
-      stats: { activeProjects, openTasks, needsAttention: alertsPublic.filter((a) => !a.resolved).length, onTrack, completedTasks: tasksPublic.filter((t) => isDone2(t)).length },
-      dailyPulse: {
-        yesterday: yesterdayActivities.slice(0, 4).map((a) => pulseItem(a, "yesterday", "check")),
-        today: todayActivities.slice(0, 4).map((a) => pulseItem(a, "today", "bolt")),
-        blocked: todayActivities.filter((a) => a.blocked).map((a) => pulseItem(a, "blocked", "warning")).concat(tasksPublic.filter((t) => t.blocked && !isDone2(t)).slice(0, 3).map((t) => ({ title: t.title, detail: `${t.project} \xB7 ${t.assignee}`, time: t.due, icon: "warning" }))),
-        upcoming: store2.milestones.slice(0, 4).map((m) => ({ title: m.name, detail: projectById2(m.projectId)?.name || "Project", time: fmt(m.dueDate), icon: "calendar" }))
+      stats: {
+        activeProjects,
+        openTasks,
+        needsAttention: store2.alerts.filter((alert) => !alert.resolved).length,
+        onTrack,
+        completedTasks: tasksPublic.filter((task) => isDone2(task)).length
       },
-      myTasks: tasksPublic.filter((t) => !isDone2(t)).slice(0, 6)
+      dailyPulse: {
+        yesterday: yesterdayActivities.slice(0, 4).map((activity) => pulseItem(activity, "yesterday", "check")),
+        today: todayActivities.slice(0, 4).map((activity) => pulseItem(activity, "today", "bolt")),
+        blocked: todayActivities.filter((activity) => activity.blocked).map((activity) => pulseItem(activity, "blocked", "warning")).concat(blockedTasks.slice(0, 3).map((task) => ({ title: task.title, detail: isAdministrator ? `${task.project} \xB7 ${task.assignee}` : task.project, time: task.due, icon: "warning" }))),
+        upcoming: store2.milestones.slice(0, 4).map((milestone) => ({ title: milestone.name, detail: projectById2(milestone.projectId)?.name || "Project", time: fmt(milestone.dueDate), icon: "calendar" })),
+        teamAggregate
+      },
+      myTasks: visibleTasks.filter((task) => !isDone2(task)).slice(0, 6)
     };
   }
   function settingsForUser2(user) {
-    if (can2(user, "manageSettings")) return store2.settings;
-    const redact = (value) => {
-      if (Array.isArray(value)) return value.map(redact);
-      if (!isPlainObject2(value)) return value;
-      const safe = {};
-      for (const [key, item] of Object.entries(value)) {
-        const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (["password", "passwordhash"].includes(normalizedKey) || /(?:secret|token|apikey|privatekey|credentials?|authorization)$/.test(normalizedKey)) continue;
-        Object.defineProperty(safe, key, { value: redact(item), enumerable: true, configurable: true, writable: true });
-      }
-      return safe;
+    if (user?.role === "Administrator") return store2.settings;
+    const source = store2.settings || {};
+    const workspace = source.workspace || {};
+    const ui = source.interface || {};
+    const localization = source.localization || {};
+    const customFields = Object.fromEntries(Object.entries(source.customFields || {}).map(([entity, definitions]) => [
+      entity,
+      Array.isArray(definitions) ? definitions.filter(isPlainObject2).map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        type: definition.type,
+        required: definition.required,
+        visible: definition.visible,
+        options: definition.options
+      })) : []
+    ]));
+    const roles = Object.fromEntries(Object.entries(source.permissions?.roles || {}).map(([name, definition]) => [name, {
+      name,
+      summary: definition?.summary || definition?.description || name,
+      description: definition?.description || definition?.summary || name
+    }]));
+    const modules = Object.fromEntries(Object.entries(source.modules || {}).map(([name, module]) => [name, {
+      enabled: module?.enabled !== false,
+      labelKey: module?.labelKey || `nav.${name}`,
+      icon: module?.icon || name
+    }]));
+    return {
+      workspace: {
+        name: workspace.name,
+        unit: workspace.unit,
+        applicationName: workspace.applicationName,
+        defaultTimezone: workspace.defaultTimezone,
+        regionalFormats: workspace.regionalFormats,
+        branding: { primaryColor: workspace.branding?.primaryColor, accentColor: workspace.branding?.accentColor, reportLogo: workspace.branding?.reportLogo }
+      },
+      workspaceName: source.workspaceName || workspace.name || "Atlas Workspace",
+      workspaceUnit: source.workspaceUnit || workspace.unit || "Operations",
+      interface: {
+        theme: ui.theme,
+        colors: ui.colors,
+        density: ui.density,
+        spacing: ui.spacing,
+        typography: ui.typography,
+        sidebarBehavior: ui.sidebarBehavior,
+        navigationVisibility: ui.navigationVisibility,
+        navigationOrder: ui.navigationOrder,
+        dashboardLayouts: ui.dashboardLayouts,
+        defaultLandingPage: ui.defaultLandingPage,
+        tableBehavior: ui.tableBehavior,
+        tableColumns: ui.tableColumns,
+        formLayouts: ui.formLayouts,
+        actionVisibility: ui.actionVisibility,
+        cardLayouts: ui.cardLayouts,
+        animations: ui.animations,
+        accessibility: ui.accessibility
+      },
+      localization: {
+        activeLanguages: localization.activeLanguages,
+        defaultLanguage: localization.defaultLanguage,
+        fallbackLanguage: localization.fallbackLanguage,
+        userLanguagePreference: localization.userLanguagePreference,
+        textDirectionByLanguage: localization.textDirectionByLanguage,
+        dateFormats: localization.dateFormats,
+        numberFormats: localization.numberFormats,
+        currencyFormats: localization.currencyFormats,
+        translations: localization.translations,
+        languagePackages: localization.languagePackages
+      },
+      language: source.language || localization.defaultLanguage || "en",
+      density: source.density || ui.density || "comfortable",
+      dateFormat: source.dateFormat || workspace.regionalFormats?.date || "MMM d, yyyy",
+      defaultTaskView: source.defaultTaskView || ui.cardLayouts?.tasks || "board",
+      pageSize: source.pageSize || ui.tableBehavior?.pageSize || 50,
+      printTemplate: source.printTemplate || source.reports?.defaultTemplate || "executive",
+      theme: source.theme || ui.theme || "light",
+      accentColor: source.accentColor || ui.colors?.accent || "purple",
+      sidebarMode: source.sidebarMode || ui.sidebarBehavior || "expanded",
+      defaultPage: source.defaultPage || ui.defaultLandingPage || "overview",
+      showAnimations: source.showAnimations !== false && ui.animations !== false,
+      enabledPages: source.enabledPages || [],
+      workflows: { task: { states: source.workflows?.task?.states || [] } },
+      permissions: { roles },
+      modules,
+      customFields,
+      exports: {
+        formats: source.exports?.formats || ["csv", "xlsx", "json", "pdf", "print"],
+        includeBranding: source.exports?.includeBranding !== false,
+        pdf: { orientation: source.exports?.pdf?.orientation || "landscape", margins: source.exports?.pdf?.margins || "standard" }
+      },
+      reports: { defaultTemplate: source.reports?.defaultTemplate || "executive" }
     };
-    return redact(store2.settings);
   }
   function bootstrapFor2(user) {
     const today = todayLA2();
-    const teams = store2.teams.map((team) => ({ ...team, peopleCount: store2.people.filter((p) => p.teamId === team.id).length }));
+    const isAdministrator = user?.role === "Administrator";
+    const peopleById = new Map(store2.people.map((person) => [String(person.id), person]));
+    const projectsById = new Map(store2.projects.map((project) => [String(project.id), project]));
+    const teamsById = new Map(store2.teams.map((team) => [String(team.id), team]));
+    const tasksByProject = /* @__PURE__ */ new Map();
+    for (const task of store2.tasks) {
+      const key = String(task.projectId);
+      if (!tasksByProject.has(key)) tasksByProject.set(key, []);
+      tasksByProject.get(key).push(task);
+    }
+    const teams = store2.teams.map((team) => ({ ...team, peopleCount: store2.people.filter((person) => person.teamId === team.id).length }));
     const people = store2.people.map(personPublic2);
-    const projects = store2.projects.map((project) => projectPublic2(project, today));
-    const tasks = store2.tasks.map((task) => taskPublic2(task, today)).sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
-    const activity = store2.activities.map((a) => activityPublic2(a, today)).sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
-    const alerts = store2.alerts.map(alertPublic2).sort((a, b) => Number(a.resolved) - Number(b.resolved) || String(b.createdAt).localeCompare(String(a.createdAt)));
-    const users = can2(user, "manageUsers") ? store2.users.map(publicAccessUser2) : [];
-    return { today, user: publicUser2(user), settings: settingsForUser2(user), teams, people, users, projects, tasks, activity, alerts, dashboard: dashboard2(today, tasks, projects, alerts), reports: reportFor2("weekly") };
+    const indexes = { people: peopleById, projects: projectsById, teams: teamsById };
+    const projects = store2.projects.map((project) => projectPublic2(project, today, tasksByProject.get(String(project.id)) || [], indexes));
+    const tasks = store2.tasks.map((task) => taskPublic2(task, today, indexes)).sort((left, right) => String(left.dueDate || "").localeCompare(String(right.dueDate || "")));
+    const visibleActivities = isAdministrator ? store2.activities : user?.personId ? store2.activities.filter((activity2) => String(activity2.personId || "") === String(user.personId)) : [];
+    const activity = visibleActivities.map((row) => activityPublic2(row, today)).sort((left, right) => `${right.date} ${right.time}`.localeCompare(`${left.date} ${left.time}`));
+    const visibleAlerts = isAdministrator ? store2.alerts : store2.alerts.filter((alert) => alert.source !== "activity-blocker" || String(alert.personId || "") === String(user?.personId || ""));
+    const alerts = visibleAlerts.map(alertPublic2).sort((left, right) => Number(left.resolved) - Number(right.resolved) || String(right.createdAt).localeCompare(String(left.createdAt)));
+    const users = isAdministrator && can2(user, "manageUsers") ? store2.users.map(publicAccessUser2) : [];
+    const teamActivitySummary = {
+      today: store2.activities.filter((activityRow) => activityRow.date === today).length,
+      yesterday: store2.activities.filter((activityRow) => activityRow.date === addDays2(today, -1)).length,
+      thisWeek: store2.activities.filter((activityRow) => activityRow.date >= addDays2(today, -6) && activityRow.date <= today).length,
+      blockersToday: store2.activities.filter((activityRow) => activityRow.date === today && Boolean(activityRow.blocked)).length
+    };
+    return {
+      today,
+      user: publicUser2(user),
+      settings: settingsForUser2(user),
+      teams,
+      people,
+      users,
+      projects,
+      tasks,
+      activity,
+      alerts,
+      teamActivitySummary,
+      dashboard: dashboard2(today, tasks, projects, alerts, user),
+      reports: reportFor2("weekly")
+    };
   }
   function workLogPublic2(log, period = "daily") {
     const person = personById2(log.personId) || {};
@@ -2488,12 +2968,12 @@ function createWorkspaceServices({ getStore, todayLA: todayLA2, addDays: addDays
     };
   }
   function nextProjectId2() {
-    const value = store2.counters.project || Math.max(0, ...store2.projects.map((p) => Number(p.id))) + 1;
+    const value = store2.counters.project || store2.projects.reduce((maximum, project) => Math.max(maximum, Number(project.id) || 0), 0) + 1;
     store2.counters.project = value + 1;
     return value;
   }
   function nextTaskId2() {
-    const value = store2.counters.task || Math.max(0, ...store2.tasks.map((t) => Number(t.id))) + 1;
+    const value = store2.counters.task || store2.tasks.reduce((maximum, task) => Math.max(maximum, Number(task.id) || 0), 0) + 1;
     store2.counters.task = value + 1;
     return value;
   }
@@ -2659,6 +3139,29 @@ function createStoreService({
     });
     return logs;
   }
+  function workLedgerCutoffDate(retentionMonths, now = /* @__PURE__ */ new Date()) {
+    const date = new Date(now);
+    const day = date.getUTCDate();
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() - retentionMonths);
+    const daysInMonth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+    date.setUTCDate(Math.min(day, daysInMonth));
+    return date.toISOString().slice(0, 10);
+  }
+  function pruneWorkLedger2(target = store2, now = /* @__PURE__ */ new Date()) {
+    const months = Number(target?.settings?.workLedger?.retentionMonths);
+    if (!Number.isInteger(months) || months <= 0 || !Array.isArray(target?.workLogs)) return 0;
+    const cutoff = workLedgerCutoffDate(months, now);
+    const before = target.workLogs.length;
+    target.workLogs = target.workLogs.filter((log) => {
+      const value = log?.date;
+      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return true;
+      const date = /* @__PURE__ */ new Date(`${value}T00:00:00.000Z`);
+      if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return true;
+      return value >= cutoff;
+    });
+    return before - target.workLogs.length;
+  }
   function logWorkEvent2({ personId = "", actorUserId = "", taskId = "", projectId = "", action, statusFrom = "", statusTo = "", summary = "", minutes = 0 }) {
     store2.workLogs = store2.workLogs || [];
     const now = /* @__PURE__ */ new Date();
@@ -2683,6 +3186,7 @@ function createStoreService({
       sample: false
     };
     store2.workLogs.push(log);
+    pruneWorkLedger2(store2, now);
     return log;
   }
   function createActivityBlockerAlert2(activity) {
@@ -2822,7 +3326,9 @@ function createStoreService({
   }
   function normalizeStore2(next = {}) {
     if (!isPlainObject2(next)) next = productionStore2();
+    const legacyRetentionWasExplicit = isPlainObject2(next.settings?.workLedger) && Object.hasOwn(next.settings.workLedger, "retentionMonths");
     next.settings = normalizeSettings2(next.settings || {});
+    if (!legacyRetentionWasExplicit) next.settings.workLedger.retentionMonths = 0;
     const existingMeta = isPlainObject2(next.meta) ? next.meta : {};
     next.meta = newStoreMeta2({
       ...existingMeta,
@@ -2835,8 +3341,8 @@ function createStoreService({
     if (existingMeta.schemaVersion !== STORE_SCHEMA_VERSION2) {
       next.workLogs = next.workLogs.filter((log) => !isPlainObject2(log) || !/^wl_(?:seed|activity)_/.test(String(log.id || "")));
     }
-    const maxProjectId = Math.max(0, ...next.projects.map((p) => Number(p.id) || 0));
-    const maxTaskId = Math.max(0, ...next.tasks.map((t) => Number(t.id) || 0));
+    const maxProjectId = next.projects.reduce((maximum, project) => Math.max(maximum, Number(project.id) || 0), 0);
+    const maxTaskId = next.tasks.reduce((maximum, task) => Math.max(maximum, Number(task.id) || 0), 0);
     next.counters = {
       project: Math.max(Number(next.counters?.project || 1), maxProjectId + 1),
       task: Math.max(Number(next.counters?.task || 1), maxTaskId + 1)
@@ -2846,6 +3352,7 @@ function createStoreService({
       const sampleActivities = next.activities.filter((activity) => activity.sample === true);
       if (sampleTasks.length || sampleActivities.length) next.workLogs = buildSeedWorkLogs2(sampleTasks, sampleActivities);
     }
+    pruneWorkLedger2(next);
     next.users.forEach((user) => {
       user.role = user.role || "Viewer";
       user.active = user.active !== false;
@@ -2934,7 +3441,7 @@ function createStoreService({
   function storeChecksum2(candidate = store2) {
     return crypto3.createHash("sha256").update(JSON.stringify(candidate)).digest("hex");
   }
-  return { newStoreMeta: newStoreMeta2, buildSeedWorkLogs: buildSeedWorkLogs2, logWorkEvent: logWorkEvent2, createActivityBlockerAlert: createActivityBlockerAlert2, demoStore: demoStore2, ensureCollection: ensureCollection2, normalizeStore: normalizeStore2, productionStore: productionStore2, validateStoreState: validateStoreState2, storeChecksum: storeChecksum2 };
+  return { newStoreMeta: newStoreMeta2, buildSeedWorkLogs: buildSeedWorkLogs2, logWorkEvent: logWorkEvent2, pruneWorkLedger: pruneWorkLedger2, createActivityBlockerAlert: createActivityBlockerAlert2, demoStore: demoStore2, ensureCollection: ensureCollection2, normalizeStore: normalizeStore2, productionStore: productionStore2, validateStoreState: validateStoreState2, storeChecksum: storeChecksum2 };
 }
 
 // src/server/domain/time.js
@@ -3077,7 +3584,7 @@ function createAuthMiddleware({ getStore, sessions: sessions2, can: can2, invali
     next();
   }
   function requireAdmin2(req, res, next) {
-    if (!can2(req.user, "manageSettings")) return sendError2(res, 403, "Administrator access required");
+    if (req.user?.role !== "Administrator" || !can2(req.user, "manageSettings")) return sendError2(res, 403, "Administrator access required");
     next();
   }
   return { requireUser: requireUser2, requirePermission: requirePermission2, requireManager: requireManager2, requireAdmin: requireAdmin2 };
@@ -3102,6 +3609,498 @@ function createWorkflowService({ getStore, defaultTaskStates }) {
 }
 
 // app.tsx
+import { AsyncLocalStorage } from "node:async_hooks";
+
+// src/server/domain/offline-sync.js
+import crypto5 from "node:crypto";
+var ENTITY_FIELDS = Object.freeze({
+  tasks: ["title", "projectId", "assigneeId", "priority", "dueDate", "status", "type", "blocked", "tags", "createdAt", "completedAt", "customFields"],
+  projects: ["name", "code", "description", "teamId", "ownerId", "color", "status", "deadline", "createdAt", "customFields"],
+  people: ["name", "email", "jobTitle", "teamId", "focus", "capacity", "status", "color", "customFields"],
+  teams: ["name", "color", "customFields"],
+  milestones: ["name", "projectId", "dueDate", "status", "customFields"],
+  alerts: ["title", "body", "type", "tone", "projectId", "taskId", "personId", "activityId", "source", "resolved", "createdAt", "lastSeenAt", "customFields"],
+  activities: ["personId", "date", "time", "yesterday", "today", "blocked", "upcoming", "status", "customFields"],
+  preferences: ["filters"],
+  settings: []
+});
+var CREATE_PATHS = /* @__PURE__ */ new Map([
+  ["/api/tasks", "tasks"],
+  ["/api/projects", "projects"],
+  ["/api/people", "people"],
+  ["/api/teams", "teams"],
+  ["/api/milestones", "milestones"],
+  ["/api/activity", "activities"],
+  ["/api/alerts", "alerts"]
+]);
+var ITEM_PATHS = /* @__PURE__ */ new Map([
+  ["tasks", "tasks"],
+  ["projects", "projects"],
+  ["people", "people"],
+  ["teams", "teams"],
+  ["milestones", "milestones"],
+  ["activity", "activities"],
+  ["alerts", "alerts"]
+]);
+var MISSING = /* @__PURE__ */ Symbol("offline-sync-missing");
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (isObject(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+function equal(left, right) {
+  if (left === MISSING || right === MISSING) return left === right;
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+var REFERENCE_FIELDS = /* @__PURE__ */ new Set(["projectId", "assigneeId", "teamId", "ownerId", "taskId", "personId", "activityId"]);
+function fieldEqual(collection, key, left, right) {
+  if (left === MISSING || right === MISSING) return left === right;
+  if (REFERENCE_FIELDS.has(key) && left !== null && right !== null && left !== "" && right !== "") return String(left) === String(right);
+  if (collection === "people" && key === "capacity" && left !== "" && right !== "") return Number(left) === Number(right);
+  return equal(left, right);
+}
+function clone(value) {
+  return value === MISSING ? MISSING : structuredClone(value);
+}
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+function getAtPath(value, path4) {
+  let current = value;
+  for (const key of path4) {
+    if (!isObject(current) || !hasOwn(current, key)) return MISSING;
+    current = current[key];
+  }
+  return current;
+}
+function setAtPath(target, path4, value) {
+  let current = target;
+  for (let index = 0; index < path4.length - 1; index++) {
+    const key = path4[index];
+    if (!isObject(current[key])) current[key] = {};
+    current = current[key];
+  }
+  const last = path4[path4.length - 1];
+  if (value === MISSING) delete current[last];
+  else current[last] = clone(value);
+}
+function serializableValue(value) {
+  return value === MISSING ? void 0 : clone(value);
+}
+function changedLeaves(base, local, path4 = []) {
+  if (isObject(base) && isObject(local)) {
+    const keys = /* @__PURE__ */ new Set([...Object.keys(base), ...Object.keys(local)]);
+    return [...keys].flatMap((key) => changedLeaves(hasOwn(base, key) ? base[key] : MISSING, hasOwn(local, key) ? local[key] : MISSING, [...path4, key]));
+  }
+  return equal(base, local) ? [] : [{ path: path4, base, local }];
+}
+function entityFields(collection) {
+  return ENTITY_FIELDS[collection] || [];
+}
+function classifySyncRequest(method, pathname) {
+  const verb = String(method || "GET").toUpperCase();
+  const cleanPath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+  if (verb === "POST") {
+    const conflictResolution = cleanPath.match(/^\/api\/offline-sync\/conflicts\/([^/]+)\/resolve$/);
+    if (conflictResolution) return { collection: "syncConflicts", action: "resolve", id: decodeURIComponent(conflictResolution[1]) };
+  }
+  if (verb === "PUT" && cleanPath === "/api/settings") return { collection: "settings", action: "update", id: "workspace" };
+  if (verb === "PUT" && cleanPath === "/api/preferences") return { collection: "preferences", action: "update", id: "current-user" };
+  if (verb === "POST" && CREATE_PATHS.has(cleanPath)) return { collection: CREATE_PATHS.get(cleanPath), action: "create", id: "" };
+  if (verb === "PUT" || verb === "PATCH" || verb === "DELETE") {
+    const match = cleanPath.match(/^\/api\/(tasks|projects|people|teams|milestones|activity|alerts)\/([^/]+)(?:\/(status))?$/);
+    if (!match) return null;
+    const collection = ITEM_PATHS.get(match[1]);
+    const isTaskStatus = match[1] === "tasks" && match[3] === "status";
+    if (match[3] && !isTaskStatus) return null;
+    if (isTaskStatus && verb !== "PATCH") return null;
+    if (verb === "PATCH" && !(isTaskStatus || match[1] === "alerts")) return null;
+    if (verb === "PUT" && match[1] === "alerts") return null;
+    return { collection, action: verb === "DELETE" ? "delete" : "update", id: decodeURIComponent(match[2]), statusOnly: isTaskStatus };
+  }
+  return null;
+}
+function canonicalSyncRecord(collection, record) {
+  if (!record) return null;
+  if (collection === "settings") return clone(record);
+  const result = {};
+  for (const key of entityFields(collection)) {
+    if (hasOwn(record, key)) result[key] = clone(record[key]);
+  }
+  if (collection === "tasks") {
+    result.createdAt = result.createdAt || "";
+    result.completedAt = result.completedAt || "";
+  }
+  if (collection === "projects") {
+    if (!hasOwn(result, "deadline") && hasOwn(record, "deadlineDate")) result.deadline = record.deadlineDate;
+    result.deadline = result.deadline || "";
+    result.createdAt = result.createdAt || "";
+  }
+  if (collection === "alerts") {
+    for (const key of ["personId", "activityId", "source", "lastSeenAt"]) result[key] = result[key] || "";
+  }
+  if (Object.hasOwn(result, "customFields")) result.customFields = result.customFields || {};
+  return result;
+}
+function compareOfflineRecords(collection, baseRecord, currentRecord) {
+  if (!isObject(baseRecord) || !isObject(currentRecord)) return [{ path: "*", base: baseRecord ?? null, server: currentRecord ?? null }];
+  const differences = [];
+  for (const key of entityFields(collection)) {
+    if (key === "customFields") continue;
+    const baseValue = hasOwn(baseRecord, key) ? baseRecord[key] : MISSING;
+    const serverValue = hasOwn(currentRecord, key) ? currentRecord[key] : MISSING;
+    if (!fieldEqual(collection, key, baseValue, serverValue)) differences.push({
+      path: key,
+      base: serializableValue(baseValue),
+      server: serializableValue(serverValue),
+      baseExists: baseValue !== MISSING,
+      serverExists: serverValue !== MISSING
+    });
+  }
+  const baseFields = isObject(baseRecord.customFields) ? baseRecord.customFields : {};
+  const serverFields = isObject(currentRecord.customFields) ? currentRecord.customFields : {};
+  for (const change of changedLeaves(baseFields, serverFields)) differences.push({
+    path: `customFields.${change.path.join(".")}`,
+    base: serializableValue(change.base),
+    server: serializableValue(change.local),
+    baseExists: change.base !== MISSING,
+    serverExists: change.local !== MISSING
+  });
+  return differences;
+}
+function mergeOfflineRecord({ collection, baseRecord, currentRecord, localBody, statusOnly = false }) {
+  if (!isObject(baseRecord) || !isObject(currentRecord) || !isObject(localBody)) {
+    return { ok: false, fields: [{ path: "*", base: baseRecord ?? null, local: localBody ?? null, server: currentRecord ?? null }], mergedBody: null };
+  }
+  const mergedBody = clone(localBody);
+  const conflicts = [];
+  const allowed = new Set(entityFields(collection));
+  const fields = Object.keys(localBody).filter((key) => allowed.has(key) && (!statusOnly || key === "status"));
+  for (const key of fields) {
+    if (key === "customFields") {
+      const baseFields = isObject(baseRecord.customFields) ? baseRecord.customFields : {};
+      const localFields = isObject(localBody.customFields) ? localBody.customFields : {};
+      const serverFields = isObject(currentRecord.customFields) ? currentRecord.customFields : {};
+      const mergedFields = clone(serverFields);
+      for (const leaf of changedLeaves(baseFields, localFields)) {
+        const serverValue2 = getAtPath(serverFields, leaf.path);
+        const pathName = `customFields.${leaf.path.join(".")}`;
+        if (equal(serverValue2, leaf.base) || equal(serverValue2, leaf.local)) {
+          setAtPath(mergedFields, leaf.path, leaf.local);
+          continue;
+        }
+        conflicts.push({
+          path: pathName,
+          base: serializableValue(leaf.base),
+          local: serializableValue(leaf.local),
+          server: serializableValue(serverValue2),
+          baseExists: leaf.base !== MISSING,
+          localExists: leaf.local !== MISSING,
+          serverExists: serverValue2 !== MISSING
+        });
+      }
+      mergedBody.customFields = mergedFields;
+      continue;
+    }
+    const baseValue = hasOwn(baseRecord, key) ? baseRecord[key] : MISSING;
+    const localValue = hasOwn(localBody, key) ? localBody[key] : MISSING;
+    const serverValue = hasOwn(currentRecord, key) ? currentRecord[key] : MISSING;
+    if (fieldEqual(collection, key, localValue, baseValue)) {
+      if (serverValue === MISSING) delete mergedBody[key];
+      else mergedBody[key] = clone(serverValue);
+      continue;
+    }
+    if (fieldEqual(collection, key, serverValue, baseValue) || fieldEqual(collection, key, serverValue, localValue)) continue;
+    conflicts.push({
+      path: key,
+      base: serializableValue(baseValue),
+      local: serializableValue(localValue),
+      server: serializableValue(serverValue),
+      baseExists: baseValue !== MISSING,
+      localExists: localValue !== MISSING,
+      serverExists: serverValue !== MISSING
+    });
+  }
+  return { ok: conflicts.length === 0, fields: conflicts, mergedBody: conflicts.length ? null : mergedBody };
+}
+function findRecord(store2, collection, entityId) {
+  return store2?.[collection]?.find((record) => String(record.id) === String(entityId)) || null;
+}
+function syncRequestHash({ method, pathname, body, localId, baseRecord }) {
+  const value = JSON.stringify(canonical({ method: String(method).toUpperCase(), pathname, body: body || {}, localId: localId ?? null, baseRecord: baseRecord ?? null }));
+  return crypto5.createHash("sha256").update(value).digest("hex");
+}
+function currentEntityState(store2, request) {
+  return canonicalSyncRecord(request.collection, request.record);
+}
+function mergeSettingsPath(base, current, local, path4, conflicts) {
+  const canRecurse = isObject(local) && (isObject(base) || base === MISSING) && (isObject(current) || current === MISSING);
+  if (canRecurse) {
+    const baseObject = isObject(base) ? base : {};
+    const currentObject = isObject(current) ? current : {};
+    const merged = {};
+    for (const key of Object.keys(local)) {
+      const baseValue2 = hasOwn(baseObject, key) ? baseObject[key] : MISSING;
+      const currentValue2 = hasOwn(currentObject, key) ? currentObject[key] : MISSING;
+      const value = mergeSettingsPath(baseValue2, currentValue2, local[key], [...path4, key], conflicts);
+      if (value !== MISSING) merged[key] = value;
+    }
+    return merged;
+  }
+  const baseValue = base;
+  const currentValue = current;
+  const localValue = local;
+  if (equal(localValue, baseValue)) return clone(currentValue);
+  if (equal(currentValue, baseValue) || equal(currentValue, localValue)) return clone(localValue);
+  conflicts.push({
+    path: path4.join("."),
+    base: serializableValue(baseValue),
+    local: serializableValue(localValue),
+    server: serializableValue(currentValue),
+    baseExists: baseValue !== MISSING,
+    localExists: localValue !== MISSING,
+    serverExists: currentValue !== MISSING
+  });
+  return clone(localValue);
+}
+function mergeOfflineSettings(baseRecord, currentRecord, localBody) {
+  if (!isObject(baseRecord) || !isObject(currentRecord) || !isObject(localBody)) {
+    return { ok: false, fields: [{ path: "*", base: baseRecord ?? null, local: localBody ?? null, server: currentRecord ?? null }], mergedBody: null };
+  }
+  const conflicts = [];
+  const mergedBody = mergeSettingsPath(baseRecord, currentRecord, localBody, [], conflicts);
+  return { ok: conflicts.length === 0, fields: conflicts, mergedBody: conflicts.length ? null : mergedBody };
+}
+function hasPermission(can2, actor, permission) {
+  return typeof can2 === "function" && can2(actor, permission);
+}
+function maySynchronize(classification, actor, store2, body, can2, storeRepository2) {
+  if (classification.collection === "syncConflicts") {
+    const conflict = storeRepository2?.getSyncConflict(classification.id);
+    return Boolean(conflict && conflict.actorId === String(actor.id));
+  }
+  const ownsTask = (taskId) => {
+    const task = findRecord(store2, "tasks", taskId);
+    return Boolean(task && String(task.assigneeId || "") === String(actor.personId || ""));
+  };
+  if (classification.collection === "preferences") return true;
+  if (classification.collection === "settings") return actor.role === "Administrator" && hasPermission(can2, actor, "manageSettings");
+  if (classification.collection === "tasks") {
+    if (classification.statusOnly && hasPermission(can2, actor, "writeTasks")) return hasPermission(can2, actor, "manageTasks") || ownsTask(classification.id);
+    return hasPermission(can2, actor, "manageTasks");
+  }
+  if (classification.collection === "projects" || classification.collection === "milestones") return hasPermission(can2, actor, "manageProjects");
+  if (classification.collection === "people" || classification.collection === "teams") return hasPermission(can2, actor, "managePeople");
+  if (classification.collection === "activities") {
+    if (classification.action === "create") return hasPermission(can2, actor, "logActivity");
+    if (classification.action === "delete") {
+      const activity2 = findRecord(store2, "activities", classification.id);
+      const isAdministrator2 = actor.role === "Administrator" && hasPermission(can2, actor, "manageSettings");
+      return Boolean(activity2 && (isAdministrator2 || hasPermission(can2, actor, "manageTasks") && String(activity2.personId || "") === String(actor.personId || "")));
+    }
+    const activity = findRecord(store2, "activities", classification.id);
+    const isAdministrator = actor.role === "Administrator" && hasPermission(can2, actor, "manageSettings");
+    return Boolean(activity && (isAdministrator || hasPermission(can2, actor, "logActivity") && String(activity.personId || "") === String(actor.personId || "")));
+  }
+  if (classification.collection === "alerts") {
+    if (classification.action === "create" || classification.action === "delete") return hasPermission(can2, actor, "manageAlerts");
+    const edits = Object.keys(body || {}).filter((key) => key !== "resolved");
+    if (edits.length) return hasPermission(can2, actor, "manageAlerts");
+    if (hasPermission(can2, actor, "manageAlerts")) return true;
+    const alert = findRecord(store2, "alerts", classification.id);
+    return hasPermission(can2, actor, "writeTasks") && Boolean(alert?.taskId) && ownsTask(alert.taskId);
+  }
+  return false;
+}
+function createOfflineSyncMiddleware({ getStore, sessions: sessions2, storeRepository: storeRepository2, operationContext, sendError: sendError2, can: can2 }) {
+  return function offlineSyncMiddleware(req, res, next) {
+    const metadata = req.atlasSync;
+    if (!metadata) return next();
+    const pathname = String(req.originalUrl || req.path).split("?")[0];
+    const classification = classifySyncRequest(req.method, pathname);
+    if (!classification) return sendError2(res, 400, "This operation cannot be queued for offline synchronization");
+    if (!isObject(metadata) || typeof metadata.operationId !== "string" || !/^[a-zA-Z0-9_-]{16,120}$/.test(metadata.operationId)) return sendError2(res, 400, "Offline operation identifier is invalid");
+    if (metadata.collection !== void 0 && metadata.collection !== classification.collection) return sendError2(res, 400, "Offline operation type does not match the API route");
+    const sid = req.cookies?.atlas_sid;
+    const session = sid && sessions2.get(sid);
+    if (!session || session.expiresAt <= Date.now()) return sendError2(res, 401, "Sign in to synchronize pending changes");
+    const store2 = getStore();
+    const actor = store2?.users?.find((user) => user.id === session.userId && user.active !== false);
+    if (!actor) return sendError2(res, 401, "Sign in to synchronize pending changes");
+    req.user = actor;
+    const cleanBody = req.body || {};
+    if (!maySynchronize(classification, actor, store2, cleanBody, can2, storeRepository2)) return sendError2(res, 403, "Your current role is not allowed to synchronize this change");
+    const sendConflict = (payload) => {
+      try {
+        storeRepository2.recordSyncConflict({
+          operationId: metadata.operationId,
+          actorId: actor.id,
+          collection: classification.collection,
+          entityId: payload.entityId ?? classification.id ?? null,
+          method: req.method,
+          path: pathname,
+          code: payload.code || "field-conflict",
+          baseRecord: payload.baseRecord,
+          localRecord: payload.localRecord,
+          serverRecord: payload.serverRecord,
+          fields: payload.fields || []
+        });
+        storeRepository2.pruneSyncConflicts(store2?.settings?.audit?.retentionDays);
+      } catch (error) {
+        console.error("Unable to preserve Atlas offline conflict:", error);
+        return sendError2(res, 500, "Unable to safely record this offline conflict");
+      }
+      return res.status(409).json(payload);
+    };
+    const localId = metadata.localId;
+    if (classification.action === "create" && (typeof localId !== "string" || !/^offline-[a-zA-Z0-9_-]{16,120}$/.test(localId))) {
+      return sendError2(res, 400, "Offline record ID is invalid");
+    }
+    const requestHash = syncRequestHash({ method: req.method, pathname, body: cleanBody, localId, baseRecord: metadata.baseRecord });
+    const existingReceipt = storeRepository2.getSyncOperation(metadata.operationId);
+    if (existingReceipt) {
+      if (existingReceipt.actorId !== actor.id || existingReceipt.requestHash !== requestHash) return sendError2(res, 409, "This offline operation ID was already used for a different request");
+      res.setHeader("X-Atlas-Sync-Replayed", "true");
+      if (existingReceipt.responseStatus !== null && existingReceipt.responseBody !== null) return res.status(existingReceipt.responseStatus).json(existingReceipt.responseBody);
+      return res.status(200).json({ ok: true, applied: true, acknowledgementRecovered: true, operationId: metadata.operationId });
+    }
+    let directResponse = null;
+    if (classification.collection === "syncConflicts") {
+      const action = String(cleanBody.action || "");
+      const allowedActions = /* @__PURE__ */ new Set(["keep-server", "discard", "new-id", "overwrite", "delete-anyway", "recreate", "merge"]);
+      if (!allowedActions.has(action)) return sendError2(res, 400, "Conflict resolution action is invalid");
+      const conflict = storeRepository2.getSyncConflict(classification.id);
+      if (!conflict) return sendError2(res, 404, "Offline conflict was not found");
+      const fieldChoices = cleanBody.fields || {};
+      if (!isObject(fieldChoices) || Object.entries(fieldChoices).some(([field3, choice]) => !conflict.fields.some((item) => item.path === field3) || !["local", "server"].includes(choice))) {
+        return sendError2(res, 400, "Conflict field selection is invalid");
+      }
+      const updated = storeRepository2.resolveSyncConflict(classification.id, actor.id, { action, fields: fieldChoices });
+      if (!updated) return sendError2(res, 404, "Offline conflict was not found");
+      storeRepository2.pruneSyncConflicts(store2?.settings?.audit?.retentionDays);
+      directResponse = { ok: true, conflictOperationId: classification.id, status: updated.status };
+    } else if (classification.action === "create") {
+      if (findRecord(store2, classification.collection, localId)) {
+        return sendConflict({
+          error: "A record with this offline identifier already exists",
+          conflict: true,
+          code: "offline-id-collision",
+          operationId: metadata.operationId,
+          collection: classification.collection,
+          localRecord: cleanBody,
+          serverRecord: canonicalSyncRecord(classification.collection, findRecord(store2, classification.collection, localId))
+        });
+      }
+    } else if (classification.collection === "settings" && classification.action === "update") {
+      if (metadata.enforceConflicts !== false) {
+        const merged = mergeOfflineSettings(metadata.baseRecord, store2.settings, cleanBody);
+        if (!merged.ok) {
+          return sendConflict({
+            error: "Some settings changed on the server while this device was offline",
+            conflict: true,
+            code: "field-conflict",
+            operationId: metadata.operationId,
+            collection: "settings",
+            entityId: "workspace",
+            baseRecord: metadata.baseRecord || null,
+            localRecord: cleanBody,
+            serverRecord: clone(store2.settings),
+            fields: merged.fields
+          });
+        }
+        req.body = merged.mergedBody;
+      }
+    } else if ((classification.action === "update" || classification.action === "delete") && !["preferences", "settings"].includes(classification.collection)) {
+      const record = findRecord(store2, classification.collection, classification.id);
+      if (metadata.enforceConflicts !== false) {
+        if (!record) {
+          return sendConflict({
+            error: "The record was deleted on the server while this device was offline",
+            conflict: true,
+            code: "remote-delete",
+            operationId: metadata.operationId,
+            collection: classification.collection,
+            entityId: classification.id,
+            baseRecord: metadata.baseRecord || null,
+            localRecord: cleanBody,
+            serverRecord: null,
+            remoteDeleted: true
+          });
+        }
+        const base = metadata.baseRecord;
+        const serverRecord = currentEntityState(store2, { collection: classification.collection, record });
+        if (classification.action === "delete") {
+          const differences = compareOfflineRecords(classification.collection, base, serverRecord);
+          if (differences.length) {
+            return sendConflict({
+              error: "The record changed on the server while this device was offline",
+              conflict: true,
+              code: "delete-versus-edit",
+              operationId: metadata.operationId,
+              collection: classification.collection,
+              entityId: classification.id,
+              baseRecord: base || null,
+              localRecord: null,
+              serverRecord,
+              fields: differences,
+              localDelete: true
+            });
+          }
+        } else {
+          const merged = mergeOfflineRecord({
+            collection: classification.collection,
+            baseRecord: base,
+            currentRecord: serverRecord,
+            localBody: cleanBody,
+            statusOnly: classification.statusOnly
+          });
+          if (!merged.ok) {
+            return sendConflict({
+              error: "Some fields changed on the server while this device was offline",
+              conflict: true,
+              code: "field-conflict",
+              operationId: metadata.operationId,
+              collection: classification.collection,
+              entityId: classification.id,
+              baseRecord: base || null,
+              localRecord: cleanBody,
+              serverRecord,
+              fields: merged.fields
+            });
+          }
+          req.body = merged.mergedBody;
+        }
+      }
+    }
+    metadata.actorId = actor.id;
+    metadata.requestHash = requestHash;
+    metadata.operationId = metadata.operationId;
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try {
+          storeRepository2.completeSyncOperation(metadata, res.statusCode, body);
+        } catch (error) {
+          console.error("Unable to save Atlas sync acknowledgement:", error);
+        }
+      }
+      return originalJson(body);
+    };
+    if (directResponse) return res.status(200).json(directResponse);
+    return operationContext.run(metadata, next);
+  };
+}
+function offlineCreateId(req, collection, factory) {
+  if (typeof factory !== "function") throw new TypeError("An ID factory is required");
+  const metadata = req?.atlasSync;
+  if (!metadata || metadata.collection && metadata.collection !== collection || !metadata.localId) return factory();
+  return clone(metadata.localId);
+}
+
+// app.tsx
 var root = process.env.ATLAS_ROOT || process.cwd();
 var dataDir = process.env.ATLAS_DATA_DIR || path3.join(root, "data");
 var staticDir = process.env.ATLAS_STATIC_DIR || path3.join(root, "dist");
@@ -3109,6 +4108,7 @@ var databaseFile = process.env.ATLAS_DB_PATH || path3.join(dataDir, "atlas.sqlit
 var legacyDataFile = path3.join(dataDir, "atlas-store.json");
 var store = null;
 var loginRateLimits = /* @__PURE__ */ new Map();
+var offlineSyncContext = new AsyncLocalStorage();
 var setupRateLimits = /* @__PURE__ */ new Map();
 var i18nRateLimits = /* @__PURE__ */ new Map();
 var isProduction = process.env.NODE_ENV === "production";
@@ -3138,7 +4138,7 @@ var { DEFAULT_NAVIGATION: DEFAULT_NAVIGATION2, DEFAULT_WORKFLOW_STATES: DEFAULT_
 var workflowService = createWorkflowService({ getStore: () => store, defaultTaskStates: DEFAULT_WORKFLOW_STATES2 });
 var { taskWorkflowDefinitions, taskWorkflowStates, terminalTaskStates, isDone } = workflowService;
 var storeServices = createStoreService({ getStore: () => store, todayLA, timeLA, addDays, id, parseNumber, isPlainObject, defaultSettings, normalizeSettings, hashPassword, normalizeUserSecrets, allowDemoData, STORE_SCHEMA_VERSION, DATABASE_MODEL, DESIGN_SYSTEM_VERSION, configuredBackupRetention });
-var { newStoreMeta, buildSeedWorkLogs, logWorkEvent, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum } = storeServices;
+var { newStoreMeta, buildSeedWorkLogs, logWorkEvent, pruneWorkLedger, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum } = storeServices;
 var databaseExistedBeforeStartup = fs3.existsSync(databaseFile);
 ensureDir();
 var sqliteDatabase = openSqliteDatabase(databaseFile, { dataDirectory: dataDir });
@@ -3162,7 +4162,8 @@ function saveStore(next, options = {}) {
   normalized.meta.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   storeRepository.writeSnapshot(normalized, {
     backup: options.backup === true && storeRepository.hasSnapshot(),
-    backupReason: options.reason || "write"
+    backupReason: options.reason || "write",
+    syncOperation: options.syncOperation || null
   });
   return normalized;
 }
@@ -3236,7 +4237,11 @@ store = loadStore();
 var lastCommittedStore = structuredClone(store);
 function persist(options = {}) {
   try {
-    store = saveStore(store, { backup: process.env.ATLAS_BACKUP_ON_WRITE === "true", reason: options.reason || "persist" });
+    store = saveStore(store, {
+      backup: process.env.ATLAS_BACKUP_ON_WRITE === "true",
+      reason: options.reason || "persist",
+      syncOperation: offlineSyncContext.getStore() || null
+    });
     lastCommittedStore = structuredClone(store);
   } catch (error) {
     try {
@@ -3321,10 +4326,16 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cookieParser());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "16mb" }));
 app.use("/api", (req, res, next) => {
   if (req.body !== void 0 && !isPlainObject(req.body)) return sendError(res, 400, "Request body must be a JSON object");
   if (["POST", "PUT", "PATCH"].includes(req.method) && req.body === void 0) return sendError(res, 400, "A JSON object request body is required");
+  if (req.body && Object.hasOwn(req.body, "__atlasSync")) {
+    if (!isPlainObject(req.body.__atlasSync)) return sendError(res, 400, "Offline sync metadata must be an object");
+    const { __atlasSync, ...body } = req.body;
+    req.atlasSync = __atlasSync;
+    req.body = body;
+  }
   next();
 });
 var storeView = new Proxy(/* @__PURE__ */ Object.create(null), {
@@ -3420,6 +4431,7 @@ var routeServices = {
   projectPublic,
   taskById,
   taskWorkflowStates,
+  pruneWorkLedger,
   terminalTaskStates,
   isDone,
   logWorkEvent,
@@ -3435,8 +4447,10 @@ var routeServices = {
   alertPublic,
   createActivityBlockerAlert,
   requireManager,
-  teamById
+  teamById,
+  offlineCreateId
 };
+app.use("/api", createOfflineSyncMiddleware({ getStore: () => store, sessions, storeRepository, operationContext: offlineSyncContext, sendError, can }));
 registerRoutes(app, routeServices);
 app.use((error, req, res, next) => {
   if (!req.path.startsWith("/api")) return next(error);

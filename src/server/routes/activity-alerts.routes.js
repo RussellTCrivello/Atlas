@@ -1,5 +1,5 @@
 export function registerActivityAlertRoutes(app, services) {
-  const { store, sendError, requireUser, requirePermission, requireManager, validText, validEmail, customFieldInputError, todayLA, timeLA, id, personById, taskById, projectById, projectReferenceExists, taskReferenceExists, activityPublic, alertPublic, createActivityBlockerAlert, can, auditLog, persist } = services
+  const { store, sendError, requireUser, requirePermission, requireManager, validText, validEmail, customFieldInputError, todayLA, timeLA, id, personById, taskById, projectById, projectReferenceExists, taskReferenceExists, activityPublic, alertPublic, createActivityBlockerAlert, can, auditLog, persist, offlineCreateId } = services
 app.post('/api/activity', requireUser, requirePermission('logActivity'), (req, res) => {
   const body = req.body
   const personId = body.personId === undefined ? String(req.user.personId || '') : String(body.personId || '')
@@ -11,7 +11,7 @@ app.post('/api/activity', requireUser, requirePermission('logActivity'), (req, r
   const [yesterday, today, blocked, upcoming] = values
   const customFieldError = customFieldInputError('activities', body.customFields ?? {})
   if (customFieldError) return sendError(res, 400, customFieldError)
-  const activity = { id: id('activity'), personId, date: todayLA(), time: timeLA(), yesterday, today, blocked, upcoming, status: 'Confirmed', customFields: body.customFields || {}, sample: false }
+  const activity = { id: offlineCreateId(req, 'activities', () => id('activity')), personId, date: todayLA(), time: timeLA(), yesterday, today, blocked, upcoming, status: 'Confirmed', customFields: body.customFields || {}, sample: false }
   store.activities.push(activity)
   const blockerResult = createActivityBlockerAlert(activity)
   if (blockerResult?.created) auditLog('alert.activity-blocker.created', req.user.id, { alertId: blockerResult.alert.id, activityId: activity.id })
@@ -19,9 +19,40 @@ app.post('/api/activity', requireUser, requirePermission('logActivity'), (req, r
   persist({ reason: 'activity' })
   res.json(activityPublic(activity, todayLA()))
 })
+app.put('/api/activity/:id', requireUser, (req, res) => {
+  const activity = store.activities.find(row => String(row.id) === String(req.params.id))
+  if (!activity) return sendError(res, 404, 'Activity not found')
+  const isAdministrator = req.user.role === 'Administrator' && can(req.user, 'manageSettings')
+  const isOwner = String(activity.personId || '') === String(req.user.personId || '')
+  if (!isAdministrator && (!isOwner || !can(req.user, 'logActivity'))) return sendError(res, 403, 'You may only edit activity records for your own profile')
+  const allowedFields = new Set(['personId', 'yesterday', 'today', 'blocked', 'upcoming', 'customFields'])
+  if (Object.keys(req.body || {}).some(key => !allowedFields.has(key))) return sendError(res, 400, 'Activity updates contain unsupported fields')
+  const personId = req.body.personId === undefined ? String(activity.personId || '') : String(req.body.personId || '')
+  if (personId !== String(activity.personId || '') && !isAdministrator) return sendError(res, 403, 'Only an administrator may change the person associated with activity')
+  if (!personId || !personById(personId)) return sendError(res, 400, 'A valid person is required for this activity update')
+  const values = ['yesterday', 'today', 'blocked', 'upcoming'].map(key => req.body[key] === undefined ? String(activity[key] || '') : typeof req.body[key] === 'string' ? req.body[key].trim() : null)
+  if (values.some(value => value === null || value.length > 2000)) return sendError(res, 400, 'Activity fields must be text of 2000 characters or fewer')
+  if (!values.some(Boolean)) return sendError(res, 400, 'Add at least one update before saving')
+  const customFields = req.body.customFields ?? activity.customFields ?? {}
+  const customFieldError = customFieldInputError('activities', customFields)
+  if (customFieldError) return sendError(res, 400, customFieldError)
+  const keys = ['yesterday', 'today', 'blocked', 'upcoming']
+  const changedFields = keys.filter((key, index) => String(activity[key] || '') !== values[index])
+  const previousBlocked = String(activity.blocked || '')
+  Object.assign(activity, Object.fromEntries(keys.map((key, index) => [key, values[index]])), { personId, customFields })
+  if (String(activity.blocked || '') !== previousBlocked && String(activity.blocked || '').trim()) {
+    const blockerResult = createActivityBlockerAlert(activity)
+    if (blockerResult?.created) auditLog('alert.activity-blocker.created', req.user.id, { alertId: blockerResult.alert.id, activityId: activity.id })
+  }
+  auditLog('activity.updated', req.user.id, { activityId: activity.id, personId, fields: changedFields })
+  persist({ reason: 'activity-update' })
+  res.json(activityPublic(activity, todayLA()))
+})
 app.delete('/api/activity/:id', requireUser, requirePermission('manageTasks'), (req, res) => {
   const activity = store.activities.find(row => String(row.id) === String(req.params.id))
   if (!activity) return sendError(res, 404, 'Activity not found')
+  const isAdministrator = req.user.role === 'Administrator' && can(req.user, 'manageSettings')
+  if (!isAdministrator && String(activity.personId || '') !== String(req.user.personId || '')) return sendError(res, 403, 'You may only delete activity records for your own profile')
   store.activities = store.activities.filter(row => row !== activity)
   auditLog('activity.deleted', req.user.id, { activityId: activity.id })
   persist({ reason: 'activity-delete' })
@@ -43,7 +74,7 @@ app.post('/api/alerts', requireUser, requirePermission('manageAlerts'), (req, re
   if (typeof body.body !== 'undefined' && (typeof body.body !== 'string' || body.body.length > 4000)) return sendError(res, 400, 'Alert details may not exceed 4000 characters')
   const customFieldError = customFieldInputError('alerts', body.customFields ?? {})
   if (customFieldError) return sendError(res, 400, customFieldError)
-  const alert = { id: id('alert'), title, body: body.body || '', type, tone: body.tone || (type === 'risk' || type === 'blocker' ? 'orange' : 'blue'), projectId: project?.id || '', taskId: task?.id || '', resolved: false, createdAt: todayLA(), customFields: body.customFields || {}, sample: false }
+  const alert = { id: offlineCreateId(req, 'alerts', () => id('alert')), title, body: body.body || '', type, tone: body.tone || (type === 'risk' || type === 'blocker' ? 'orange' : 'blue'), projectId: project?.id || '', taskId: task?.id || '', resolved: false, createdAt: todayLA(), customFields: body.customFields || {}, sample: false }
   store.alerts.push(alert)
   auditLog('alert.created', req.user.id, { alertId: alert.id })
   persist({ reason: 'alert-create' })

@@ -6,7 +6,8 @@
 - Authentication: HTTP-only `atlas_sid` cookie.
 - Request bodies: JSON.
 - Error format: `{ "error": "Message" }`.
-- Authorization: role permissions enforced server-side.
+- Authorization: role permissions enforced server-side. Workspace settings, runtime metadata, account administration, and all-person activity data are Administrator-only.
+- Authentication is local email/password with Atlas-managed accounts; no external identity provider or SSO is used.
 - Production first-run: setup routes are available before authentication; operational routes require authentication.
 
 ## Roles and permissions
@@ -49,7 +50,7 @@ Response includes:
 
 ### `GET /api/runtime-config`
 
-Returns runtime packaging, design-system, and database metadata.
+Requires authentication and the `Administrator` role. Returns runtime packaging, design-system, and database metadata.
 
 Important fields:
 
@@ -136,22 +137,14 @@ Returns the current authenticated user.
 
 Requires authentication.
 
-Returns all data required by the UI shell:
+Returns the data required by the UI shell:
 
-- `today`
-- `user`
-- `settings`
-- `teams`
-- `people`
-- `users`
-- `projects`
-- `tasks`
-- `activity`
-- `alerts`
-- `dashboard`
-- `reports`
+- `today`, `user`, `teams`, `people`, `projects`, `tasks`, `activity`, `alerts`, `dashboard`, and aggregate `reports`.
+- `settings` is the complete configuration only for an Administrator. Other roles receive only the UI/runtime fields required to render the workspace; security, audit, retention, integration, and role-permission policy settings are omitted.
+- `users` is populated only for an Administrator.
+- Ordinary users receive only their own daily activity, activity-based alerts, and individual activity dashboard items. `teamActivitySummary` and overall delivery reporting contain non-identifying aggregate counts.
 
-Public user objects never include password hashes.
+Public user objects never include password hashes. Ordinary users cannot request another person’s activity by changing a query parameter or export scope; server-side scoping overrides the supplied person id. Individual activity rankings and all-person evidence reports are Administrator-only.
 
 ## Reports
 
@@ -183,7 +176,7 @@ Returns general delivery reporting:
 
 ### `GET /api/reports/activity/:period?userId=all|<personId>`
 
-Requires `viewReports`.
+Requires `viewReports`. Administrators may request `all` or a selected person. Every other role is forcibly scoped to the authenticated user’s linked person profile; a requested `userId` is ignored. A user without a linked person receives an empty personal report.
 
 Allowed periods:
 
@@ -191,12 +184,12 @@ Allowed periods:
 - `weekly`
 - `monthly`
 
-Use cases:
+Examples:
 
 ```txt
-/api/reports/activity/daily?userId=all
-/api/reports/activity/weekly?userId=all
-/api/reports/activity/monthly?userId=<personId>
+/api/reports/activity/daily?userId=all              # Administrator: all people
+/api/reports/activity/weekly?userId=<personId>      # Administrator: one person
+/api/reports/activity/monthly?userId=<any-value>    # Non-admin: own person only
 ```
 
 Returns:
@@ -235,11 +228,13 @@ Returns database integrity, schema metadata, checksum, backups, and collection c
 
 ### `PUT /api/settings`
 
-Requires Administrator.
+Requires the `Administrator` role (not merely a custom permission such as `manageSettings`).
 
 Body: partial or full settings object.
 
 Returns updated settings.
+
+All global settings, settings import/export, system metadata, user-account administration, and the full translation catalog require the `Administrator` role. The navigation and command search omit Settings for other roles, and the UI also guards direct settings navigation.
 
 ### `DELETE /api/setup/seed`
 
@@ -438,7 +433,7 @@ Example body:
 }
 ```
 
-Supported datasets: `projects`, `tasks`, `people`, `activity`, `alerts`, `milestones`, `users`, `delivery-report`, `activity-evidence`, `activity-summary`, and `project-contributions`. `delivery-report` accepts `period` (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`); activity datasets accept `period` (`daily`, `weekly`, `monthly`) and optional `personId`. Task queries accept `projectId`. If `recordIds` or `fields` are omitted, all rows/allowlisted fields for that dataset are selected. At least one field is required when `fields` is supplied. Each response is limited to 25,000 records.
+Supported datasets: `projects`, `tasks`, `people`, `activity`, `alerts`, `milestones`, `users`, `delivery-report`, `activity-evidence`, `activity-summary`, and `project-contributions`. `delivery-report` accepts `period` (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`); activity datasets accept `period` (`daily`, `weekly`, `monthly`) and optional `personId`. Task queries accept `projectId`. If `recordIds` or `fields` are omitted, all rows/allowlisted fields for that dataset are selected. At least one field is required when `fields` is supplied. There is no artificial record-count ceiling; practical payload and memory limits still apply. Non-administrators are forced to their own scope for individual activity/evidence exports. Project-contribution exports may return only workspace-level aggregates.
 
 Response includes `source: "sqlite"`, `dataset`, `generatedAt`, `recordCount`, database-derived `columns`, and `rows`.
 

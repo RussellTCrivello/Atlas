@@ -11,7 +11,7 @@ export function registerExportRoutes(app, services) {
   app.post('/api/exports/prepare', requireUser, requirePermission('exportData'), (req, res) => {
     const { dataset, recordIds, fields, query: inputQuery } = req.body || {}
     if (typeof dataset !== 'string' || dataset.length > 80) return sendError(res, 400, 'A supported export dataset is required')
-    if (recordIds !== undefined && (!Array.isArray(recordIds) || recordIds.length > 25000 || recordIds.some(id => !['string', 'number'].includes(typeof id) || String(id).length > 200))) return sendError(res, 400, 'Selected record IDs are invalid')
+    if (recordIds !== undefined && (!Array.isArray(recordIds) || recordIds.some(id => !['string', 'number'].includes(typeof id) || String(id).length > 200))) return sendError(res, 400, 'Selected record IDs are invalid')
     if (fields !== undefined && (!Array.isArray(fields) || fields.length > 250 || fields.some(key => typeof key !== 'string' || key.length > 120 || !/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)))) return sendError(res, 400, 'Selected export fields are invalid')
     if (inputQuery !== undefined && !isPlainObject(inputQuery)) return sendError(res, 400, 'Export query must be an object')
     const query = inputQuery || {}
@@ -23,6 +23,12 @@ export function registerExportRoutes(app, services) {
 
     try {
       const context = createDatabaseExportContext()
+      const isAdministrator = req.user.role === 'Administrator'
+      const ownPersonId = String(req.user.personId || `unlinked:${req.user.id}`)
+      const isPersonActivityDataset = dataset === 'activity' || dataset === 'activity-evidence' || dataset === 'activity-summary'
+      const personId = isAdministrator
+        ? (query.personId || 'all')
+        : isPersonActivityDataset ? ownPersonId : 'all'
       const result = prepareDatabaseExport({
         context,
         dataset,
@@ -30,13 +36,13 @@ export function registerExportRoutes(app, services) {
         fields,
         query: {
           period: String(query.period || 'weekly').toLowerCase(),
-          personId: query.personId || 'all',
+          personId,
           projectId: query.projectId
         }
       })
       res.json(result)
     } catch (error) {
-      const status = /unsupported export dataset|fields are unavailable|export field is required|selected database records|limited to 25,000/i.test(error.message) ? 400 : 500
+      const status = /unsupported export dataset|fields are unavailable|export field is required|selected database records/i.test(error.message) ? 400 : 500
       sendError(res, status, status === 500 ? 'Database export preparation failed' : error.message)
     }
   })

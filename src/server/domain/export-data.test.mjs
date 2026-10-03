@@ -50,4 +50,11 @@ assert.throws(() => prepareDatabaseExport({ context, dataset: 'tasks', fields: [
 assert.throws(() => prepareDatabaseExport({ context, dataset: 'users', fields: ['passwordHash'] }), /fields are unavailable/)
 assert.equal(prepareDatabaseExport({ context, dataset: 'delivery-report', recordIds: ['2026-W40'], fields: ['label', 'completed'] }).rows[0].label, 'Week 40')
 
-console.log('Database-backed export field selection and safety checks passed')
+snapshot.tasks = Array.from({ length: 25001 }, (_, index) => ({
+  id: index + 1, title: `Uncapped task ${index + 1}`, projectId: 7, dueDate: '2026-10-20', status: 'In progress', assigneeId: 'person-1'
+}))
+const unboundedTaskExport = prepareDatabaseExport({ context, dataset: 'tasks', fields: ['title'] })
+assert.equal(unboundedTaskExport.recordCount, 25001)
+assert.equal(unboundedTaskExport.rows.at(-1).title, 'Uncapped task 25001')
+
+console.log('Database-backed export field selection, safety, and no artificial task cap checks passed')

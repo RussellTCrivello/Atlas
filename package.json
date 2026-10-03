@@ -9,7 +9,7 @@
     "web": "tsx app.tsx",
     "dev": "tsx app.tsx",
     "build": "npm run build:web && npm run build:server",
-    "test:unit": "node src/lib/advanced-filters.test.mjs && node src/lib/legacy-filter-preferences.test.mjs && node src/i18n/catalog.test.mjs && node src/server/domain/export-data.test.mjs",
+    "test:unit": "node src/lib/advanced-filters.test.mjs && node src/lib/legacy-filter-preferences.test.mjs && node src/i18n/catalog.test.mjs && node src/server/domain/export-data.test.mjs && node src/server/domain/store.test.mjs && node src/server/domain/offline-sync.test.mjs && node src/api/offline-sync.test.mjs && node src/lib/record-table.test.mjs",
     "build:web": "vite build",
     "build:server": "esbuild app.tsx --platform=node --format=esm --bundle --packages=external --outfile=dist-desktop/app.mjs",
     "preview": "npm run build && npm run start",

@@ -32,7 +32,7 @@ export function createAuthMiddleware({ getStore, sessions, can, invalidateUserSe
   }
 
   function requireAdmin(req, res, next) {
-    if (!can(req.user, 'manageSettings')) return sendError(res, 403, 'Administrator access required')
+    if (req.user?.role !== 'Administrator' || !can(req.user, 'manageSettings')) return sendError(res, 403, 'Administrator access required')
     next()
   }
 

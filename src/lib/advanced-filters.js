@@ -11,6 +11,9 @@ export const FIELD_OPERATORS = [
 ]
 
 function readRawValue(row, key) {
+  if (key === 'due' && row?.dueDate !== undefined) return row.dueDate
+  if (key === 'deadline' && row?.deadlineDate !== undefined) return row.deadlineDate
+  if (key === 'time' && row?.createdAt !== undefined) return row.createdAt
   return String(key).split('.').reduce((value, part) => value?.[part], row)
 }
 
@@ -30,14 +33,24 @@ export function actionVisible(settings, action) {
   return settings?.interface?.actionVisibility?.[action] !== false
 }
 
+function comparisonNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+  const text = String(value ?? '').trim()
+  if (!text) return NaN
+  const numeric = Number(text)
+  if (Number.isFinite(numeric)) return numeric
+  const date = Date.parse(text)
+  return Number.isFinite(date) ? date : NaN
+}
+
 function matches(row, condition) {
   const leftRaw = readRawValue(row, condition.field)
   const left = leftRaw === null || leftRaw === undefined ? '' : String(leftRaw).toLowerCase()
   const right = String(condition.value ?? '').toLowerCase()
   if (['gt', 'lt', 'gte', 'lte'].includes(condition.operator)) {
-    const leftNumber = Number(leftRaw)
-    const rightNumber = Number(condition.value)
-    if (Number.isNaN(leftNumber) || Number.isNaN(rightNumber)) return false
+    const leftNumber = comparisonNumber(leftRaw)
+    const rightNumber = comparisonNumber(condition.value)
+    if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) return false
     if (condition.operator === 'gt') return leftNumber > rightNumber
     if (condition.operator === 'lt') return leftNumber < rightNumber
     if (condition.operator === 'gte') return leftNumber >= rightNumber

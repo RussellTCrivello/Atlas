@@ -75,7 +75,8 @@ function defaultSettings() {
     integrations: { registry: [], webhooks: [], apiAccess: false },
     storage: { model: DATABASE_MODEL, schemaVersion: STORE_SCHEMA_VERSION, backupRetention: DEFAULT_BACKUP_RETENTION, importExportEnabled: true },
     security: { passwordMinLength: MIN_PASSWORD_LENGTH, sessionDays: 14, cookieSecure, allowDemoData, requireApprovalForRoleChanges: false },
-    audit: { enabled: true, retentionDays: 365, trackReads: false, trackWrites: true, trackExports: true }
+    audit: { enabled: true, retentionDays: 365, trackReads: false, trackWrites: true, trackExports: true },
+    workLedger: { retentionMonths: 24 }
   }
   return withLegacySettings(settings)
 }
@@ -136,6 +137,7 @@ function normalizeSettings(raw = {}) {
   next.security.cookieSecure = next.security.cookieSecure === true || cookieSecure
   next.storage.backupRetention = boundedInteger(next.storage.backupRetention, DEFAULT_BACKUP_RETENTION, 3, 100)
   next.audit.retentionDays = boundedInteger(next.audit.retentionDays, 365, 1, 3650)
+  next.workLedger.retentionMonths = boundedInteger(next.workLedger.retentionMonths, 24, 0, 120)
   next.interface.tableBehavior.pageSize = boundedInteger(next.interface.tableBehavior.pageSize, 50, 1, 500)
 
   const activeLanguages = Array.isArray(next.localization.activeLanguages) ? next.localization.activeLanguages.filter(code => typeof code === 'string' && /^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(code)) : ['en']
@@ -190,6 +192,8 @@ function settingsInputError(value) {
   if (backupRetention !== undefined && (!Number.isInteger(Number(backupRetention)) || Number(backupRetention) < 3 || Number(backupRetention) > 100)) return 'Backup retention must be between 3 and 100 files'
   const auditRetention = value.audit?.retentionDays
   if (auditRetention !== undefined && (!Number.isInteger(Number(auditRetention)) || Number(auditRetention) < 1 || Number(auditRetention) > 3650)) return 'Audit retention must be between 1 and 3650 days'
+  const workLedgerRetention = value.workLedger?.retentionMonths
+  if (workLedgerRetention !== undefined && (!Number.isInteger(Number(workLedgerRetention)) || Number(workLedgerRetention) < 0 || Number(workLedgerRetention) > 120)) return 'Work-ledger retention must be 0 (keep indefinitely) or 1 to 120 months'
   const states = value.workflows?.task?.states
   if (states !== undefined) {
     if (!Array.isArray(states) || states.length < 1 || states.length > 50) return 'Task workflow must contain between 1 and 50 states'

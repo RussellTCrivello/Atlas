@@ -1,7 +1,7 @@
 export function registerUserRoutes(app, services) {
-  const { store, sendError, requireUser, requirePermission, normalizeEmail, validEmail, configuredPasswordMinLength, MAX_PASSWORD_LENGTH, hashPassword, publicAccessUser, personById, id, auditLog, persist, invalidateUserSessions, auditRead, validText } = services
-app.get('/api/users', requireUser, requirePermission('manageUsers'), (req, res) => { auditRead('users', req.user.id); res.json(store.users.map(publicAccessUser)) })
-app.post('/api/users', requireUser, requirePermission('manageUsers'), (req, res) => {
+  const { store, sendError, requireUser, requireAdmin, normalizeEmail, validEmail, configuredPasswordMinLength, MAX_PASSWORD_LENGTH, hashPassword, publicAccessUser, personById, id, auditLog, persist, invalidateUserSessions, auditRead, validText } = services
+app.get('/api/users', requireUser, requireAdmin, (req, res) => { auditRead('users', req.user.id); res.json(store.users.map(publicAccessUser)) })
+app.post('/api/users', requireUser, requireAdmin, (req, res) => {
   const body = req.body
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
@@ -25,7 +25,7 @@ app.post('/api/users', requireUser, requirePermission('manageUsers'), (req, res)
   persist({ reason: 'user-create' })
   res.json(publicAccessUser(user))
 })
-app.put('/api/users/:id', requireUser, requirePermission('manageUsers'), (req, res) => {
+app.put('/api/users/:id', requireUser, requireAdmin, (req, res) => {
   const user = store.users.find(item => String(item.id) === String(req.params.id))
   if (!user) return sendError(res, 404, 'User not found')
   const body = req.body
@@ -55,7 +55,7 @@ app.put('/api/users/:id', requireUser, requirePermission('manageUsers'), (req, r
   persist({ reason: 'user-update' })
   res.json(publicAccessUser(user))
 })
-app.delete('/api/users/:id', requireUser, requirePermission('manageUsers'), (req, res) => {
+app.delete('/api/users/:id', requireUser, requireAdmin, (req, res) => {
   if (String(req.params.id) === String(req.user.id)) return sendError(res, 400, 'You cannot delete your own account')
   const target = store.users.find(user => String(user.id) === String(req.params.id))
   if (!target) return sendError(res, 404, 'User not found')

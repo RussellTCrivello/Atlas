@@ -7,7 +7,7 @@ export const EXPORT_FIELD_SCHEMAS = {
   },
   tasks: {
     id: field('Task ID'), title: field('Task'), project: field('Project'), status: field('Status'), priority: field('Priority'),
-    assignee: field('Assignee'), due: field('Due', 'date'), dueDate: field('Due date', 'date'), type: field('Type'), blocked: field('Blocked', 'boolean'),
+    assignee: field('Assignee'), due: field('Due', 'date'), dueDate: field('Due date', 'date'), type: field('Type'), blocked: field('Blocked', 'boolean'), tags: field('Tags'),
     createdAt: field('Created', 'date'), completedAt: field('Completed', 'date')
   },
   people: {
@@ -81,8 +81,18 @@ function rowsForDataset(dataset, context, query) {
   const peopleById = new Map(snapshot.people.map(person => [String(person.id), person]))
   const teamsById = new Map(snapshot.teams.map(team => [String(team.id), team]))
   const projectsById = new Map(snapshot.projects.map(project => [String(project.id), project]))
-  const projects = () => snapshot.projects.map(project => ({ ...workspace.projectPublic(project, today), __recordId: project.id, deadline: project.deadline || '', createdAt: project.createdAt || '' }))
-  const tasks = () => snapshot.tasks.map(task => ({ ...workspace.taskPublic(task, today), __recordId: task.id, due: task.dueDate || '' }))
+  const indexes = { people: peopleById, teams: teamsById, projects: projectsById }
+  const tasksByProject = new Map()
+  snapshot.tasks.forEach(task => {
+    const key = String(task.projectId)
+    if (!tasksByProject.has(key)) tasksByProject.set(key, [])
+    tasksByProject.get(key).push(task)
+  })
+  const projects = () => snapshot.projects.map(project => ({
+    ...workspace.projectPublic(project, today, tasksByProject.get(String(project.id)) || [], indexes),
+    __recordId: project.id, deadline: project.deadline || '', createdAt: project.createdAt || ''
+  }))
+  const tasks = () => snapshot.tasks.map(task => ({ ...workspace.taskPublic(task, today, indexes), __recordId: task.id, due: task.dueDate || '' }))
 
   if (dataset === 'projects') return projects()
   if (dataset === 'tasks') {
@@ -90,7 +100,9 @@ function rowsForDataset(dataset, context, query) {
     return tasks().filter(task => !projectId || String(task.projectId) === projectId)
   }
   if (dataset === 'people') return snapshot.people.map(person => ({ ...workspace.personPublic(person), __recordId: person.id }))
-  if (dataset === 'activity') return snapshot.activities.map(activity => ({ ...workspace.activityPublic(activity, today), __recordId: activity.id }))
+  if (dataset === 'activity') return snapshot.activities
+    .filter(activity => !query.personId || query.personId === 'all' || String(activity.personId || '') === String(query.personId))
+    .map(activity => ({ ...workspace.activityPublic(activity, today), __recordId: activity.id }))
   if (dataset === 'alerts') return snapshot.alerts.map(alert => ({ ...workspace.alertPublic(alert), __recordId: alert.id, time: alert.createdAt || '' }))
   if (dataset === 'milestones') return snapshot.milestones.map(milestone => {
     const project = projectsById.get(String(milestone.projectId)) || {}
@@ -130,8 +142,6 @@ export function prepareDatabaseExport({ context, dataset, recordIds, fields, que
     rows = rows.filter(row => selected.has(String(sourceId(dataset, row))))
   }
   if (Array.isArray(recordIds) && rows.length !== new Set(recordIds.map(String)).size) throw new Error('One or more selected database records are no longer available')
-  if (rows.length > 25000) throw new Error('An export is limited to 25,000 database records at a time')
-
   const columns = requested.map(key => ({ key, ...schema[key] }))
   const data = rows.map(row => Object.fromEntries(requested.map(key => [key, objectValue(row, key) ?? null])))
   return {

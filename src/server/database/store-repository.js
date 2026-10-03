@@ -149,7 +149,7 @@ export class SqliteStoreRepository {
     return snapshot
   }
 
-  writeSnapshot(snapshot, { backup = false, backupReason = 'write' } = {}) {
+  writeSnapshot(snapshot, { backup = false, backupReason = 'write', syncOperation = null } = {}) {
     if (!snapshot || typeof snapshot !== 'object') throw new TypeError('A workspace snapshot is required')
     if (backup) this.createBackup(backupReason)
     this.db.exec('BEGIN IMMEDIATE')
@@ -158,6 +158,13 @@ export class SqliteStoreRepository {
       for (const collection of TABLES_IN_WRITE_ORDER) this.#upsertCollection(collection, snapshot[collection] || [])
       for (const collection of TABLES_IN_DELETE_ORDER) this.#deleteMissing(collection, snapshot[collection] || [])
       this.#writeSingletons(snapshot)
+      if (syncOperation?.operationId && syncOperation?.actorId && syncOperation?.requestHash) {
+        this.db.prepare(`
+          INSERT INTO sync_operations(operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at)
+          VALUES(?, ?, ?, 'applied', NULL, NULL, ?, NULL)
+          ON CONFLICT(operation_id) DO NOTHING
+        `).run(syncOperation.operationId, syncOperation.actorId, syncOperation.requestHash, new Date().toISOString())
+      }
       const brokenReferences = this.db.prepare('PRAGMA foreign_key_check').all()
       if (brokenReferences.length) throw new Error(`SQLite foreign-key validation failed: ${brokenReferences.length} invalid relationship(s)`)
       this.db.exec('COMMIT')
@@ -231,6 +238,93 @@ export class SqliteStoreRepository {
     }
   }
 
+  getSyncOperation(operationId) {
+    const row = this.db.prepare('SELECT operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at FROM sync_operations WHERE operation_id = ?').get(String(operationId))
+    if (!row) return null
+    let responseBody = null
+    if (row.response_json !== null) {
+      try { responseBody = JSON.parse(row.response_json) } catch {}
+    }
+    return {
+      operationId: row.operation_id, actorId: row.actor_id, requestHash: row.request_hash,
+      status: row.status, responseStatus: row.response_status === null ? null : Number(row.response_status),
+      responseBody, createdAt: row.created_at, completedAt: row.completed_at
+    }
+  }
+
+  getSyncConflict(operationId) {
+    const row = this.db.prepare('SELECT * FROM sync_conflicts WHERE operation_id = ?').get(String(operationId))
+    if (!row) return null
+    return {
+      operationId: row.operation_id, actorId: row.actor_id, collection: row.collection, entityId: row.entity_id,
+      method: row.method, path: row.path, code: row.conflict_code, status: row.status,
+      baseRecord: jsonParse(row.base_json, null), localRecord: jsonParse(row.local_json, null),
+      serverRecord: jsonParse(row.server_json, null), fields: jsonParse(row.fields_json, []),
+      resolution: jsonParse(row.resolution_json, null), createdAt: row.created_at, updatedAt: row.updated_at, resolvedAt: row.resolved_at
+    }
+  }
+
+  recordSyncConflict(conflict) {
+    if (!conflict?.operationId || !conflict?.actorId || !conflict?.collection || !conflict?.code) throw new TypeError('A complete offline-sync conflict is required')
+    const now = new Date().toISOString()
+    const asJson = value => value === undefined || value === null ? null : json(value)
+    this.db.prepare(`
+      INSERT INTO sync_conflicts(operation_id, actor_id, collection, entity_id, method, path, conflict_code, status, base_json, local_json, server_json, fields_json, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(operation_id) DO NOTHING
+    `).run(
+      String(conflict.operationId), String(conflict.actorId), String(conflict.collection), conflict.entityId == null ? null : String(conflict.entityId),
+      String(conflict.method || 'POST'), String(conflict.path || ''), String(conflict.code),
+      asJson(conflict.baseRecord), asJson(conflict.localRecord), asJson(conflict.serverRecord), json(conflict.fields || []), now, now
+    )
+    return this.getSyncConflict(conflict.operationId)
+  }
+
+  resolveSyncConflict(operationId, actorId, resolution) {
+    const action = String(resolution?.action || '')
+    const status = action === 'keep-server' || action === 'discard' ? 'discarded' : 'resolved'
+    const now = new Date().toISOString()
+    const existing = this.getSyncConflict(operationId)
+    if (!existing || existing.actorId !== String(actorId)) return null
+    if (existing.status === 'open') {
+      this.db.prepare(`
+        UPDATE sync_conflicts SET status = ?, resolution_json = ?, updated_at = ?, resolved_at = ?
+        WHERE operation_id = ? AND actor_id = ? AND status = 'open'
+      `).run(status, json(resolution || {}), now, now, String(operationId), String(actorId))
+    }
+    return this.getSyncConflict(operationId)
+  }
+
+  pruneSyncConflicts(retentionDays = 365) {
+    const requestedDays = Number(retentionDays)
+    const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(3650, Math.floor(requestedDays))) : 365
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString()
+    return this.db.prepare("DELETE FROM sync_conflicts WHERE status <> 'open' AND resolved_at IS NOT NULL AND resolved_at < ?").run(cutoff).changes
+  }
+
+  listSyncConflicts({ limit = 500, status = '' } = {}) {
+    const count = Math.max(1, Math.min(5000, Number(limit) || 500))
+    const rows = status
+      ? this.db.prepare('SELECT operation_id FROM sync_conflicts WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(String(status), count)
+      : this.db.prepare('SELECT operation_id FROM sync_conflicts ORDER BY created_at DESC LIMIT ?').all(count)
+    return rows.map(row => this.getSyncConflict(row.operation_id)).filter(Boolean)
+  }
+
+  completeSyncOperation(operation, responseStatus, responseBody) {
+    if (!operation?.operationId || !operation?.actorId || !operation?.requestHash) throw new TypeError('A complete offline-sync operation receipt is required')
+    const responseJson = JSON.stringify(responseBody ?? null)
+    const now = new Date().toISOString()
+    this.db.prepare(`
+      INSERT INTO sync_operations(operation_id, actor_id, request_hash, status, response_status, response_json, created_at, completed_at)
+      VALUES(?, ?, ?, 'completed', ?, ?, ?, ?)
+      ON CONFLICT(operation_id) DO UPDATE SET
+        status = 'completed', response_status = excluded.response_status,
+        response_json = excluded.response_json, completed_at = excluded.completed_at
+      WHERE sync_operations.actor_id = excluded.actor_id AND sync_operations.request_hash = excluded.request_hash
+    `).run(operation.operationId, operation.actorId, operation.requestHash, Number(responseStatus), responseJson, now, now)
+    return this.getSyncOperation(operation.operationId)
+  }
+
   createBackup(reason = 'manual') {
     fs.mkdirSync(path.join(this.dataDirectory, 'backups'), { recursive: true })
     const safeReason = String(reason).replace(/[^a-z0-9_-]+/gi, '-').slice(0, 32) || 'snapshot'
@@ -271,6 +365,7 @@ export class SqliteStoreRepository {
   tableCounts() {
     const counts = Object.fromEntries(Object.entries(COLLECTIONS).map(([collection, definition]) => [collection, Number(this.db.prepare(`SELECT COUNT(*) AS count FROM ${QUOTE(tableName(collection))}`).get().count)]))
     counts.userPreferences = Number(this.db.prepare('SELECT COUNT(*) AS count FROM user_preferences').get().count)
+    counts.syncOperations = Number(this.db.prepare('SELECT COUNT(*) AS count FROM sync_operations').get().count)
     return counts
   }
 

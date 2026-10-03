@@ -1,7 +1,7 @@
 export function registerSystemRoutes(app, services) {
-  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
+  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, persist, pruneWorkLedger, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
 app.get('/api/health', (req, res) => res.json({ ok: true, name: 'Atlas Workspace', version: '1.0.0', mode: process.env.NODE_ENV || 'development', desktopReady: process.env.ATLAS_DESKTOP === 'true', time: new Date().toISOString() }))
-app.get('/api/runtime-config', (req, res) => {
+app.get('/api/runtime-config', requireUser, requireAdmin, (req, res) => {
   const databaseInfo = storeRepository.databaseInfo()
   res.json({
     packagingMode: process.env.ATLAS_DESKTOP === 'true' ? 'electron-desktop' : process.env.NODE_ENV === 'production' ? 'production-web' : 'development-web',
@@ -62,7 +62,7 @@ app.post('/api/setup', rateLimitMiddleware(setupRateLimits, 5, 60 * 60 * 1000), 
   try { persist({ reason: 'setup' }) } catch (error) { setStore(previousStore); throw error }
   const sid = newSession(user.id)
   res.cookie('atlas_sid', sid, sessionCookieOptions())
-  res.json({ setup: { configured: true }, user: publicUser(user) })
+  res.json({ setup: { configured: true }, user: publicUser(user), sessionExpiresAt: sessions.get(sid)?.expiresAt || Date.now() })
 })
 app.post('/api/auth/login', rateLimitMiddleware(loginRateLimits, 20, 15 * 60 * 1000), (req, res) => {
   const { email, password } = req.body
@@ -76,7 +76,7 @@ app.post('/api/auth/login', rateLimitMiddleware(loginRateLimits, 20, 15 * 60 * 1
   persist({ reason: 'login' })
   const sid = newSession(user.id)
   res.cookie('atlas_sid', sid, sessionCookieOptions())
-  res.json({ user: publicUser(user) })
+  res.json({ user: publicUser(user), sessionExpiresAt: sessions.get(sid)?.expiresAt || Date.now() })
 })
 app.post('/api/auth/logout', (req, res) => {
   const sessionId = req.cookies.atlas_sid
@@ -84,7 +84,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('atlas_sid', sessionCookieOptions())
   res.json({ ok: true })
 })
-app.get('/api/auth/me', requireUser, (req, res) => res.json({ user: publicUser(req.user) }))
+app.get('/api/auth/me', requireUser, (req, res) => res.json({ user: publicUser(req.user), sessionExpiresAt: sessions.get(req.cookies?.atlas_sid)?.expiresAt || Date.now() }))
 app.get('/api/bootstrap', requireUser, (req, res) => {
   auditRead('bootstrap', req.user.id)
   res.json(bootstrapFor(req.user))
@@ -95,14 +95,21 @@ app.get('/api/reports/:period', requireUser, requirePermission('viewReports'), (
 })
 app.get('/api/reports/activity/:period', requireUser, requirePermission('viewReports'), (req, res) => {
   auditRead('activity-report', req.user.id)
-  res.json(activityReportFor(req.params.period, req.query.userId || 'all'))
+  const isAdministrator = req.user.role === 'Administrator'
+  const scope = isAdministrator ? (req.query.userId || 'all') : String(req.user.personId || `unlinked:${req.user.id}`)
+  res.json(activityReportFor(req.params.period, scope))
 })
 app.post('/api/audit/export', requireUser, requirePermission('exportData'), (req, res) => {
   const { title, format, rowCount } = req.body
-  if (!validText(title, 200) || !['csv', 'xlsx', 'json', 'pdf', 'print'].includes(format) || !Number.isInteger(rowCount) || rowCount < 0 || rowCount > 1000000) return sendError(res, 400, 'A title, supported export format, and valid row count are required')
+  if (!validText(title, 200) || !['csv', 'xlsx', 'json', 'pdf', 'print'].includes(format) || !Number.isSafeInteger(rowCount) || rowCount < 0) return sendError(res, 400, 'A title, supported export format, and valid row count are required')
   auditLog('export.data', req.user.id, { title: title.trim(), format, rowCount })
   persist({ reason: 'export-audit' })
   res.json({ ok: true })
+})
+app.get('/api/offline-sync/conflicts', requireUser, requireAdmin, (req, res) => {
+  storeRepository.pruneSyncConflicts(store?.settings?.audit?.retentionDays)
+  auditRead('offline-sync-conflicts', req.user.id)
+  res.json(storeRepository.listSyncConflicts({ limit: Number(req.query.limit) || 500, status: req.query.status || '' }))
 })
 app.get('/api/system', requireUser, requireAdmin, (req, res) => {
   auditRead('system', req.user.id)
@@ -125,7 +132,10 @@ app.post('/api/settings/import', requireUser, requireAdmin, (req, res) => {
   const imported = req.body.settings || req.body
   const error = settingsInputError(imported)
   if (error) return sendError(res, 400, error)
+  const existingWorkLedgerRetention = store.settings.workLedger?.retentionMonths ?? 0
   store.settings = normalizeSettings(imported)
+  if (!isPlainObject(imported.workLedger) || !Object.hasOwn(imported.workLedger, 'retentionMonths')) store.settings.workLedger.retentionMonths = existingWorkLedgerRetention
+  pruneWorkLedger(store)
   auditLog('settings.imported', req.user.id, { keys: Object.keys(imported) })
   persist({ reason: 'settings-import' })
   res.json(store.settings)
@@ -159,7 +169,7 @@ app.get('/api/settings/translations/missing', requireUser, requireAdmin, (req, r
   const totalMissing = Object.values(missing).reduce((sum, rows) => sum + rows.length, 0)
   res.json({ fallback, keys: baseKeys, missing, totalMissing, byLanguage: missing })
 })
-app.get('/api/i18n/catalog', (req, res) => res.json(translationCatalogPayload(req.query.language || req.query.lang || null)))
+app.get('/api/i18n/catalog', requireUser, requireAdmin, (req, res) => res.json(translationCatalogPayload(req.query.language || req.query.lang || null)))
 app.post('/api/i18n/missing', rateLimitMiddleware(i18nRateLimits, 30, 10 * 60 * 1000), (req, res) => {
   if (!store.configured) return res.json({ ok: true, ignored: true })
   const localization = store.settings.localization || {}
@@ -249,6 +259,7 @@ app.put('/api/settings', requireUser, requireAdmin, (req, res) => {
   const error = settingsInputError(req.body)
   if (error) return sendError(res, 400, error)
   store.settings = normalizeSettings(mergeDeep(store.settings, req.body))
+  pruneWorkLedger(store)
   auditLog('settings.updated', req.user.id, { branches: Object.keys(req.body) })
   persist({ reason: 'settings' })
   res.json(store.settings)

@@ -50,6 +50,29 @@ function buildSeedWorkLogs(tasks = [], activities = []) {
   })
   return logs
 }
+function workLedgerCutoffDate(retentionMonths, now = new Date()) {
+  const date = new Date(now)
+  const day = date.getUTCDate()
+  date.setUTCDate(1)
+  date.setUTCMonth(date.getUTCMonth() - retentionMonths)
+  const daysInMonth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()
+  date.setUTCDate(Math.min(day, daysInMonth))
+  return date.toISOString().slice(0, 10)
+}
+function pruneWorkLedger(target = store, now = new Date()) {
+  const months = Number(target?.settings?.workLedger?.retentionMonths)
+  if (!Number.isInteger(months) || months <= 0 || !Array.isArray(target?.workLogs)) return 0
+  const cutoff = workLedgerCutoffDate(months, now)
+  const before = target.workLogs.length
+  target.workLogs = target.workLogs.filter(log => {
+    const value = log?.date
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return true
+    const date = new Date(`${value}T00:00:00.000Z`)
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return true
+    return value >= cutoff
+  })
+  return before - target.workLogs.length
+}
 function logWorkEvent({ personId = '', actorUserId = '', taskId = '', projectId = '', action, statusFrom = '', statusTo = '', summary = '', minutes = 0 }) {
   store.workLogs = store.workLogs || []
   const now = new Date()
@@ -61,6 +84,7 @@ function logWorkEvent({ personId = '', actorUserId = '', taskId = '', projectId 
     date: todayLA(now), time: timeLA(now), minutes: Math.max(0, parseNumber(minutes, 0)), sample: false
   }
   store.workLogs.push(log)
+  pruneWorkLedger(store, now)
   return log
 }
 function createActivityBlockerAlert(activity) {
@@ -184,7 +208,9 @@ function ensureCollection(storeObject, key) {
 }
 function normalizeStore(next = {}) {
   if (!isPlainObject(next)) next = productionStore()
+  const legacyRetentionWasExplicit = isPlainObject(next.settings?.workLedger) && Object.hasOwn(next.settings.workLedger, 'retentionMonths')
   next.settings = normalizeSettings(next.settings || {})
+  if (!legacyRetentionWasExplicit) next.settings.workLedger.retentionMonths = 0
   const existingMeta = isPlainObject(next.meta) ? next.meta : {}
   next.meta = newStoreMeta({
     ...existingMeta,
@@ -198,8 +224,8 @@ function normalizeStore(next = {}) {
   if (existingMeta.schemaVersion !== STORE_SCHEMA_VERSION) {
     next.workLogs = next.workLogs.filter(log => !isPlainObject(log) || !/^wl_(?:seed|activity)_/.test(String(log.id || '')))
   }
-  const maxProjectId = Math.max(0, ...next.projects.map(p => Number(p.id) || 0))
-  const maxTaskId = Math.max(0, ...next.tasks.map(t => Number(t.id) || 0))
+  const maxProjectId = next.projects.reduce((maximum, project) => Math.max(maximum, Number(project.id) || 0), 0)
+  const maxTaskId = next.tasks.reduce((maximum, task) => Math.max(maximum, Number(task.id) || 0), 0)
   next.counters = {
     project: Math.max(Number(next.counters?.project || 1), maxProjectId + 1),
     task: Math.max(Number(next.counters?.task || 1), maxTaskId + 1)
@@ -209,6 +235,7 @@ function normalizeStore(next = {}) {
     const sampleActivities = next.activities.filter(activity => activity.sample === true)
     if (sampleTasks.length || sampleActivities.length) next.workLogs = buildSeedWorkLogs(sampleTasks, sampleActivities)
   }
+  pruneWorkLedger(next)
   next.users.forEach(user => {
     user.role = user.role || 'Viewer'
     user.active = user.active !== false
@@ -283,5 +310,5 @@ function productionStore() {
   function storeChecksum(candidate = store) {
     return crypto.createHash('sha256').update(JSON.stringify(candidate)).digest('hex')
   }
-  return { newStoreMeta, buildSeedWorkLogs, logWorkEvent, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum }
+  return { newStoreMeta, buildSeedWorkLogs, logWorkEvent, pruneWorkLedger, createActivityBlockerAlert, demoStore, ensureCollection, normalizeStore, productionStore, validateStoreState, storeChecksum }
 }

@@ -286,13 +286,17 @@ function printHtml(rows, columns, title, options, settings, meta) {
     </style></head><body><main class="report ${template}"><div class="topline"></div>${branding}<header class="heading"><div><h1>${htmlSafe(title)}</h1><p>Prepared from current SQLite workspace fields · ${htmlSafe(meta.recordCount)} records</p></div><div class="meta">Generated<br>${htmlSafe(generatedAt)}</div></header>${summary}<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body.join('')}</tbody></table></div>${options.includeSignoff ? '<div class="signature"><span>Prepared by</span><span>Reviewed by</span></div>' : ''}<div class="footer"><span>${htmlSafe(meta.dataset)} · ${htmlSafe(meta.recordCount)} records · SQLite source</span>${options.includeBranding ? `<span>${htmlSafe(settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace')}</span>` : ''}</div></main></body></html>`
 }
 
-export function ExportMenu({ rows, columns, title, settings, dataset, query = {}, canExport = true, canPrint = true }) {
+export function ExportMenu({ rows, columns, title, settings, dataset, query = {}, canExport = true, canPrint = true, exportScopes }) {
   const actionVisibility = settings?.interface?.actionVisibility || {}
   const configuredFormats = Array.isArray(settings?.exports?.formats) ? settings.exports.formats : ['csv', 'xlsx', 'json', 'pdf', 'print']
   const exportFormats = ['pdf', 'xlsx', 'csv', 'json'].filter(item => configuredFormats.includes(item))
   const allowExport = canExport && actionVisibility.export !== false && exportFormats.length > 0
   const allowPrint = canPrint && actionVisibility.print !== false && configuredFormats.includes('print')
-  const sourceRows = Array.isArray(rows) ? rows : []
+  const hasExportScopes = Boolean(exportScopes)
+  const [scope, setScope] = useState('filtered')
+  const scopeRows = exportScopes?.[scope] || (Array.isArray(rows) ? rows : [])
+  const sourceRows = Array.isArray(scopeRows) ? scopeRows : []
+  const scopeCount = sourceRows.length
   const baseColumns = Array.isArray(columns) ? columns : []
   const customEntity = CUSTOM_FIELD_ENTITIES[dataset]
   const customColumns = (settings?.customFields?.[customEntity] || [])
@@ -326,6 +330,10 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
 
   useEffect(() => { setSelected(availableColumns.map(column => column.key)) }, [columnsKey])
   useEffect(() => {
+    if (!hasExportScopes) return
+    if (scope === 'selected' && !(exportScopes?.selected || []).length) setScope('filtered')
+  }, [hasExportScopes, scope, exportScopes?.selected?.length])
+  useEffect(() => {
     setOrientation(settings?.exports?.pdf?.orientation === 'portrait' ? 'portrait' : 'landscape')
     setMargin(({ narrow: '9', standard: '14', wide: '20' })[settings?.exports?.pdf?.margins] || '14')
     setIncludeBranding(settings?.exports?.includeBranding !== false)
@@ -338,10 +346,10 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   const fieldsKey = selected.join('|')
   const request = useMemo(() => ({
     dataset,
-    recordIds: sourceRows.map(row => identifierFor(dataset, row)).filter(value => value !== null && value !== undefined),
+    recordIds: hasExportScopes && scope === 'all' ? undefined : sourceRows.map(row => identifierFor(dataset, row)).filter(value => value !== null && value !== undefined),
     fields: selected,
     query: query || {}
-  }), [dataset, idsKey, fieldsKey, queryKey])
+  }), [dataset, idsKey, fieldsKey, queryKey, hasExportScopes, scope])
 
   useEffect(() => {
     if (!open) return undefined
@@ -428,6 +436,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     <button className="secondary-button" onClick={() => { setError(''); setOpen(!open) }}><Icon name="external" size={15}/> Export / print</button>
     {open && <div className="export-panel export-panel-studio">
       <div className="advanced-filter-head"><div><strong>Atlas report studio</strong><small>Live fields are re-read from SQLite when you export.</small></div><button className="icon-button subtle" onClick={() => setOpen(false)} aria-label="Close report studio"><Icon name="close" size={14}/></button></div>
+      {hasExportScopes && <label className="tiny-label export-scope-label">Export scope<select value={scope} onChange={event => setScope(event.target.value)}><option value="selected" disabled={!(exportScopes?.selected || []).length}>Selected records ({(exportScopes?.selected || []).length.toLocaleString()})</option><option value="filtered">Filtered results ({(exportScopes?.filtered || []).length.toLocaleString()})</option><option value="all">Entire dataset{query?.projectId ? ' for this project' : ''}</option></select><small>{scope === 'selected' ? 'Only checked records will be queried from SQLite.' : scope === 'filtered' ? 'The current table filters determine the record IDs; values are re-read from SQLite.' : 'All records within the current dataset and project scope are queried from SQLite.'}</small></label>}
       <label className="tiny-label">Report title<input value={fileTitle} maxLength={200} onChange={event => setFileTitle(event.target.value)}/></label>
       {allowExport && <div className="column-checks export-field-list"><div className="export-field-heading"><span>Database fields</span><span>{selected.length} selected</span></div>{availableColumns.map(column => <label key={column.key}><input type="checkbox" checked={selected.includes(column.key)} onChange={() => changedSelected(column.key)}/>{column.label}</label>)}</div>}
       <div className="export-format-grid">

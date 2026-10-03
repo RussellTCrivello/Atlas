@@ -4,6 +4,7 @@ import path from 'node:path'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { openSqliteDatabase } from '../src/server/database/connection.js'
+import { SqliteStoreRepository } from '../src/server/database/store-repository.js'
 import { UserPreferencesRepository } from '../src/server/database/user-preferences-repository.js'
 
 const root = process.cwd()
@@ -79,8 +80,19 @@ function validateSchemaV1Migration() {
 
   const database = openSqliteDatabase(schemaMigrationDatabaseFile, { dataDirectory: schemaMigrationDataDir })
   try {
-    assert.equal(Number(database.prepare('PRAGMA user_version').get().user_version), 2)
+    assert.equal(Number(database.prepare('PRAGMA user_version').get().user_version), 4)
     assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 2").get().name, 'user-saved-filters')
+    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 3").get().name, 'offline-sync-idempotency')
+    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 4").get().name, 'offline-sync-conflict-audit')
+    const syncRepository = new SqliteStoreRepository(database, { filePath: schemaMigrationDatabaseFile, dataDirectory: schemaMigrationDataDir })
+    const syncOperation = { operationId: 'migration-offline-op-00000001', actorId: 'migration-user', requestHash: 'migration-hash' }
+    syncRepository.completeSyncOperation(syncOperation, 200, { ok: true, entityId: 'offline-task-test' })
+    assert.deepEqual(syncRepository.getSyncOperation(syncOperation.operationId).responseBody, { ok: true, entityId: 'offline-task-test' })
+    const conflict = { operationId: 'migration-conflict-00000001', actorId: 'migration-user', collection: 'tasks', entityId: 'offline-task-test', method: 'PUT', path: '/api/tasks/offline-task-test', code: 'field-conflict', baseRecord: { title: 'base' }, localRecord: { title: 'local' }, serverRecord: { title: 'server' }, fields: [{ path: 'title', base: 'base', local: 'local', server: 'server' }] }
+    assert.equal(syncRepository.recordSyncConflict(conflict).status, 'open')
+    assert.deepEqual(syncRepository.getSyncConflict(conflict.operationId).localRecord, conflict.localRecord)
+    assert.equal(syncRepository.resolveSyncConflict(conflict.operationId, 'migration-user', { action: 'merge', fields: { title: 'local' } }).status, 'resolved')
+    assert.equal(syncRepository.listSyncConflicts({ status: 'resolved' }).length, 1)
     assert.equal(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'").get().name, 'user_preferences')
     database.prepare('INSERT INTO users(id) VALUES(?)').run('migration-user')
     const preferences = new UserPreferencesRepository(database)
@@ -91,7 +103,7 @@ function validateSchemaV1Migration() {
   } finally {
     database.close()
   }
-  record('SQLite schema v1-to-v2 migration and user-preference cascade', 'pass')
+  record('SQLite schema v1-to-v4 migrations, offline-sync receipts and conflict-audit retention, and user-preference cascade', 'pass')
 }
 async function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 async function raw(pathname, options = {}) {
@@ -191,7 +203,18 @@ class Client {
   post(pathname, body, expect = 200) { return this.request(pathname, { method: 'POST', body, expect }) }
   put(pathname, body, expect = 200) { return this.request(pathname, { method: 'PUT', body, expect }) }
   patch(pathname, body, expect = 200) { return this.request(pathname, { method: 'PATCH', body, expect }) }
+  sync(pathname, { method = 'POST', body = {}, metadata, expect = 200 } = {}) {
+    return this.request(pathname, { method, body: { ...body, __atlasSync: metadata }, expect })
+  }
   delete(pathname, expect = 200) { return this.request(pathname, { method: 'DELETE', expect }) }
+}
+
+function canonicalTask(task) {
+  return {
+    title: task.title, projectId: task.projectId, assigneeId: task.assigneeId, priority: task.priority,
+    dueDate: task.dueDate || '', status: task.status, type: task.type, blocked: Boolean(task.blocked),
+    createdAt: task.createdAt || '', completedAt: task.completedAt || '', customFields: structuredClone(task.customFields || {})
+  }
 }
 
 function mutateSettings(settings) {
@@ -224,6 +247,7 @@ function mutateSettings(settings) {
   ]
   s.customFields.tasks = [{ key: 'client_code', label: 'Client code', type: 'text', visible: true, required: false }, { key: 'ticket_ref', label: 'Ticket reference', type: 'text', visible: true, required: true }, { key: 'quality_score', label: 'Quality score', type: 'number', visible: true, required: false }]
   s.permissions.roles.Reporter = { name: 'Reporter', summary: 'Reports and exports only.', permissions: ['viewReports', 'exportData'], rank: 2 }
+  s.permissions.roles.SettingsDelegate = { name: 'Settings Delegate', summary: 'Test role with a settings permission but not the Administrator role.', permissions: ['manageSettings', 'viewReports', 'exportData'], rank: 4 }
   s.exports.formats = ['csv', 'xlsx', 'json', 'pdf', 'print']
   s.reports.defaultTemplate = 'executive'
   s.integrations.webhooks = [{ id: 'acceptance-hook', endpoint: 'https://internal.invalid/events', secret: 'validation-secret-must-not-leak', apiKey: 'validation-key-must-not-leak' }]
@@ -245,12 +269,8 @@ async function main() {
     const setupStatus = await publicClient.get('/api/setup/status')
     assert.deepEqual(setupStatus.body, { configured: false, demoAllowed: false, demo: null })
     record('production first-run has no demo credentials', 'pass')
-    const runtime = await publicClient.get('/api/runtime-config')
-    assert.equal(runtime.body.database.schemaVersion, 2)
-    assert.equal(runtime.body.database.engine, 'SQLite')
-    assert.equal(runtime.body.database.transactionalWrites, true)
-    assert.equal(runtime.body.designSystem.version, '2.0.0')
-    record('runtime config schema/design metadata', 'pass', { schema: runtime.body.database.schemaVersion, designSystem: runtime.body.designSystem.version })
+    await publicClient.get('/api/runtime-config', 401)
+    record('runtime configuration is not exposed before local authentication', 'pass')
     const rootHtml = await raw('/')
     assert.equal(rootHtml.res.status, 200)
     assert.match(String(rootHtml.body), /<div id="root"><\/div>/)
@@ -264,8 +284,38 @@ async function main() {
     let bootstrap = await admin.get('/api/bootstrap')
     assert.equal(bootstrap.body.user.role, 'Administrator')
     assert.equal(bootstrap.body.settings.workspace.name, 'Atlas Acceptance')
+    assert.equal(bootstrap.body.settings.audit.retentionDays, 365)
+    assert.equal(bootstrap.body.settings.workLedger.retentionMonths, 24)
     assert.ok(bootstrap.body.settings.localization.textDirectionByLanguage.ar === 'rtl')
-    record('administrator setup and bootstrap', 'pass')
+    const runtime = await admin.get('/api/runtime-config')
+    assert.equal(runtime.body.database.schemaVersion, 4)
+    assert.equal(runtime.body.database.engine, 'SQLite')
+    assert.equal(runtime.body.database.transactionalWrites, true)
+    assert.equal(runtime.body.designSystem.version, '2.0.0')
+    const settingsMergeBase = structuredClone(bootstrap.body.settings)
+    await admin.put('/api/settings', { workspace: { unit: 'Host-side unit' } })
+    const settingsMerge = await admin.sync('/api/settings', {
+      method: 'PUT', body: { workspace: { name: 'Atlas Offline Settings', unit: settingsMergeBase.workspace.unit } },
+      metadata: { operationId: 'offline-settings-merge-op-000001', collection: 'settings', baseRecord: settingsMergeBase, enforceConflicts: true }
+    })
+    assert.equal(settingsMerge.body.workspace.name, 'Atlas Offline Settings')
+    assert.equal(settingsMerge.body.workspace.unit, 'Host-side unit')
+    const settingsConflictBase = structuredClone(settingsMerge.body)
+    await admin.put('/api/settings', { workspace: { organization: { website: 'https://host.local' } } })
+    const settingsConflictId = 'offline-settings-overlap-op-000001'
+    const settingsConflict = await admin.sync('/api/settings', {
+      method: 'PUT', body: { workspace: { organization: { website: 'https://device.local' } } },
+      metadata: { operationId: settingsConflictId, collection: 'settings', baseRecord: settingsConflictBase, enforceConflicts: true }, expect: 409
+    })
+    assert.deepEqual(settingsConflict.body.fields.map(field => field.path), ['workspace.organization.website'])
+    const settingsResolution = await admin.sync(`/api/offline-sync/conflicts/${settingsConflictId}/resolve`, {
+      method: 'POST', body: { action: 'merge', fields: { 'workspace.organization.website': 'server' } },
+      metadata: { operationId: 'offline-settings-resolution-op-00001', collection: 'syncConflicts', baseRecord: null, enforceConflicts: true }
+    })
+    assert.equal(settingsResolution.body.status, 'resolved')
+    assert.equal((await admin.get('/api/bootstrap')).body.settings.workspace.organization.website, 'https://host.local')
+    await admin.get('/api/i18n/catalog')
+    record('administrator setup, bootstrap, schema, and offline global-settings field merge/conflict audit', 'pass', { schema: runtime.body.database.schemaVersion, designSystem: runtime.body.designSystem.version })
 
     const adminFilters = {
       projects: [{ field: 'name', operator: 'contains', join: 'AND', value: 'Atlas' }],
@@ -338,17 +388,37 @@ async function main() {
     const managerPerson = (await admin2.post('/api/people', { name: 'Mona Manager', email: 'manager@example.com', jobTitle: 'Delivery Manager', teamId: team.id, focus: 'Portfolio health', capacity: 80 })).body
     const developerPerson = (await admin2.post('/api/people', { name: 'ليلى Developer', email: 'developer@example.com', jobTitle: 'Engineer', teamId: team.id, focus: 'Feature delivery', capacity: 75 })).body
     const viewerPerson = (await admin2.post('/api/people', { name: 'Omar Viewer', email: 'viewer@example.com', jobTitle: 'Analyst', teamId: team.id, focus: 'Reporting', capacity: 40 })).body
+    const settingsDelegatePerson = (await admin2.post('/api/people', { name: 'Ravi Settings Delegate', email: 'settings-delegate@example.com', jobTitle: 'Coordinator', teamId: team.id, focus: 'Operations', capacity: 55 })).body
     await admin2.post('/api/users', { name: 'Mona Manager', email: 'manager@example.com', password: 'ManagerPass123', role: 'Manager', personId: managerPerson.id, avatarColor: 'blue', active: true })
     await admin2.post('/api/users', { name: 'ليلى Developer', email: 'developer@example.com', password: 'DeveloperPass123', role: 'Developer', personId: developerPerson.id, avatarColor: 'green', active: true })
     await admin2.post('/api/users', { name: 'Omar Viewer', email: 'viewer@example.com', password: 'ViewerPass123', role: 'Viewer', personId: viewerPerson.id, avatarColor: 'orange', active: true })
+    await admin2.post('/api/users', { name: 'Ravi Settings Delegate', email: 'settings-delegate@example.com', password: 'SettingsPass123', role: 'SettingsDelegate', personId: settingsDelegatePerson.id, avatarColor: 'teal', active: true })
     await admin2.post('/api/users', { name: 'Duplicate Viewer', email: 'viewer@example.com', password: 'ViewerPass123', role: 'Viewer', personId: viewerPerson.id }, 409)
     await admin2.post('/api/users', { name: 'Invalid Role', email: 'invalid@example.com', password: 'InvalidPass123', role: 'NoSuchRole', personId: viewerPerson.id }, 400)
     await admin2.delete(`/api/people/${viewerPerson.id}`, 400)
     await admin2.delete(`/api/teams/${team.id}`, 400)
     record('user creation and invalid relationship operations', 'pass')
 
+    const settingsDelegate = new Client('settings-delegate')
+    await settingsDelegate.post('/api/auth/login', { email: 'settings-delegate@example.com', password: 'SettingsPass123' })
+    const delegateBootstrap = await settingsDelegate.get('/api/bootstrap')
+    assert.ok(delegateBootstrap.body.user.permissions.includes('manageSettings'))
+    assert.equal(Object.hasOwn(delegateBootstrap.body.settings, 'security'), false)
+    assert.equal(Object.hasOwn(delegateBootstrap.body.settings, 'audit'), false)
+    assert.equal(Object.hasOwn(delegateBootstrap.body.settings, 'workLedger'), false)
+    await settingsDelegate.get('/api/settings/export', 403)
+    await settingsDelegate.get('/api/runtime-config', 403)
+    await settingsDelegate.get('/api/i18n/catalog', 403)
+    await settingsDelegate.get('/api/system', 403)
+    record('settings permission alone does not bypass Administrator-only settings access', 'pass')
+
     const manager = new Client('manager')
     await manager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
+    await manager.get('/api/runtime-config', 403)
+    await manager.get('/api/i18n/catalog', 403)
+    await manager.get('/api/settings/export', 403)
+    await manager.get('/api/users', 403)
+    record('non-administrator access to global settings, runtime metadata, translation catalog, and account directory is denied', 'pass')
     assert.deepEqual((await manager.get('/api/preferences')).body, { filters: {} })
     const managerFilters = { tasks: [{ field: 'title', operator: 'contains', join: 'AND', value: 'release' }] }
     assert.deepEqual((await manager.put('/api/preferences', { filters: managerFilters })).body, { filters: managerFilters })
@@ -360,6 +430,7 @@ async function main() {
     await manager.post('/api/tasks', { title: 'Typed field check', projectId: project.numericId, assigneeId: managerPerson.id, status: 'Draft', priority: 'High', customFields: { client_code: 'MGR-0', ticket_ref: 'OPS-100', quality_score: 'not-a-number' } }, 400)
     const managerTask = (await manager.post('/api/tasks', { title: 'Plan release checklist', projectId: project.numericId, assigneeId: managerPerson.id, status: 'Draft', priority: 'High', customFields: { client_code: 'MGR-1', ticket_ref: 'OPS-101' } })).body
     const devTask = (await manager.post('/api/tasks', { title: 'تنفيذ لوحة التقارير CP-42', projectId: project.numericId, assigneeId: developerPerson.id, status: 'Draft', priority: 'High', customFields: { client_code: 'AR-42', ticket_ref: 'OPS-102' } })).body
+    await manager.post('/api/activity', { personId: managerPerson.id, yesterday: 'Reviewed planning.', today: 'Coordinated the release.', blocked: '', upcoming: 'Review handoff.' })
     const alert = (await manager.post('/api/alerts', { title: 'Release blocker', body: 'Waiting for review', type: 'blocker', tone: 'orange', projectId: project.numericId, taskId: devTask.numericId })).body
     await manager.patch(`/api/alerts/${alert.id}`, { resolved: true })
     const managerReport = await manager.get('/api/reports/weekly')
@@ -394,6 +465,72 @@ async function main() {
     await manager.post('/api/exports/prepare', { dataset: 'activity-evidence', query: { period: 'quarterly', personId: 'all' } }, 400)
     record('database-backed exports select allowlisted fields and enforce dataset permissions', 'pass')
 
+    const offlineTaskId = 'offline-sync-task-000000000001'
+    const offlineCreateMeta = { operationId: 'offline-create-task-op-000000000001', collection: 'tasks', localId: offlineTaskId, baseRecord: null, enforceConflicts: true }
+    const offlineCreateBody = { title: 'Durable offline retry task', projectId: project.numericId, assigneeId: managerPerson.id, priority: 'Low', dueDate: '', status: 'Draft', type: 'Development', blocked: false, customFields: { client_code: 'OFF-1', ticket_ref: 'OFF-1' } }
+    const createBefore = await manager.sync('/api/tasks', { body: offlineCreateBody, metadata: offlineCreateMeta })
+    assert.equal(String(createBefore.body.numericId), offlineTaskId)
+    const createRetry = await manager.sync('/api/tasks', { body: offlineCreateBody, metadata: offlineCreateMeta })
+    assert.equal(createRetry.body.numericId, createBefore.body.numericId)
+    const syncDb = new DatabaseSync(databaseFile)
+    try {
+      assert.equal(Number(syncDb.prepare('SELECT COUNT(*) AS count FROM tasks WHERE id = ?').get(offlineTaskId).count), 1)
+      assert.equal(Number(syncDb.prepare('SELECT COUNT(*) AS count FROM sync_operations WHERE operation_id = ?').get(offlineCreateMeta.operationId).count), 1)
+    } finally { syncDb.close() }
+
+    const mergeBaseRow = (await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === String(managerTask.numericId))
+    const mergeBase = canonicalTask(mergeBaseRow)
+    await manager.put(`/api/tasks/${managerTask.numericId}`, { priority: 'Low' })
+    const disjointMeta = { operationId: 'offline-disjoint-task-op-000000001', collection: 'tasks', baseRecord: mergeBase, enforceConflicts: true }
+    const disjointBody = { ...mergeBase, type: 'Testing' }
+    const disjointResult = await manager.sync(`/api/tasks/${managerTask.numericId}`, { method: 'PUT', body: disjointBody, metadata: disjointMeta })
+    assert.equal(disjointResult.body.priority, 'Low')
+    assert.equal(disjointResult.body.type, 'Testing')
+    const afterMerge = (await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === String(managerTask.numericId))
+    const conflictBase = canonicalTask(afterMerge)
+    await manager.put(`/api/tasks/${managerTask.numericId}`, { priority: 'Medium' })
+    const conflictOperationId = 'offline-overlap-task-op-000000001'
+    const overlap = await manager.sync(`/api/tasks/${managerTask.numericId}`, {
+      method: 'PUT', body: { ...conflictBase, priority: 'High' },
+      metadata: { operationId: conflictOperationId, collection: 'tasks', baseRecord: conflictBase, enforceConflicts: true }, expect: 409
+    })
+    assert.equal(overlap.body.conflict, true)
+    assert.deepEqual(overlap.body.fields.map(field => field.path), ['priority'])
+    assert.equal((await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === String(managerTask.numericId)).priority, 'Medium')
+    const conflictAudit = await admin.get('/api/offline-sync/conflicts?limit=100')
+    const auditedOverlap = conflictAudit.body.find(row => row.operationId === conflictOperationId)
+    assert.equal(auditedOverlap.status, 'open')
+    assert.equal(auditedOverlap.localRecord.priority, 'High')
+    assert.equal(auditedOverlap.serverRecord.priority, 'Medium')
+    const resolutionAck = await manager.sync(`/api/offline-sync/conflicts/${conflictOperationId}/resolve`, {
+      method: 'POST', body: { action: 'merge', fields: { priority: 'local' } },
+      metadata: { operationId: 'offline-conflict-resolution-op-00001', collection: 'syncConflicts', baseRecord: null, enforceConflicts: true }
+    })
+    assert.equal(resolutionAck.body.status, 'resolved')
+    assert.equal((await admin.get('/api/offline-sync/conflicts?status=resolved')).body.some(row => row.operationId === conflictOperationId), true)
+
+    const deleteConflictBaseRow = (await manager.get('/api/bootstrap')).body.tasks.find(task => String(task.numericId) === offlineTaskId)
+    const deleteConflictBase = canonicalTask(deleteConflictBaseRow)
+    await manager.put(`/api/tasks/${offlineTaskId}`, { title: 'Edited while device was offline' })
+    const deleteConflict = await manager.sync(`/api/tasks/${offlineTaskId}`, {
+      method: 'DELETE', metadata: { operationId: 'offline-delete-overlap-op-00000001', collection: 'tasks', baseRecord: deleteConflictBase, enforceConflicts: true }, expect: 409
+    })
+    assert.equal(deleteConflict.body.localDelete, true)
+    assert.ok((await manager.get('/api/bootstrap')).body.tasks.some(task => String(task.numericId) === offlineTaskId))
+    record('offline sync merges disjoint fields, surfaces same-field and delete/edit conflicts, and deduplicates retries', 'pass')
+
+    await stopServer()
+    await restartPreservingData()
+    await manager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
+    const replayAfterRestart = await manager.sync('/api/tasks', { body: offlineCreateBody, metadata: offlineCreateMeta })
+    assert.equal(replayAfterRestart.body.numericId, offlineTaskId)
+    const receiptDb = new DatabaseSync(databaseFile)
+    try {
+      assert.equal(Number(receiptDb.prepare('SELECT COUNT(*) AS count FROM tasks WHERE id = ?').get(offlineTaskId).count), 1)
+      assert.equal(receiptDb.prepare('SELECT status FROM sync_operations WHERE operation_id = ?').get(offlineCreateMeta.operationId).status, 'completed')
+    } finally { receiptDb.close() }
+    record('offline outbox replay remains idempotent across an interrupted-client/server-restart boundary', 'pass')
+
     const developer = new Client('developer')
     await developer.post('/api/auth/login', { email: 'developer@example.com', password: 'DeveloperPass123' })
     await developer.patch(`/api/tasks/${devTask.numericId}/status`, { status: 'Active' })
@@ -411,6 +548,9 @@ async function main() {
     automaticBlockers = blockerSnapshot.body.alerts.filter(row => row.source === 'activity-blocker' && row.body === blockerText)
     assert.equal(automaticBlockers.length, 1)
     assert.equal(automaticBlockers[0].occurrences, 2)
+    assert.ok(blockerSnapshot.body.activity.every(row => row.personId === developerPerson.id))
+    assert.ok(!JSON.stringify(blockerSnapshot.body.activity).includes('Coordinated the release'))
+    assert.ok(blockerSnapshot.body.teamActivitySummary.today >= 3)
     await developer.patch(`/api/alerts/${automaticBlockers[0].id}`, { resolved: true }, 403)
     await developer.post('/api/projects', { name: 'Unauthorized', code: 'NO' }, 403)
     record('developer task/activity journey and protected project mutation', 'pass')
@@ -420,11 +560,21 @@ async function main() {
     const viewerBootstrap = await viewer.get('/api/bootstrap')
     assert.equal(JSON.stringify(viewerBootstrap.body.settings).includes('validation-secret-must-not-leak'), false)
     assert.equal(JSON.stringify(viewerBootstrap.body.settings).includes('validation-key-must-not-leak'), false)
+    assert.equal(Object.hasOwn(viewerBootstrap.body.settings, 'security'), false)
+    assert.equal(Object.hasOwn(viewerBootstrap.body.settings, 'audit'), false)
+    assert.equal(viewerBootstrap.body.activity.length, 0)
+    assert.equal(viewerBootstrap.body.dashboard.dailyPulse.today.length, 0)
+    assert.ok(viewerBootstrap.body.teamActivitySummary.today >= 3)
+    assert.equal(JSON.stringify(viewerBootstrap.body.alerts).includes(blockerText), false)
     const activityReport = await viewer.get(`/api/reports/activity/daily?userId=${developerPerson.id}`)
-    assert.ok(activityReport.body.rows.some(row => row.task === 'تنفيذ لوحة التقارير CP-42' && row.project === 'Client Portal مشروع'))
+    assert.equal(activityReport.body.userId, viewerPerson.id)
+    assert.equal(activityReport.body.rows.length, 0)
+    const activityExport = await viewer.post('/api/exports/prepare', { dataset: 'activity-evidence', query: { period: 'weekly', personId: developerPerson.id }, fields: ['person', 'task', 'summary'] })
+    assert.equal(activityExport.body.recordCount, 0)
+    await viewer.post('/api/exports/prepare', { dataset: 'activity', recordIds: [developerPerson.id], fields: ['person', 'today'] }, 400)
     await viewer.post('/api/tasks', { title: 'Viewer should fail', projectId: project.numericId }, 403)
     await viewer.put('/api/settings', bootstrap.body.settings, 403)
-    record('viewer report access and protected mutations rejected', 'pass')
+    record('ordinary users receive only own activity plus team aggregates; cross-person reports/exports are denied', 'pass')
 
     const monthReport = await admin2.get(`/api/reports/activity/monthly?userId=${developerPerson.id}`)
     assert.ok(monthReport.body.totals.completedTasks >= 1)
@@ -491,7 +641,7 @@ async function main() {
     if (preservedWorkLogId) assert.equal(migrationReport.body.rows.find(row => row.id === preservedWorkLogId)?.minutes, 45)
     const migrationHealth = await migrated.get('/api/system')
     assert.equal(migrationHealth.body.store.schemaVersion, '4.0.0')
-    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 2)
+    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 3)
     record('legacy work-log migration removes generated rows and preserves explicit minutes', 'pass')
 
     await stopServer()
@@ -553,7 +703,55 @@ async function main() {
     assert.equal(restartedImportBootstrap.body.people.filter(row => row.id === 'legacy-person-1').length, 1)
     assert.equal(fs.existsSync(legacySourceFile), false)
     assert.equal(fs.readdirSync(legacyArchiveDirectory).filter(file => file.startsWith('atlas-store-imported-') && file.endsWith('.json')).length, 1)
-    record('one-time legacy JSON import, SQL restart persistence, content preservation, and source archival', 'pass', { archivedFile: archivedSources[0] })
+    assert.equal(importedRestartBootstrap.body.settings.workLedger.retentionMonths, 0)
+    record('one-time legacy JSON import, SQL restart persistence, content preservation, archival, and unchanged legacy retention', 'pass', { archivedFile: archivedSources[0] })
+
+    await stopServer()
+    const scaleDatabase = openSqliteDatabase(legacyImportDatabaseFile, { dataDirectory: legacyImportDataDir })
+    try {
+      const scaleRepository = new SqliteStoreRepository(scaleDatabase, {
+        filePath: legacyImportDatabaseFile, dataDirectory: legacyImportDataDir, backupRetention: 25
+      })
+      const scaleSnapshot = scaleRepository.loadSnapshot()
+      const targetTaskCount = 50000
+      const maximumTaskId = scaleSnapshot.tasks.reduce((maximum, task) => Math.max(maximum, Number(task.id) || 0), 0)
+      const nextId = Math.max(Number(scaleSnapshot.counters.task) || 1, maximumTaskId + 1)
+      const dueDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Los_Angeles' }).format(new Date())
+      const additionalTasks = Math.max(0, targetTaskCount - scaleSnapshot.tasks.length)
+      for (let index = 0; index < additionalTasks; index++) {
+        const id = nextId + index
+        scaleSnapshot.tasks.push({
+          id, title: `50k scale benchmark task ${id}`, projectId: 22, assigneeId: 'legacy-person-1',
+          priority: ['Low', 'Medium', 'High'][index % 3], dueDate, status: 'To do', type: 'Benchmark',
+          blocked: false, createdAt: dueDate, completedAt: '', sample: false, customFields: {}
+        })
+      }
+      scaleSnapshot.counters.task = nextId + additionalTasks
+      const seedStart = performance.now()
+      scaleRepository.writeSnapshot(scaleSnapshot)
+      report.metrics.seed50kTasksMs = Math.round(performance.now() - seedStart)
+      report.metrics.taskCountBenchmark = scaleSnapshot.tasks.length
+    } finally { scaleDatabase.close() }
+
+    await startServerForDataDir(legacyImportDataDir, '50,000-task scale benchmark')
+    const scaleAdmin = new Client('50k-scale-admin')
+    await scaleAdmin.post('/api/auth/login', { email: 'legacy-admin@example.com', password: 'LegacyImportPass123' })
+    const scaleBootstrap = await scaleAdmin.get('/api/bootstrap')
+    assert.equal(scaleBootstrap.body.tasks.length, 50000)
+    report.metrics.bootstrap50kMs = scaleBootstrap.ms
+    const scaleProject = await scaleAdmin.get('/api/projects/22/tasks')
+    assert.equal(scaleProject.body.tasks.length, 50000)
+    report.metrics.projectDrilldown50kMs = scaleProject.ms
+    const scaleExport = await scaleAdmin.post('/api/exports/prepare', {
+      dataset: 'tasks', recordIds: scaleBootstrap.body.tasks.map(task => task.numericId), fields: ['id', 'title', 'project', 'status']
+    })
+    assert.equal(scaleExport.body.recordCount, 50000)
+    report.metrics.export50kMs = scaleExport.ms
+    const scaleReport = await scaleAdmin.get('/api/reports/weekly')
+    assert.ok(scaleReport.body.series.length)
+    report.metrics.weeklyReport50kMs = scaleReport.ms
+    assert.ok(scaleBootstrap.ms < 15000 && scaleProject.ms < 15000 && scaleExport.ms < 15000 && scaleReport.ms < 5000)
+    record('50,000-task benchmark: SQL seed, bootstrap, project drill-down, unbounded selected export, and aggregate report', 'pass', report.metrics)
   } finally {
     await stopServer()
     report.finishedAt = new Date().toISOString()

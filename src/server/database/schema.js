@@ -114,7 +114,7 @@ function createCollectionTable(tableName, definition) {
 
 function toSnakeCase(value) { return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`) }
 
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 4
 
 function applyMigration(db, version, name, migrate) {
   db.exec('BEGIN IMMEDIATE')
@@ -192,5 +192,50 @@ export function migrateDatabase(db) {
   }
   if (version < 2) {
     applyMigration(db, 2, 'user-saved-filters', () => createUserPreferencesTable(db))
+    version = 2
+  }
+  if (version < 3) {
+    applyMigration(db, 3, 'offline-sync-idempotency', () => {
+      db.exec(`
+        CREATE TABLE sync_operations (
+          operation_id TEXT NOT NULL PRIMARY KEY,
+          actor_id TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('applied', 'completed')),
+          response_status INTEGER,
+          response_json TEXT CHECK(response_json IS NULL OR json_valid(response_json)),
+          created_at TEXT NOT NULL,
+          completed_at TEXT
+        ) STRICT;
+        CREATE INDEX idx_sync_operations_actor ON sync_operations(actor_id, created_at);
+      `)
+    })
+    version = 3
+  }
+  if (version < 4) {
+    applyMigration(db, 4, 'offline-sync-conflict-audit', () => {
+      db.exec(`
+        CREATE TABLE sync_conflicts (
+          operation_id TEXT NOT NULL PRIMARY KEY,
+          actor_id TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          entity_id TEXT,
+          method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          conflict_code TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('open', 'resolved', 'discarded')),
+          base_json TEXT CHECK(base_json IS NULL OR json_valid(base_json)),
+          local_json TEXT CHECK(local_json IS NULL OR json_valid(local_json)),
+          server_json TEXT CHECK(server_json IS NULL OR json_valid(server_json)),
+          fields_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fields_json)),
+          resolution_json TEXT CHECK(resolution_json IS NULL OR json_valid(resolution_json)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          resolved_at TEXT
+        ) STRICT;
+        CREATE INDEX idx_sync_conflicts_status_created ON sync_conflicts(status, created_at);
+        CREATE INDEX idx_sync_conflicts_actor_created ON sync_conflicts(actor_id, created_at);
+      `)
+    })
   }
 }

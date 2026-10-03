@@ -61,20 +61,19 @@ function dueLabel(task, today) {
   if (diff < 0) return `${Math.abs(diff)}d late`
   return fmt(task.dueDate)
 }
-function projectProgress(project) {
-  const tasks = store.tasks.filter(t => String(t.projectId) === String(project.id))
-  if (!tasks.length) return 0
-  return Math.round(tasks.filter(isDone).length / tasks.length * 100)
+function projectProgress(project, projectTasks = store.tasks.filter(task => String(task.projectId) === String(project.id))) {
+  if (!projectTasks.length) return 0
+  return Math.round(projectTasks.filter(isDone).length / projectTasks.length * 100)
 }
-function projectHealth(project, today) {
+function projectHealth(project, today, projectTasks = store.tasks.filter(task => String(task.projectId) === String(project.id))) {
   if (project.status === 'Completed') return 'Completed'
   if (project.status === 'At risk') return 'At risk'
-  const overdue = store.tasks.some(t => String(t.projectId) === String(project.id) && !isDone(t) && t.dueDate && t.dueDate < today)
+  const overdue = projectTasks.some(task => !isDone(task) && task.dueDate && task.dueDate < today)
   return overdue ? 'At risk' : 'On track'
 }
-function taskPublic(task, today) {
-  const project = projectById(task.projectId) || {}
-  const person = personById(task.assigneeId) || {}
+function taskPublic(task, today, indexes = {}) {
+  const project = indexes.projects?.get(String(task.projectId)) || projectById(task.projectId) || {}
+  const person = indexes.people?.get(String(task.assigneeId)) || personById(task.assigneeId) || {}
   return {
     numericId: task.id,
     id: `${project.code || 'TASK'}-${String(task.id).padStart(3, '0')}`,
@@ -91,18 +90,19 @@ function taskPublic(task, today) {
     status: task.status || 'To do',
     type: task.type || 'Development',
     blocked: Boolean(task.blocked),
+    tags: Array.isArray(task.tags) ? task.tags : [],
     createdAt: task.createdAt,
     completedAt: task.completedAt || '',
     customFields: task.customFields || {}
   }
 }
-function projectPublic(project, today) {
-  const team = teamById(project.teamId) || {}
-  const owner = personById(project.ownerId) || {}
-  const taskRows = store.tasks.filter(t => String(t.projectId) === String(project.id))
-  const memberIds = [...new Set(taskRows.map(t => t.assigneeId).concat(project.ownerId).filter(Boolean))]
-  const members = memberIds.map(id => personById(id)).filter(Boolean)
-  const milestoneRows = store.milestones.filter(m => String(m.projectId) === String(project.id)).map(m => ({ ...m, projectId: project.id }))
+function projectPublic(project, today, taskRows = undefined, indexes = {}) {
+  const projectTasks = taskRows || store.tasks.filter(task => String(task.projectId) === String(project.id))
+  const team = indexes.teams?.get(String(project.teamId)) || teamById(project.teamId) || {}
+  const owner = indexes.people?.get(String(project.ownerId)) || personById(project.ownerId) || {}
+  const memberIds = [...new Set(projectTasks.map(task => task.assigneeId).concat(project.ownerId).filter(Boolean))]
+  const members = memberIds.map(id => indexes.people?.get(String(id)) || personById(id)).filter(Boolean)
+  const milestoneRows = store.milestones.filter(milestone => String(milestone.projectId) === String(project.id)).map(milestone => ({ ...milestone, projectId: project.id }))
   const diff = project.deadline ? daysBetween(today, project.deadline) : null
   return {
     id: `project-${project.id}`,
@@ -110,14 +110,15 @@ function projectPublic(project, today) {
     name: project.name,
     code: project.code,
     description: project.description,
+    createdAt: project.createdAt || '',
     teamId: project.teamId,
     team: team.name || 'Workspace',
     ownerId: project.ownerId,
     owner: owner.name || 'Unassigned',
     color: project.color || team.color || 'purple',
     status: project.status,
-    health: projectHealth(project, today),
-    progress: projectProgress(project),
+    health: projectHealth(project, today, projectTasks),
+    progress: projectProgress(project, projectTasks),
     deadlineDate: project.deadline,
     deadline: fmt(project.deadline),
     days: diff == null ? 'No date' : diff < 0 ? `${Math.abs(diff)} days late` : `${diff} days`,
@@ -229,53 +230,149 @@ function reportFor(period = 'weekly') {
     activities: store.activities.filter(a => buckets.some(b => b.key === bucketFor(period, a.date, today))).length
   }
 }
-function dashboard(today, tasksPublic, projectsPublic, alertsPublic) {
-  const openTasks = tasksPublic.filter(t => !isDone(t)).length
-  const activeProjects = projectsPublic.filter(p => p.health !== 'Completed').length
-  const atRisk = projectsPublic.filter(p => p.health === 'At risk').length
+function dashboard(today, tasksPublic, projectsPublic, alertsPublic, user) {
+  const openTasks = tasksPublic.filter(task => !isDone(task)).length
+  const activeProjects = projectsPublic.filter(project => project.health !== 'Completed').length
+  const atRisk = projectsPublic.filter(project => project.health === 'At risk').length
   const onTrack = activeProjects ? Math.round((activeProjects - atRisk) / activeProjects * 100) : 100
-  const todayActivities = store.activities.filter(a => a.date === today)
-  const yesterdayActivities = store.activities.filter(a => a.date === addDays(today, -1))
+  const isAdministrator = user?.role === 'Administrator'
+  const personId = String(user?.personId || '')
+  const visibleActivities = isAdministrator
+    ? store.activities
+    : personId ? store.activities.filter(activity => String(activity.personId || '') === personId) : []
+  const todayActivities = visibleActivities.filter(activity => activity.date === today)
+  const yesterdayActivities = visibleActivities.filter(activity => activity.date === addDays(today, -1))
+  const visibleTasks = personId ? tasksPublic.filter(task => String(task.assigneeId || '') === personId) : []
   const pulseItem = (activity, key, icon = 'bolt') => {
     const person = personById(activity.personId) || {}
     return { title: person.name || 'Unknown', detail: activity[key] || 'No update', time: activity.time || '', icon }
   }
+  const weekStart = addDays(today, -6)
+  const teamActivity = store.activities.filter(activity => activity.date >= weekStart && activity.date <= today)
+  const teamAggregate = {
+    updatesToday: store.activities.filter(activity => activity.date === today).length,
+    updatesYesterday: store.activities.filter(activity => activity.date === addDays(today, -1)).length,
+    updatesThisWeek: teamActivity.length,
+    blockersToday: store.activities.filter(activity => activity.date === today && Boolean(activity.blocked)).length,
+    blockedTasks: store.tasks.filter(task => task.blocked && !isDone(task)).length
+  }
+  const blockedTasks = isAdministrator ? tasksPublic.filter(task => task.blocked && !isDone(task)) : visibleTasks.filter(task => task.blocked && !isDone(task))
   return {
-    stats: { activeProjects, openTasks, needsAttention: alertsPublic.filter(a => !a.resolved).length, onTrack, completedTasks: tasksPublic.filter(t => isDone(t)).length },
-    dailyPulse: {
-      yesterday: yesterdayActivities.slice(0, 4).map(a => pulseItem(a, 'yesterday', 'check')),
-      today: todayActivities.slice(0, 4).map(a => pulseItem(a, 'today', 'bolt')),
-      blocked: todayActivities.filter(a => a.blocked).map(a => pulseItem(a, 'blocked', 'warning')).concat(tasksPublic.filter(t => t.blocked && !isDone(t)).slice(0, 3).map(t => ({ title: t.title, detail: `${t.project} · ${t.assignee}`, time: t.due, icon: 'warning' }))),
-      upcoming: store.milestones.slice(0, 4).map(m => ({ title: m.name, detail: projectById(m.projectId)?.name || 'Project', time: fmt(m.dueDate), icon: 'calendar' }))
+    stats: {
+      activeProjects, openTasks, needsAttention: store.alerts.filter(alert => !alert.resolved).length,
+      onTrack, completedTasks: tasksPublic.filter(task => isDone(task)).length
     },
-    myTasks: tasksPublic.filter(t => !isDone(t)).slice(0, 6)
+    dailyPulse: {
+      yesterday: yesterdayActivities.slice(0, 4).map(activity => pulseItem(activity, 'yesterday', 'check')),
+      today: todayActivities.slice(0, 4).map(activity => pulseItem(activity, 'today', 'bolt')),
+      blocked: todayActivities.filter(activity => activity.blocked).map(activity => pulseItem(activity, 'blocked', 'warning'))
+        .concat(blockedTasks.slice(0, 3).map(task => ({ title: task.title, detail: isAdministrator ? `${task.project} · ${task.assignee}` : task.project, time: task.due, icon: 'warning' }))),
+      upcoming: store.milestones.slice(0, 4).map(milestone => ({ title: milestone.name, detail: projectById(milestone.projectId)?.name || 'Project', time: fmt(milestone.dueDate), icon: 'calendar' })),
+      teamAggregate
+    },
+    myTasks: visibleTasks.filter(task => !isDone(task)).slice(0, 6)
   }
 }
 function settingsForUser(user) {
-  if (can(user, 'manageSettings')) return store.settings
-  const redact = value => {
-    if (Array.isArray(value)) return value.map(redact)
-    if (!isPlainObject(value)) return value
-    const safe = {}
-    for (const [key, item] of Object.entries(value)) {
-      const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-      if (['password', 'passwordhash'].includes(normalizedKey) || /(?:secret|token|apikey|privatekey|credentials?|authorization)$/.test(normalizedKey)) continue
-      Object.defineProperty(safe, key, { value: redact(item), enumerable: true, configurable: true, writable: true })
-    }
-    return safe
+  if (user?.role === 'Administrator') return store.settings
+  const source = store.settings || {}
+  const workspace = source.workspace || {}
+  const ui = source.interface || {}
+  const localization = source.localization || {}
+  const customFields = Object.fromEntries(Object.entries(source.customFields || {}).map(([entity, definitions]) => [entity,
+    Array.isArray(definitions) ? definitions.filter(isPlainObject).map(definition => ({
+      key: definition.key, label: definition.label, type: definition.type,
+      required: definition.required, visible: definition.visible, options: definition.options
+    })) : []
+  ]))
+  const roles = Object.fromEntries(Object.entries(source.permissions?.roles || {}).map(([name, definition]) => [name, {
+    name, summary: definition?.summary || definition?.description || name, description: definition?.description || definition?.summary || name
+  }]))
+  const modules = Object.fromEntries(Object.entries(source.modules || {}).map(([name, module]) => [name, {
+    enabled: module?.enabled !== false, labelKey: module?.labelKey || `nav.${name}`, icon: module?.icon || name
+  }]))
+  return {
+    workspace: {
+      name: workspace.name, unit: workspace.unit, applicationName: workspace.applicationName,
+      defaultTimezone: workspace.defaultTimezone, regionalFormats: workspace.regionalFormats,
+      branding: { primaryColor: workspace.branding?.primaryColor, accentColor: workspace.branding?.accentColor, reportLogo: workspace.branding?.reportLogo }
+    },
+    workspaceName: source.workspaceName || workspace.name || 'Atlas Workspace',
+    workspaceUnit: source.workspaceUnit || workspace.unit || 'Operations',
+    interface: {
+      theme: ui.theme, colors: ui.colors, density: ui.density, spacing: ui.spacing, typography: ui.typography,
+      sidebarBehavior: ui.sidebarBehavior, navigationVisibility: ui.navigationVisibility,
+      navigationOrder: ui.navigationOrder, dashboardLayouts: ui.dashboardLayouts, defaultLandingPage: ui.defaultLandingPage,
+      tableBehavior: ui.tableBehavior, tableColumns: ui.tableColumns, formLayouts: ui.formLayouts,
+      actionVisibility: ui.actionVisibility, cardLayouts: ui.cardLayouts, animations: ui.animations, accessibility: ui.accessibility
+    },
+    localization: {
+      activeLanguages: localization.activeLanguages, defaultLanguage: localization.defaultLanguage,
+      fallbackLanguage: localization.fallbackLanguage, userLanguagePreference: localization.userLanguagePreference,
+      textDirectionByLanguage: localization.textDirectionByLanguage, dateFormats: localization.dateFormats,
+      numberFormats: localization.numberFormats, currencyFormats: localization.currencyFormats,
+      translations: localization.translations, languagePackages: localization.languagePackages
+    },
+    language: source.language || localization.defaultLanguage || 'en',
+    density: source.density || ui.density || 'comfortable',
+    dateFormat: source.dateFormat || workspace.regionalFormats?.date || 'MMM d, yyyy',
+    defaultTaskView: source.defaultTaskView || ui.cardLayouts?.tasks || 'board',
+    pageSize: source.pageSize || ui.tableBehavior?.pageSize || 50,
+    printTemplate: source.printTemplate || source.reports?.defaultTemplate || 'executive',
+    theme: source.theme || ui.theme || 'light',
+    accentColor: source.accentColor || ui.colors?.accent || 'purple',
+    sidebarMode: source.sidebarMode || ui.sidebarBehavior || 'expanded',
+    defaultPage: source.defaultPage || ui.defaultLandingPage || 'overview',
+    showAnimations: source.showAnimations !== false && ui.animations !== false,
+    enabledPages: source.enabledPages || [],
+    workflows: { task: { states: source.workflows?.task?.states || [] } },
+    permissions: { roles },
+    modules,
+    customFields,
+    exports: {
+      formats: source.exports?.formats || ['csv', 'xlsx', 'json', 'pdf', 'print'],
+      includeBranding: source.exports?.includeBranding !== false,
+      pdf: { orientation: source.exports?.pdf?.orientation || 'landscape', margins: source.exports?.pdf?.margins || 'standard' }
+    },
+    reports: { defaultTemplate: source.reports?.defaultTemplate || 'executive' }
   }
-  return redact(store.settings)
 }
 function bootstrapFor(user) {
   const today = todayLA()
-  const teams = store.teams.map(team => ({ ...team, peopleCount: store.people.filter(p => p.teamId === team.id).length }))
+  const isAdministrator = user?.role === 'Administrator'
+  const peopleById = new Map(store.people.map(person => [String(person.id), person]))
+  const projectsById = new Map(store.projects.map(project => [String(project.id), project]))
+  const teamsById = new Map(store.teams.map(team => [String(team.id), team]))
+  const tasksByProject = new Map()
+  for (const task of store.tasks) {
+    const key = String(task.projectId)
+    if (!tasksByProject.has(key)) tasksByProject.set(key, [])
+    tasksByProject.get(key).push(task)
+  }
+  const teams = store.teams.map(team => ({ ...team, peopleCount: store.people.filter(person => person.teamId === team.id).length }))
   const people = store.people.map(personPublic)
-  const projects = store.projects.map(project => projectPublic(project, today))
-  const tasks = store.tasks.map(task => taskPublic(task, today)).sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))
-  const activity = store.activities.map(a => activityPublic(a, today)).sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
-  const alerts = store.alerts.map(alertPublic).sort((a, b) => Number(a.resolved) - Number(b.resolved) || String(b.createdAt).localeCompare(String(a.createdAt)))
-  const users = can(user, 'manageUsers') ? store.users.map(publicAccessUser) : []
-  return { today, user: publicUser(user), settings: settingsForUser(user), teams, people, users, projects, tasks, activity, alerts, dashboard: dashboard(today, tasks, projects, alerts), reports: reportFor('weekly') }
+  const indexes = { people: peopleById, projects: projectsById, teams: teamsById }
+  const projects = store.projects.map(project => projectPublic(project, today, tasksByProject.get(String(project.id)) || [], indexes))
+  const tasks = store.tasks.map(task => taskPublic(task, today, indexes)).sort((left, right) => String(left.dueDate || '').localeCompare(String(right.dueDate || '')))
+  const visibleActivities = isAdministrator
+    ? store.activities
+    : user?.personId ? store.activities.filter(activity => String(activity.personId || '') === String(user.personId)) : []
+  const activity = visibleActivities.map(row => activityPublic(row, today)).sort((left, right) => `${right.date} ${right.time}`.localeCompare(`${left.date} ${left.time}`))
+  const visibleAlerts = isAdministrator
+    ? store.alerts
+    : store.alerts.filter(alert => alert.source !== 'activity-blocker' || String(alert.personId || '') === String(user?.personId || ''))
+  const alerts = visibleAlerts.map(alertPublic).sort((left, right) => Number(left.resolved) - Number(right.resolved) || String(right.createdAt).localeCompare(String(left.createdAt)))
+  const users = isAdministrator && can(user, 'manageUsers') ? store.users.map(publicAccessUser) : []
+  const teamActivitySummary = {
+    today: store.activities.filter(activityRow => activityRow.date === today).length,
+    yesterday: store.activities.filter(activityRow => activityRow.date === addDays(today, -1)).length,
+    thisWeek: store.activities.filter(activityRow => activityRow.date >= addDays(today, -6) && activityRow.date <= today).length,
+    blockersToday: store.activities.filter(activityRow => activityRow.date === today && Boolean(activityRow.blocked)).length
+  }
+  return {
+    today, user: publicUser(user), settings: settingsForUser(user), teams, people, users, projects, tasks, activity, alerts,
+    teamActivitySummary, dashboard: dashboard(today, tasks, projects, alerts, user), reports: reportFor('weekly')
+  }
 }
 
 function workLogPublic(log, period = 'daily') {
@@ -401,7 +498,7 @@ function activityReportFor(period = 'weekly', userId = 'all') {
   }
 }
 
-function nextProjectId() { const value = store.counters.project || (Math.max(0, ...store.projects.map(p => Number(p.id))) + 1); store.counters.project = value + 1; return value }
-function nextTaskId() { const value = store.counters.task || (Math.max(0, ...store.tasks.map(t => Number(t.id))) + 1); store.counters.task = value + 1; return value }
+function nextProjectId() { const value = store.counters.project || (store.projects.reduce((maximum, project) => Math.max(maximum, Number(project.id) || 0), 0) + 1); store.counters.project = value + 1; return value }
+function nextTaskId() { const value = store.counters.task || (store.tasks.reduce((maximum, task) => Math.max(maximum, Number(task.id) || 0), 0) + 1); store.counters.task = value + 1; return value }
   return { teamById, personById, projectById, taskById, validText, validEmail, validDateValue, validOptionalDate, validCustomFields, customFieldInputError, personReferenceExists, teamReferenceExists, projectReferenceExists, taskReferenceExists, publicUser, publicAccessUser, dueTone, dueLabel, projectProgress, projectHealth, taskPublic, projectPublic, personPublic, activityPublic, alertPublic, bucketFor, makeBuckets, reportFor, dashboard, settingsForUser, bootstrapFor, workLogPublic, bucketLabel, isCompletionEvent, completedTaskIds, activityReportFor, nextProjectId, nextTaskId }
 }

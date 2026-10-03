@@ -1,5 +1,5 @@
 export function registerDirectoryRoutes(app, services) {
-  const { store, sendError, requireUser, requirePermission, validText, validEmail, teamReferenceExists, personReferenceExists, projectReferenceExists, taskReferenceExists, customFieldInputError, teamById, todayLA, validOptionalDate, id, personById, projectById, taskById, personPublic, auditLog, persist } = services
+  const { store, sendError, requireUser, requirePermission, validText, validEmail, teamReferenceExists, personReferenceExists, projectReferenceExists, taskReferenceExists, customFieldInputError, teamById, todayLA, validOptionalDate, id, personById, projectById, taskById, personPublic, auditLog, persist, offlineCreateId } = services
 app.post('/api/people', requireUser, requirePermission('managePeople'), (req, res) => {
   const body = req.body
   const name = typeof body.name === 'string' ? body.name.trim() : ''
@@ -14,7 +14,7 @@ app.post('/api/people', requireUser, requirePermission('managePeople'), (req, re
   if (!['On track', 'Needs attention'].includes(status)) return sendError(res, 400, 'Invalid person status')
   const customFieldError = customFieldInputError('people', body.customFields ?? {})
   if (customFieldError) return sendError(res, 400, customFieldError)
-  const person = { id: id('person'), name, email, jobTitle: typeof body.jobTitle === 'string' ? body.jobTitle.trim().slice(0, 120) : 'Contributor', teamId, focus: typeof body.focus === 'string' ? body.focus.trim().slice(0, 300) : '', capacity, status, color: typeof body.color === 'string' ? body.color.slice(0, 40) : 'purple', customFields: body.customFields || {}, sample: false }
+  const person = { id: offlineCreateId(req, 'people', () => id('person')), name, email, jobTitle: typeof body.jobTitle === 'string' ? body.jobTitle.trim().slice(0, 120) : 'Contributor', teamId, focus: typeof body.focus === 'string' ? body.focus.trim().slice(0, 300) : '', capacity, status, color: typeof body.color === 'string' ? body.color.slice(0, 40) : 'purple', customFields: body.customFields || {}, sample: false }
   store.people.push(person)
   auditLog('person.created', req.user.id, { personId: person.id })
   persist({ reason: 'person-create' })
@@ -58,7 +58,7 @@ app.post('/api/teams', requireUser, requirePermission('managePeople'), (req, res
   if (store.teams.some(team => team.name.toLowerCase() === name.toLowerCase())) return sendError(res, 409, 'A team with this name already exists')
   const customFieldError = customFieldInputError('teams', req.body.customFields ?? {})
   if (customFieldError) return sendError(res, 400, customFieldError)
-  const team = { id: id('team'), name, color: typeof req.body.color === 'string' ? req.body.color.slice(0, 40) : 'purple', customFields: req.body.customFields || {}, sample: false }
+  const team = { id: offlineCreateId(req, 'teams', () => id('team')), name, color: typeof req.body.color === 'string' ? req.body.color.slice(0, 40) : 'purple', customFields: req.body.customFields || {}, sample: false }
   store.teams.push(team)
   auditLog('team.created', req.user.id, { teamId: team.id })
   persist({ reason: 'team-create' })
@@ -98,7 +98,7 @@ app.post('/api/milestones', requireUser, requirePermission('manageProjects'), (r
   if (!['Upcoming', 'At risk', 'Complete'].includes(status)) return sendError(res, 400, 'Invalid milestone status')
   const customFieldError = customFieldInputError('milestones', req.body.customFields ?? {})
   if (customFieldError) return sendError(res, 400, customFieldError)
-  const milestone = { id: id('milestone'), name, projectId: project.id, dueDate, status, customFields: req.body.customFields || {}, sample: false }
+  const milestone = { id: offlineCreateId(req, 'milestones', () => id('milestone')), name, projectId: project.id, dueDate, status, customFields: req.body.customFields || {}, sample: false }
   store.milestones.push(milestone)
   auditLog('milestone.created', req.user.id, { milestoneId: milestone.id })
   persist({ reason: 'milestone-create' })
