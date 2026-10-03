@@ -39,10 +39,20 @@ const detailProjection = projectPendingChanges('/api/projects/7/tasks', detail, 
 ])
 assert.equal(detailProjection.tasks.length, 0)
 
-const preferences = projectPendingChanges('/api/preferences', { filters: {} }, [
-  { collection: 'preferences', action: 'update', body: { filters: { tasks: [{ field: 'status', operator: 'equals', value: 'Done' }] } }, status: 'queued' }
+const preferences = projectPendingChanges('/api/preferences', { filters: {}, language: '' }, [
+  { collection: 'preferences', action: 'update', body: { filters: { tasks: [{ field: 'status', operator: 'equals', value: 'Done' }] }, language: 'ar' }, status: 'queued' }
 ])
 assert.equal(preferences.filters.tasks.length, 1)
+assert.equal(preferences.language, 'ar')
+
+const profileOperation = { collection: 'profile', action: 'update', userId: 'user-1', body: { name: 'Avery Chen', avatarColor: 'teal' }, status: 'queued' }
+const profile = projectPendingChanges('/api/profile', { user: { id: 'user-1', name: 'Avery', avatarColor: 'blue' } }, [profileOperation])
+assert.equal(profile.user.name, 'Avery Chen')
+assert.equal(profile.user.avatarColor, 'teal')
+const profileBootstrap = projectPendingChanges('/api/bootstrap', source, [profileOperation])
+assert.equal(profileBootstrap.user.name, 'Avery Chen')
+assert.equal(profileBootstrap.people[0].name, 'Avery Chen')
+assert.equal(profileBootstrap.people[0].color, 'teal')
 
 const settings = projectPendingChanges('/api/bootstrap', source, [
   { collection: 'settings', action: 'update', body: { workspace: { name: 'Offline Atlas', branding: { primary: '#123456' } }, interface: { theme: 'dark' } }, status: 'queued' }

@@ -1,20 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, logOutOfflineState } from './api/client.js'
-import { ensureSessionNotExpired, flushOfflineOutbox, getCachedBootstrap, getOfflineSession, getOfflineSyncStatus, offlineEvents } from './api/offline-sync.js'
+import { ensureSessionNotExpired, flushOfflineOutbox, getCachedBootstrap, getOfflineSession, getOfflineSyncStatus, offlineEvents, saveOfflineSession } from './api/offline-sync.js'
 import { OfflineSyncBar, OfflineSyncPanel } from './components/offline/OfflineSync.jsx'
 import { Icon } from './components/Icon.jsx'
 import { LoadingScreen, ToastHost } from './components/common.jsx'
 import { UserPreferencesProvider } from './context/user-preferences.jsx'
 import { ActivityLog, Alerts, MyWork, Overview, People, Projects, Reports, UserActivityReports } from './pages/WorkspacePages.jsx'
-import { SettingsPage } from './pages/SettingsPage.jsx'
+import { SettingsPage, UserManagementPage } from './pages/SettingsPage.jsx'
+import { ProfilePage } from './pages/ProfilePage.jsx'
 import { LoginScreen, SetupWizard } from './pages/AccessPages.jsx'
 import { CommandSearch, QuickActionRail, Sidebar, Topbar } from './components/navigation/WorkspaceNavigation.jsx'
 import { EntityFormModal } from './components/forms/EntityFormModal.jsx'
 import { actionVisible } from './lib/advanced-filters.js'
 import { clearLegacyFilterPreferences, mergeLegacyFilterPreferences, readLegacyFilterPreferences } from './lib/legacy-filter-preferences.js'
 import { textDirection } from './lib/localization.js'
-import { enabledPages, hasPermission, mergeDeep } from './lib/workspace.js'
+import { enabledPages, hasPermission, mergeDeep, userLanguageOptions } from './lib/workspace.js'
 import { defaultSettings, emptyData } from './config/workspace-defaults.js'
 import { useUiLocalization } from './i18n/runtime.js'
 import './styles.css'
@@ -43,8 +44,8 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [user, setUser] = useState(null)
   const [data, setData] = useState(emptyData)
-  const [userPreferences, setUserPreferences] = useState({ filters: {} })
-  const userPreferencesRef = useRef({ filters: {} })
+  const [userPreferences, setUserPreferences] = useState({ filters: {}, language: '' })
+  const userPreferencesRef = useRef({ filters: {}, language: '' })
   const preferenceSaveQueue = useRef(Promise.resolve())
   const [page, setPage] = useState('overview')
   const [modal, setModal] = useState(null)
@@ -62,13 +63,17 @@ function App() {
   const defaultPageApplied = useRef(false)
   const settings = useMemo(() => {
     const next = mergeDeep(defaultSettings, data.settings || {})
-    if (languagePreview) {
-      next.language = languagePreview
-      next.localization = { ...(next.localization || {}), defaultLanguage: languagePreview }
-      next.workspace = { ...(next.workspace || {}), defaultLanguage: languagePreview }
+    const savedLanguage = userPreferences.language
+    const availableLanguages = userLanguageOptions(next)
+    const personalLanguage = next.localization?.userLanguagePreference !== false && availableLanguages.some(language => language.code === savedLanguage) ? savedLanguage : ''
+    const activeLanguage = languagePreview || personalLanguage
+    if (activeLanguage) {
+      next.language = activeLanguage
+      next.localization = { ...(next.localization || {}), defaultLanguage: activeLanguage }
+      next.workspace = { ...(next.workspace || {}), defaultLanguage: activeLanguage }
     }
     return next
-  }, [data.settings, languagePreview])
+  }, [data.settings, languagePreview, userPreferences.language])
   useUiLocalization(settings)
   const isAdministrator = user?.role === 'Administrator' && hasPermission(user, 'manageSettings')
   const canManage = hasPermission(user, 'manageProjects') || hasPermission(user, 'managePeople') || hasPermission(user, 'manageAlerts')
@@ -88,9 +93,15 @@ function App() {
       const savedFilters = storedPreferences.filters || {}
       const mergedFilters = mergeLegacyFilterPreferences(savedFilters, legacyFilters)
       const hasLegacyFiltersToImport = Object.keys(mergedFilters).some((key) => !Object.hasOwn(savedFilters, key))
-      const preferences = hasLegacyFiltersToImport
+      const preferencesResponse = hasLegacyFiltersToImport
         ? await api.put('/api/preferences', { filters: mergedFilters })
         : storedPreferences
+      const preferences = preferencesResponse?.offlineQueued
+        ? { ...storedPreferences, filters: mergedFilters }
+        : {
+            filters: preferencesResponse?.filters || mergedFilters,
+            language: typeof preferencesResponse?.language === 'string' ? preferencesResponse.language : storedPreferences.language || ''
+          }
       clearLegacyFilterPreferences()
       userPreferencesRef.current = preferences
       setUserPreferences(preferences)
@@ -106,19 +117,53 @@ function App() {
       setError(err.message)
     }
   }, [])
-  const saveUserFilter = useCallback((filterKey, conditions) => {
+  const saveUserPreferences = useCallback((updates) => {
+    const previous = userPreferencesRef.current || { filters: {}, language: '' }
+    const optimistic = { ...previous, ...updates }
+    userPreferencesRef.current = optimistic
+    setUserPreferences(optimistic)
     const save = async () => {
-      const latestFilters = userPreferencesRef.current?.filters || {}
-      const filters = { ...latestFilters, [filterKey]: conditions }
-      const saved = await api.put('/api/preferences', { filters })
-      userPreferencesRef.current = saved
-      setUserPreferences(saved)
-      return saved
+      const target = userPreferencesRef.current || optimistic
+      try {
+        const response = await api.put('/api/preferences', {
+          filters: target.filters || {},
+          language: target.language || ''
+        })
+        if (response?.offlineQueued) return { ...target, offlineQueued: true }
+        const saved = {
+          filters: response?.filters || target.filters || {},
+          language: typeof response?.language === 'string' ? response.language : target.language || ''
+        }
+        if (userPreferencesRef.current === target) {
+          userPreferencesRef.current = saved
+          setUserPreferences(saved)
+        }
+        return saved
+      } catch (error) {
+        if (userPreferencesRef.current === optimistic) {
+          userPreferencesRef.current = previous
+          setUserPreferences(previous)
+        }
+        throw error
+      }
     }
     const queued = preferenceSaveQueue.current.then(save, save)
     preferenceSaveQueue.current = queued.catch(() => {})
     return queued
   }, [])
+  const saveUserFilter = useCallback((filterKey, conditions) => {
+    const latestFilters = userPreferencesRef.current?.filters || {}
+    return saveUserPreferences({ filters: { ...latestFilters, [filterKey]: conditions } })
+  }, [saveUserPreferences])
+  const changeUserLanguage = useCallback(async language => {
+    setLanguagePreview('')
+    try {
+      const result = await saveUserPreferences({ language: language || '' })
+      if (result?.offlineQueued) notify({ title: 'Language saved on this device', body: 'Atlas will synchronize this preference when the local host is reachable.', tone: 'warning' })
+    } catch (error) {
+      notify({ title: 'Language could not be saved', body: error.message, tone: 'warning' })
+    }
+  }, [notify, saveUserPreferences])
   const preferencesContext = useMemo(() => ({
     filters: userPreferences.filters || {},
     saveFilter: saveUserFilter
@@ -189,6 +234,7 @@ function App() {
         } catch (authError) {
           if ((authError.status === 0 || authError.status >= 500) && await restoreCachedSession()) return
           if (!current) return
+          // A 401 from this session probe is the normal signed-out path, not a startup failure.
           setUser(null)
           setAuthChecked(true)
           if (authError.status === 0 || authError.status >= 500) setError(authError.message)
@@ -282,16 +328,46 @@ function App() {
     setUser(null)
     setData(emptyData)
     setSyncStatus({ pending: 0, conflicts: 0, failed: 0, otherUserPending: 0, operations: [] })
-    userPreferencesRef.current = { filters: {} }
-    setUserPreferences({ filters: {} })
+    userPreferencesRef.current = { filters: {}, language: '' }
+    setUserPreferences({ filters: {}, language: '' })
+    setLanguagePreview('')
     defaultPageApplied.current = false
     setPage('overview')
   }
   const openModal = (type, record = null) => setModal({ type, record })
   const navigateTo = target => {
-    if (target === 'settings' && isAdministrator) setPage(target)
-    else if (target !== 'settings' && enabledPages(settings).includes(target)) setPage(target)
-    else notify({ title: 'Section unavailable', body: target === 'settings' ? 'Settings are available only to the administrator.' : 'This section is hidden in workspace settings.', tone: 'warning' })
+    if (target === 'profile') { setPage(target); return }
+    if (target === 'users' && isAdministrator && hasPermission(user, 'manageUsers')) { setPage(target); return }
+    if (target === 'settings' && isAdministrator) { setPage(target); return }
+    if (!['settings', 'users', 'profile'].includes(target) && enabledPages(settings).includes(target)) { setPage(target); return }
+    notify({
+      title: 'Section unavailable',
+      body: target === 'settings' || target === 'users'
+        ? 'Workspace administration and user management are available only to administrators.'
+        : 'This section is hidden in workspace settings.',
+      tone: 'warning'
+    })
+  }
+  const saveProfile = async values => {
+    const result = await api.put('/api/profile', values)
+    const nextUser = result?.user || { ...user, ...values }
+    setUser(nextUser)
+    setData(current => ({
+      ...current,
+      people: (current.people || []).map(person => String(person.id) === String(nextUser.personId)
+        ? { ...person, name: nextUser.name, color: nextUser.avatarColor || person.color }
+        : person),
+      users: (current.users || []).map(row => String(row.id) === String(nextUser.id) ? { ...row, ...nextUser } : row)
+    }))
+    const session = await getOfflineSession({ allowExpired: true })
+    if (session?.userId === String(nextUser.id)) await saveOfflineSession({ user: nextUser, sessionExpiresAt: session.expiresAt }).catch(() => {})
+    if (result?.offlineQueued) {
+      notify({ title: 'Profile saved on this device', body: 'Atlas will synchronize this change with the local host when it is reachable.', tone: 'warning' })
+    } else {
+      notify({ title: 'Profile updated', body: 'Your display name and linked workspace person record are up to date.', tone: 'success' })
+      await loadData()
+    }
+    return nextUser
   }
   const saveEntity = async (type, record, form) => {
     const permissions = { task: 'manageTasks', project: 'manageProjects', person: 'managePeople', team: 'managePeople', milestone: 'manageProjects', activity: 'logActivity', alert: 'manageAlerts', user: 'manageUsers' }
@@ -502,7 +578,49 @@ function App() {
   if (!user) return <LoginScreen onLogin={login} setup={setup}/>
   if (!data.reports?.series) return <LoadingScreen />
   const shellUser = { ...user, openTasks: data.dashboard.stats?.openTasks, openAlerts: data.alerts.filter(a => !a.resolved).length }
-  return <UserPreferencesProvider value={preferencesContext}><div className={`app-shell ${navOpen ? 'nav-open' : ''}`}><div className="nav-backdrop" onClick={() => setNavOpen(false)}/><Sidebar page={page} setPage={navigateTo} user={shellUser} settings={settings} onLogout={logout} mobileOpen={navOpen} onClose={() => setNavOpen(false)}/><main className="main"><Topbar page={page} user={shellUser} setPage={navigateTo} onCreate={createForPage} onSearch={() => setSearchOpen(true)} onToggleTheme={toggleTheme} onOpenNav={() => setNavOpen(true)} canCreate={canCreate} settings={settings}/><OfflineSyncBar userId={user.id} connected={connectionReachable} status={syncStatus} onOpen={() => setSyncPanelOpen(true)}/><div className="content" tabIndex={-1}>{page === 'overview' && <QuickActionRail openModal={openModal} setPage={navigateTo} canManage={canManageProjects} canCreateTasks={canCreateTasks} canLogActivity={canLogActivity} settings={settings} onSearch={() => setSearchOpen(true)}/>}{error && <div className="global-error"><Icon name="warning" size={15}/>{error}<button onClick={loadData}>Retry</button></div>}{page === 'overview' && <Overview data={data} setPage={navigateTo}/>} {page === 'projects' && <Projects data={data} openModal={openModal} canManage={canManageProjects} canManageTasks={canManageTasks} canExport={canExport} setPage={navigateTo} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('project', rows, report)} importMilestones={(rows, report) => importRecords('milestone', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('project', record, field, value)} inlineEditMilestone={(record, field, value) => inlineEditRecord('milestone', record, field, value)} notify={notify}/>} {page === 'tasks' && <MyWork data={data} openModal={openModal} refresh={loadData} notify={notify} userId={user.id} canWriteTasks={canWriteTasks} canManageTasks={canManageTasks} userPersonId={user.personId} canExport={canExport} deleteRecord={deleteEntity} bulkEditTasks={bulkEditTasks} bulkDeleteTasks={bulkDeleteTasks} importTasks={(rows, report) => importRecords('task', rows, report)} inlineEditTask={(record, field, value) => inlineEditRecord('task', record, field, value)}/>} {page === 'people' && <People data={data} openModal={openModal} canManage={canManagePeople} canExport={canExport} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('person', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('person', record, field, value)} notify={notify}/>} {page === 'activity' && <ActivityLog data={data} openModal={openModal} setPage={navigateTo} canLogActivity={canLogActivity} canExport={canExport} canViewAllActivity={isAdministrator} canManageTasks={canManageTasks} userId={user.id} deleteRecord={deleteEntity} bulkDeleteRecords={bulkDeleteRecords} importActivity={(rows, report) => importRecords('activity', rows, report)} notify={notify}/>} {page === 'reports' && <><Reports report={data.reports} onPeriodChange={periodChange} settings={settings} setPage={navigateTo} canExport={canExport}/><UserActivityReports people={data.people || []} settings={settings} canExport={canExport} canViewAllActivity={isAdministrator} userPersonId={user.personId}/></>} {page === 'alerts' && <Alerts data={data} refresh={loadData} openModal={openModal} canManage={canManageAlerts} canManageTasks={canManageTasks} userPersonId={user.personId} canResolve={canWriteTasks || canManageAlerts} canExport={canExport} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('alert', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('alert', record, field, value)} notify={notify}/>} {page === 'settings' && isAdministrator && <SettingsPage data={data} user={user} updateSettings={updateSettings} onRemoveDemo={removeDemo} runtime={runtime} system={system} displayMode={displayMode} openModal={openModal} onDelete={deleteEntity} onPreviewLanguage={setLanguagePreview}/>}</div></main><CommandSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} setPage={navigateTo} openModal={openModal} settings={settings} canEditTasks={canManageTasks} canEditProjects={canManageProjects} canEditPeople={canManagePeople} isAdministrator={isAdministrator}/><EntityFormModal modal={modal} data={data} user={user} onClose={() => setModal(null)} onCreateAnother={type => setModal({ type, record: null })} onSave={saveEntity} onDelete={deleteEntity} notify={notify}/><OfflineSyncPanel open={syncPanelOpen} onClose={() => setSyncPanelOpen(false)} userId={user.id} status={syncStatus} connected={connectionReachable} onRefresh={async () => { await refreshSyncStatus(); await loadData() }}/><ToastHost toasts={toasts} dismiss={id => setToasts(t => t.filter(x => x.id !== id))}/></div></UserPreferencesProvider>
+  const profilePerson = data.people.find(person => String(person.id) === String(user.personId))
+  const userLanguagePreferenceEnabled = settings.localization?.userLanguagePreference !== false
+  const availableUserLanguages = userLanguageOptions(settings)
+  const selectedUserLanguage = userLanguagePreferenceEnabled && availableUserLanguages.some(language => language.code === userPreferences.language)
+    ? userPreferences.language : ''
+  return <UserPreferencesProvider value={preferencesContext}>
+    <div className={`app-shell ${navOpen ? 'nav-open' : ''}`}>
+      <div className="nav-backdrop" onClick={() => setNavOpen(false)}/>
+      <Sidebar
+        page={page} setPage={navigateTo} user={shellUser} settings={settings} onLogout={logout}
+        onProfile={() => navigateTo('profile')} isAdministrator={isAdministrator}
+        mobileOpen={navOpen} onClose={() => setNavOpen(false)}
+      />
+      <main className="main">
+        <Topbar
+          page={page} user={shellUser} setPage={navigateTo} onCreate={createForPage}
+          onSearch={() => setSearchOpen(true)} onToggleTheme={toggleTheme}
+          onOpenNav={() => setNavOpen(true)} onLanguageChange={changeUserLanguage}
+          languagePreference={selectedUserLanguage}
+          languagePreferenceEnabled={userLanguagePreferenceEnabled} canCreate={canCreate} settings={settings}
+        />
+        <OfflineSyncBar userId={user.id} connected={connectionReachable} status={syncStatus} onOpen={() => setSyncPanelOpen(true)}/>
+        <div className="content" tabIndex={-1}>
+          {page === 'overview' && <QuickActionRail openModal={openModal} setPage={navigateTo} canManage={canManageProjects} canCreateTasks={canCreateTasks} canLogActivity={canLogActivity} settings={settings} onSearch={() => setSearchOpen(true)}/>}
+          {error && <div className="global-error"><Icon name="warning" size={15}/>{error}<button type="button" onClick={loadData}>Retry</button></div>}
+          {page === 'overview' && <Overview data={data} setPage={navigateTo}/>}
+          {page === 'projects' && <Projects data={data} openModal={openModal} canManage={canManageProjects} canManageTasks={canManageTasks} canExport={canExport} setPage={navigateTo} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('project', rows, report)} importMilestones={(rows, report) => importRecords('milestone', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('project', record, field, value)} inlineEditMilestone={(record, field, value) => inlineEditRecord('milestone', record, field, value)} notify={notify}/>}
+          {page === 'tasks' && <MyWork data={data} openModal={openModal} refresh={loadData} notify={notify} userId={user.id} canWriteTasks={canWriteTasks} canManageTasks={canManageTasks} userPersonId={user.personId} canExport={canExport} deleteRecord={deleteEntity} bulkEditTasks={bulkEditTasks} bulkDeleteTasks={bulkDeleteTasks} importTasks={(rows, report) => importRecords('task', rows, report)} inlineEditTask={(record, field, value) => inlineEditRecord('task', record, field, value)}/>}
+          {page === 'people' && <People data={data} openModal={openModal} canManage={canManagePeople} canExport={canExport} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('person', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('person', record, field, value)} notify={notify}/>}
+          {page === 'activity' && <ActivityLog data={data} openModal={openModal} setPage={navigateTo} canLogActivity={canLogActivity} canExport={canExport} canViewAllActivity={isAdministrator} canManageTasks={canManageTasks} userId={user.id} deleteRecord={deleteEntity} bulkDeleteRecords={bulkDeleteRecords} importActivity={(rows, report) => importRecords('activity', rows, report)} notify={notify}/>}
+          {page === 'reports' && <><Reports report={data.reports} onPeriodChange={periodChange} settings={settings} setPage={navigateTo} canExport={canExport}/><UserActivityReports people={data.people || []} settings={settings} canExport={canExport} canViewAllActivity={isAdministrator} userPersonId={user.personId}/></>}
+          {page === 'alerts' && <Alerts data={data} refresh={loadData} openModal={openModal} canManage={canManageAlerts} canManageTasks={canManageTasks} userPersonId={user.personId} canResolve={canWriteTasks || canManageAlerts} canExport={canExport} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('alert', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('alert', record, field, value)} notify={notify}/>}
+          {page === 'profile' && <ProfilePage user={user} person={profilePerson} settings={settings} onSave={saveProfile} isAdministrator={isAdministrator} onManageUsers={() => navigateTo('users')}/>}
+          {page === 'users' && isAdministrator && <UserManagementPage data={data} user={user} openModal={openModal} onDelete={deleteEntity} settings={settings} onOpenSettings={() => navigateTo('settings')}/>}
+          {page === 'settings' && isAdministrator && <SettingsPage data={data} user={user} updateSettings={updateSettings} onRemoveDemo={removeDemo} runtime={runtime} system={system} displayMode={displayMode} openModal={openModal} onPreviewLanguage={setLanguagePreview} onOpenUsers={() => navigateTo('users')}/>}
+        </div>
+      </main>
+      <CommandSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} setPage={navigateTo} openModal={openModal} settings={settings} canEditTasks={canManageTasks} canEditProjects={canManageProjects} canEditPeople={canManagePeople} isAdministrator={isAdministrator}/>
+      <EntityFormModal modal={modal} data={data} user={user} onClose={() => setModal(null)} onCreateAnother={type => setModal({ type, record: null })} onSave={saveEntity} onDelete={deleteEntity} notify={notify}/>
+      <OfflineSyncPanel open={syncPanelOpen} onClose={() => setSyncPanelOpen(false)} userId={user.id} status={syncStatus} connected={connectionReachable} onRefresh={async () => { await refreshSyncStatus(); await loadData() }}/>
+      <ToastHost toasts={toasts} dismiss={id => setToasts(current => current.filter(toast => toast.id !== id))}/>
+    </div>
+  </UserPreferencesProvider>
 }
 
 createRoot(document.getElementById('root')).render(<App />)

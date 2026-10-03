@@ -5,7 +5,7 @@ const OUTBOX_STORE = 'outbox'
 const SESSION_STORE = 'sessions'
 const META_STORE = 'meta'
 const ACTIVE_SESSION_KEY = 'active'
-const CACHEABLE_PATH = /^\/api\/(?:bootstrap|preferences|reports(?:\/|$)|projects\/[^/]+\/tasks(?:\?|$))/
+const CACHEABLE_PATH = /^\/api\/(?:bootstrap|preferences|profile|reports(?:\/|$)|projects\/[^/]+\/tasks(?:\?|$))/
 const SYNC_EVENT = 'atlas:offline-sync-updated'
 const CONNECTIVITY_EVENT = 'atlas:offline-connectivity'
 
@@ -73,6 +73,7 @@ function cachedRecord(data, collection, id) {
 function canonicalRecord(collection, record) {
   if (!record) return null
   if (collection === 'settings') return clone(record)
+  if (collection === 'profile') return { name: record.name || '', avatarColor: record.avatarColor || 'purple' }
   if (collection === 'tasks') return {
     title: record.title, projectId: record.projectId, assigneeId: record.assigneeId, priority: record.priority,
     dueDate: record.dueDate, status: record.status, type: record.type, blocked: Boolean(record.blocked), tags: clone(record.tags || []),
@@ -112,6 +113,7 @@ function identifyMutation(path, method) {
   }
   if (verb === 'PUT' && pathname === '/api/settings') return { collection: 'settings', action: 'update', id: 'workspace' }
   if (verb === 'PUT' && pathname === '/api/preferences') return { collection: 'preferences', action: 'update', id: 'current-user' }
+  if (verb === 'PUT' && pathname === '/api/profile') return { collection: 'profile', action: 'update', id: 'current-user' }
   const creates = {
     '/api/tasks': 'tasks', '/api/projects': 'projects', '/api/people': 'people', '/api/teams': 'teams',
     '/api/milestones': 'milestones', '/api/activity': 'activities', '/api/alerts': 'alerts'
@@ -277,6 +279,9 @@ export async function createMutationOperation(path, method, body, userId) {
   if (descriptor.collection === 'settings') {
     bootstrap = await getCachedResponse('/api/bootstrap', userId)
     baseRecord = canonicalRecord('settings', bootstrap?.settings)
+  } else if (descriptor.collection === 'profile') {
+    const session = await getOfflineSession({ allowExpired: true })
+    if (session?.userId === String(userId)) baseRecord = canonicalRecord('profile', session.user)
   } else if (descriptor.action !== 'create' && !['preferences', 'syncConflicts'].includes(descriptor.collection)) {
     bootstrap = await getCachedResponse('/api/bootstrap', userId)
     let record = cachedRecord(bootstrap, descriptor.collection, descriptor.id)
@@ -515,6 +520,19 @@ function mergeProjectedObject(target, source) {
 function projectPendingOperation(bootstrap, operation) {
   const { collection, action, entityId, localId, body } = operation
   if (collection === 'settings') { bootstrap.settings = mergeProjectedObject(bootstrap.settings, body); return }
+  if (collection === 'profile') {
+    if (String(bootstrap.user?.id || '') === String(operation.userId)) {
+      Object.assign(bootstrap.user, clone(body || {}))
+      const person = bootstrap.people?.find(row => String(row.id) === String(bootstrap.user.personId || ''))
+      if (person) {
+        if (Object.hasOwn(body || {}, 'name')) person.name = body.name
+        if (Object.hasOwn(body || {}, 'avatarColor')) person.color = body.avatarColor
+      }
+      const userRow = bootstrap.users?.find(row => String(row.id) === String(operation.userId))
+      if (userRow) Object.assign(userRow, clone(body || {}))
+    }
+    return
+  }
   if (collection === 'preferences') return
   if (collection === 'tasks') {
     const id = action === 'create' ? localId : entityId
@@ -624,7 +642,19 @@ export function projectPendingChanges(path, response, operations = []) {
   const result = clone(response)
   const pathname = cleanPath(path)
   if (pathname === '/api/preferences') {
-    for (const operation of operations) if (operation.collection === 'preferences' && operation.status !== 'conflict' && operation.body?.filters) result.filters = clone(operation.body.filters)
+    for (const operation of operations) {
+      if (operation.collection !== 'preferences' || operation.status === 'conflict') continue
+      if (operation.body && Object.hasOwn(operation.body, 'filters')) result.filters = clone(operation.body.filters)
+      if (operation.body && Object.hasOwn(operation.body, 'language')) result.language = clone(operation.body.language)
+    }
+    return result
+  }
+  if (pathname === '/api/profile') {
+    if (result?.user && typeof result.user === 'object') {
+      for (const operation of operations) {
+        if (operation.collection === 'profile' && operation.status !== 'conflict') Object.assign(result.user, clone(operation.body || {}))
+      }
+    }
     return result
   }
   if (pathname === '/api/bootstrap') {

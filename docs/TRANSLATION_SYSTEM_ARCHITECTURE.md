@@ -1,16 +1,18 @@
 # Advanced Translation System Architecture
 
-_Last updated: 2026-10-01_
+_Last updated: 2026-10-02_
 
 ## Purpose
 
 Atlas now includes a deeper translation architecture intended for the entire product surface and for future or custom frontend interfaces. The system is designed around a versioned settings-backed catalog, runtime language switching, extensible namespaces, missing-key detection, translation approval metadata, RTL/LTR switching, and simple frontend integration APIs.
 
+**Coverage limitation:** the DOM observer looks up known phrases and keys; it is not a translation service. Literal text absent from the built-in catalog and workspace overrides, dynamic custom-field values, and third-party extension strings remain untranslated until their owners add catalog entries. The built-in profile, account-management, navigation, and language-switch copy has tested English/Arabic/Persian/Hebrew entries. Do not interpret the presence of a catalog editor or namespace registry as proof that every screen is translated.
+
 ## Core capabilities
 
 - Setup-first language choice before workspace initialization.
-- Runtime language switching for the configured application.
-- Full UI text translation coverage through the front-end localization runtime.
+- Runtime language switching from the top bar, with per-account language preferences stored in SQL and an administrator-controlled workspace default.
+- Broad catalog-based UI translation through the front-end localization runtime; it does not automatically translate unknown or unregistered copy.
 - DOM localization for static text, labels, buttons, placeholders, titles, ARIA labels, and select option labels.
 - Preservation of form values and select option values while translated labels are displayed.
 - Built-in language packages for English, Arabic, Persian, and Hebrew.

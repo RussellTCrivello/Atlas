@@ -114,7 +114,8 @@ The single app design reduces deployment complexity, supports desktop packaging,
 Atlas uses an embedded, relational SQLite database for all runtime persistence:
 
 - Database: `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`)
-- Physical SQLite schema: version 2; domain store schema: `4.0.0`
+- Physical SQLite schema: version 5; domain store schema: `5.0.0`
+- User accounts have a personal profile page and administrators have a dedicated user-management page; interface-language preferences are saved per account in SQLite.
 - Snapshot writes: SQLite transactions with foreign-key validation
 - Integrity checks: SQLite and domain-level checks
 - Backup command: `npm run backup:data` creates `.sqlite` backups
@@ -243,7 +244,7 @@ Each activity report row includes:
 
 The report studio prepares each export through an authenticated API request against a fresh SQLite snapshot. It selects database-backed fields and records rather than printing the on-screen application; no screenshot or interface markup is used as report data. Dataset/field allowlists and role checks apply server-side, and export/print requests are audit logged.
 
-Supported outputs are CSV, Excel (XLSX), JSON, PDF, and a separate print-ready HTML document. The studio supports selected standard and configured visible custom fields, configurable titles, locale/timezone-aware dates and numbers, row grouping and sorting, executive/ledger/compact templates, accent colors, summary metrics, workspace branding, review sign-off, PDF/print A4/Letter/Legal sizing, orientation and margins, and RTL-aware table presentation. Structured CSV/JSON remain data-first; visual document options apply to PDF, XLSX, and print output where supported. A single export is limited to 25,000 database records; export larger collections in smaller filtered sets.
+Supported outputs are CSV, Excel (XLSX), JSON, PDF, and a separate print-ready HTML document. The studio supports selected standard and configured visible custom fields, configurable titles, locale/timezone-aware dates and numbers, row grouping and sorting, executive/ledger/compact templates, accent colors, summary metrics, workspace branding, review sign-off, PDF/print A4/Letter/Legal sizing, orientation and margins, and RTL-aware table presentation. Structured CSV/JSON remain data-first; visual document options apply to PDF, XLSX, and print output where supported. Atlas imposes no fixed application-level row cap on exports; very large exports still consume memory and time, so evaluate those costs against the deployment's available resources.
 
 Project cards open a dedicated detail view whose complete linked task list (not only the first page of the workspace task board) comes from `GET /api/projects/:id/tasks`. Search and status controls filter the visible list without changing the project-scoped database export.
 

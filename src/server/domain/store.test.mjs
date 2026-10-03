@@ -34,7 +34,7 @@ const service = createStoreService({
   hashPassword: value => `hashed:${value}`,
   normalizeUserSecrets: user => user,
   allowDemoData: false,
-  STORE_SCHEMA_VERSION: '4.0.0',
+  STORE_SCHEMA_VERSION: '5.0.0',
   DATABASE_MODEL: 'sqlite-relational',
   DESIGN_SYSTEM_VERSION: '2.0.0',
   configuredBackupRetention: () => 25

@@ -31,7 +31,7 @@ const i18nRateLimits = new Map()
 const isProduction = process.env.NODE_ENV === 'production'
 const allowDemoData = process.env.ATLAS_ALLOW_DEMO_DATA === 'true'
 const cookieSecure = process.env.ATLAS_COOKIE_SECURE === 'true'
-const STORE_SCHEMA_VERSION = '4.0.0'
+const STORE_SCHEMA_VERSION = '5.0.0'
 const DATABASE_MODEL = 'sqlite-relational'
 const DESIGN_SYSTEM_VERSION = '2.0.0'
 const DEFAULT_BACKUP_RETENTION = boundedInteger(process.env.ATLAS_BACKUP_RETENTION, 25, 3, 100)

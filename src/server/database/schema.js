@@ -114,7 +114,7 @@ function createCollectionTable(tableName, definition) {
 
 function toSnakeCase(value) { return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`) }
 
-export const CURRENT_SCHEMA_VERSION = 4
+export const CURRENT_SCHEMA_VERSION = 5
 
 function applyMigration(db, version, name, migrate) {
   db.exec('BEGIN IMMEDIATE')
@@ -236,6 +236,12 @@ export function migrateDatabase(db) {
         CREATE INDEX idx_sync_conflicts_status_created ON sync_conflicts(status, created_at);
         CREATE INDEX idx_sync_conflicts_actor_created ON sync_conflicts(actor_id, created_at);
       `)
+    })
+    version = 4
+  }
+  if (version < 5) {
+    applyMigration(db, 5, 'per-user-language-preference', () => {
+      db.exec(`ALTER TABLE user_preferences ADD COLUMN language_code TEXT NOT NULL DEFAULT '' CHECK(language_code = '' OR length(language_code) <= 35)`)
     })
   }
 }

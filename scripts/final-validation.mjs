@@ -80,10 +80,11 @@ function validateSchemaV1Migration() {
 
   const database = openSqliteDatabase(schemaMigrationDatabaseFile, { dataDirectory: schemaMigrationDataDir })
   try {
-    assert.equal(Number(database.prepare('PRAGMA user_version').get().user_version), 4)
+    assert.equal(Number(database.prepare('PRAGMA user_version').get().user_version), 5)
     assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 2").get().name, 'user-saved-filters')
     assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 3").get().name, 'offline-sync-idempotency')
     assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 4").get().name, 'offline-sync-conflict-audit')
+    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 5").get().name, 'per-user-language-preference')
     const syncRepository = new SqliteStoreRepository(database, { filePath: schemaMigrationDatabaseFile, dataDirectory: schemaMigrationDataDir })
     const syncOperation = { operationId: 'migration-offline-op-00000001', actorId: 'migration-user', requestHash: 'migration-hash' }
     syncRepository.completeSyncOperation(syncOperation, 200, { ok: true, entityId: 'offline-task-test' })
@@ -103,7 +104,7 @@ function validateSchemaV1Migration() {
   } finally {
     database.close()
   }
-  record('SQLite schema v1-to-v4 migrations, offline-sync receipts and conflict-audit retention, and user-preference cascade', 'pass')
+  record('SQLite schema v1-to-v5 migrations, offline-sync receipts and conflict-audit retention, and user-preference cascade', 'pass')
 }
 async function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 async function raw(pathname, options = {}) {
@@ -288,7 +289,7 @@ async function main() {
     assert.equal(bootstrap.body.settings.workLedger.retentionMonths, 24)
     assert.ok(bootstrap.body.settings.localization.textDirectionByLanguage.ar === 'rtl')
     const runtime = await admin.get('/api/runtime-config')
-    assert.equal(runtime.body.database.schemaVersion, 4)
+    assert.equal(runtime.body.database.schemaVersion, 5)
     assert.equal(runtime.body.database.engine, 'SQLite')
     assert.equal(runtime.body.database.transactionalWrites, true)
     assert.equal(runtime.body.designSystem.version, '2.0.0')
@@ -321,9 +322,11 @@ async function main() {
       projects: [{ field: 'name', operator: 'contains', join: 'AND', value: 'Atlas' }],
       tasks: []
     }
-    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: {} })
-    assert.deepEqual((await admin.put('/api/preferences', { filters: adminFilters })).body, { filters: adminFilters })
-    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: adminFilters })
+    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: {}, language: '' })
+    assert.deepEqual((await admin.put('/api/preferences', { filters: adminFilters })).body, { filters: adminFilters, language: '' })
+    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: adminFilters, language: '' })
+    assert.deepEqual((await admin.put('/api/preferences', { language: 'ar' })).body, { filters: adminFilters, language: 'ar' })
+    assert.deepEqual((await admin.get('/api/preferences')).body, { filters: adminFilters, language: 'ar' })
     await admin.put('/api/preferences', { filters: { tasks: [{ field: 'status', operator: 'invalid', value: 'Done' }] } }, 400)
     await admin.put('/api/preferences', { filters: { tasks: [{ field: 'status', operator: 'equals', join: 'XOR', value: 'Done' }] } }, 400)
     await admin.put('/api/preferences', { filters: adminFilters, unexpected: true }, 400)
@@ -364,7 +367,7 @@ async function main() {
     await admin2.post('/api/auth/login', { email: 'admin@example.com', password: 'StrongPass123' })
     bootstrap = await admin2.get('/api/bootstrap')
     assert.equal(bootstrap.body.settings.workspace.name, 'Atlas Acceptance Backup Point')
-    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters })
+    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters, language: 'ar' })
     record('backup restoration and restart persistence', 'pass')
     await admin2.get('/api/no-such-route', 404)
     await admin2.post('/api/audit/export', { title: 'API audit smoke test', format: 'csv', rowCount: 1 })
@@ -419,10 +422,10 @@ async function main() {
     await manager.get('/api/settings/export', 403)
     await manager.get('/api/users', 403)
     record('non-administrator access to global settings, runtime metadata, translation catalog, and account directory is denied', 'pass')
-    assert.deepEqual((await manager.get('/api/preferences')).body, { filters: {} })
+    assert.deepEqual((await manager.get('/api/preferences')).body, { filters: {}, language: '' })
     const managerFilters = { tasks: [{ field: 'title', operator: 'contains', join: 'AND', value: 'release' }] }
-    assert.deepEqual((await manager.put('/api/preferences', { filters: managerFilters })).body, { filters: managerFilters })
-    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters })
+    assert.deepEqual((await manager.put('/api/preferences', { filters: managerFilters })).body, { filters: managerFilters, language: '' })
+    assert.deepEqual((await admin2.get('/api/preferences')).body, { filters: adminFilters, language: 'ar' })
     record('saved filters are isolated between authenticated users', 'pass')
     let project = (await manager.post('/api/projects', { name: 'Client Portal مشروع', code: 'CP', description: 'Bilingual delivery project', teamId: team.id, ownerId: managerPerson.id, color: 'purple', status: 'On track' })).body
     await manager.post('/api/milestones', { name: 'Pilot review', projectId: project.numericId, status: 'Upcoming' })
@@ -611,10 +614,10 @@ async function main() {
     assert.ok(finalBootstrap.body.tasks.length >= 162)
     assert.equal(finalBootstrap.body.settings.language, 'ar')
     assert.ok(finalBootstrap.body.settings.customFields.tasks.some(f => f.key === 'client_code'))
-    assert.deepEqual((await admin3.get('/api/preferences')).body, { filters: adminFilters })
+    assert.deepEqual((await admin3.get('/api/preferences')).body, { filters: adminFilters, language: 'ar' })
     const persistedManager = new Client('manager-after-final-restart')
     await persistedManager.post('/api/auth/login', { email: 'manager@example.com', password: 'ManagerPass123' })
-    assert.deepEqual((await persistedManager.get('/api/preferences')).body, { filters: managerFilters })
+    assert.deepEqual((await persistedManager.get('/api/preferences')).body, { filters: managerFilters, language: '' })
     record('final restart data/settings and per-user filters persistence', 'pass')
 
     await stopServer()
@@ -641,8 +644,8 @@ async function main() {
     assert.equal(migrationReport.body.rows.some(row => row.id === 'wl_seed_legacy_fake'), false)
     if (preservedWorkLogId) assert.equal(migrationReport.body.rows.find(row => row.id === preservedWorkLogId)?.minutes, 45)
     const migrationHealth = await migrated.get('/api/system')
-    assert.equal(migrationHealth.body.store.schemaVersion, '4.0.0')
-    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 4)
+    assert.equal(migrationHealth.body.store.schemaVersion, '5.0.0')
+    assert.equal(migrationHealth.body.store.databaseSchemaVersion, 5)
     record('legacy work-log migration removes generated rows and preserves explicit minutes', 'pass')
 
     await stopServer()

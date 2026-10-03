@@ -196,7 +196,7 @@ function createCollectionTable(tableName2, definition) {
 function toSnakeCase(value) {
   return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
-var CURRENT_SCHEMA_VERSION = 4;
+var CURRENT_SCHEMA_VERSION = 5;
 function applyMigration(db, version, name, migrate) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -317,6 +317,12 @@ function migrateDatabase(db) {
         CREATE INDEX idx_sync_conflicts_status_created ON sync_conflicts(status, created_at);
         CREATE INDEX idx_sync_conflicts_actor_created ON sync_conflicts(actor_id, created_at);
       `);
+    });
+    version = 4;
+  }
+  if (version < 5) {
+    applyMigration(db, 5, "per-user-language-preference", () => {
+      db.exec(`ALTER TABLE user_preferences ADD COLUMN language_code TEXT NOT NULL DEFAULT '' CHECK(language_code = '' OR length(language_code) <= 35)`);
     });
   }
 }
@@ -781,22 +787,40 @@ function parseFilters(value) {
     return {};
   }
 }
+function normalizeLanguage(value) {
+  return typeof value === "string" ? value : "";
+}
 var UserPreferencesRepository = class {
   constructor(db) {
-    this.getStatement = db.prepare("SELECT filters_json FROM user_preferences WHERE user_id = ?");
+    this.getStatement = db.prepare("SELECT filters_json, language_code FROM user_preferences WHERE user_id = ?");
     this.saveStatement = db.prepare(`
-      INSERT INTO user_preferences(user_id, filters_json, updated_at)
-      VALUES(?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET filters_json = excluded.filters_json, updated_at = excluded.updated_at
+      INSERT INTO user_preferences(user_id, filters_json, language_code, updated_at)
+      VALUES(?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        filters_json = excluded.filters_json,
+        language_code = excluded.language_code,
+        updated_at = excluded.updated_at
     `);
   }
-  getFilters(userId) {
+  getPreferences(userId) {
     const row = this.getStatement.get(String(userId));
-    return parseFilters(row?.filters_json);
+    return {
+      filters: parseFilters(row?.filters_json),
+      language: normalizeLanguage(row?.language_code)
+    };
+  }
+  savePreferences(userId, preferences = {}) {
+    const current = this.getPreferences(userId);
+    const filters = Object.hasOwn(preferences, "filters") ? preferences.filters : current.filters;
+    const language = Object.hasOwn(preferences, "language") ? normalizeLanguage(preferences.language) : current.language;
+    this.saveStatement.run(String(userId), JSON.stringify(filters || {}), language, (/* @__PURE__ */ new Date()).toISOString());
+    return this.getPreferences(userId);
+  }
+  getFilters(userId) {
+    return this.getPreferences(userId).filters;
   }
   saveFilters(userId, filters) {
-    this.saveStatement.run(String(userId), JSON.stringify(filters), (/* @__PURE__ */ new Date()).toISOString());
-    return this.getFilters(userId);
+    return this.savePreferences(userId, { filters }).filters;
   }
 };
 
@@ -1786,31 +1810,97 @@ function normalizeFilters(value) {
       const { field: field3, operator, join, value: filterValue } = condition;
       if (typeof field3 !== "string" || !FIELD_PATTERN.test(field3)) return null;
       if (typeof operator !== "string" || !FILTER_OPERATORS.has(operator)) return null;
-      if (join !== void 0 && (typeof join !== "string" || !FILTER_JOINS.has(join))) return null;
+      if (join !== void 0 && typeof join !== "string") return null;
+      if (join !== void 0 && !FILTER_JOINS.has(join)) return null;
       if (typeof filterValue !== "string" || filterValue.length > MAX_FILTER_VALUE_LENGTH) return null;
-      normalizedConditions.push({
-        field: field3,
-        operator,
-        join: join || "AND",
-        value: filterValue
-      });
+      normalizedConditions.push({ field: field3, operator, join: join || "AND", value: filterValue });
     }
     normalized[key] = normalizedConditions;
   }
   return normalized;
 }
+function enabledLanguageCodes(settings) {
+  const localization = settings?.localization || {};
+  const packages = Array.isArray(localization.languagePackages) ? localization.languagePackages : [];
+  const active = Array.isArray(localization.activeLanguages) && localization.activeLanguages.length ? new Set(localization.activeLanguages.map(String)) : new Set(packages.filter((item) => item?.enabled !== false).map((item) => String(item?.code || "")).filter(Boolean));
+  const defaultLanguage = String(localization.defaultLanguage || settings?.language || "");
+  if (defaultLanguage && packages.some((item) => item?.code === defaultLanguage && item.enabled !== false)) active.add(defaultLanguage);
+  return new Set(packages.filter((item) => item && typeof item.code === "string" && item.enabled !== false && active.has(item.code)).map((item) => item.code));
+}
+function normalizeLanguage2(value, settings) {
+  if (value === "" || value === null) return "";
+  if (typeof value !== "string" || !/^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(value)) return null;
+  if (settings?.localization?.userLanguagePreference === false) return false;
+  return enabledLanguageCodes(settings).has(value) ? value : null;
+}
 function registerPreferencesRoutes(app2, services) {
-  const { requireUser: requireUser2, sendError: sendError2, userPreferencesRepository: userPreferencesRepository2 } = services;
+  const { requireUser: requireUser2, sendError: sendError2, userPreferencesRepository: userPreferencesRepository2, store: store2 } = services;
   app2.get("/api/preferences", requireUser2, (req, res) => {
-    res.json({ filters: userPreferencesRepository2.getFilters(req.user.id) });
+    res.json(userPreferencesRepository2.getPreferences(req.user.id));
   });
   app2.put("/api/preferences", requireUser2, (req, res) => {
-    if (Object.keys(req.body || {}).some((key) => key !== "filters")) {
-      return sendError2(res, 400, "Only saved filter preferences may be updated");
+    const body = req.body || {};
+    if (Object.keys(body).some((key) => !["filters", "language"].includes(key))) {
+      return sendError2(res, 400, "Only saved filters and the current user\u2019s language preference may be updated");
     }
-    const filters = normalizeFilters(req.body?.filters);
-    if (!filters) return sendError2(res, 400, "Saved filters contain invalid or oversized conditions");
-    res.json({ filters: userPreferencesRepository2.saveFilters(req.user.id, filters) });
+    if (!Object.hasOwn(body, "filters") && !Object.hasOwn(body, "language")) {
+      return sendError2(res, 400, "At least one user preference must be provided");
+    }
+    const current = userPreferencesRepository2.getPreferences(req.user.id);
+    const next = { ...current };
+    if (Object.hasOwn(body, "filters")) {
+      const filters = normalizeFilters(body.filters);
+      if (!filters) return sendError2(res, 400, "Saved filters contain invalid or oversized conditions");
+      next.filters = filters;
+    }
+    if (Object.hasOwn(body, "language")) {
+      const language = normalizeLanguage2(body.language, store2?.settings);
+      if (language === false) return sendError2(res, 403, "Per-user language preferences are disabled by the workspace administrator");
+      if (language === null) return sendError2(res, 400, "Choose an enabled workspace language");
+      next.language = language;
+    }
+    res.json(userPreferencesRepository2.savePreferences(req.user.id, next));
+  });
+}
+
+// src/lib/constants.js
+var AVATAR_COLORS = ["purple", "blue", "orange", "green", "pink", "teal"];
+
+// src/server/routes/profile.routes.js
+var PROFILE_FIELDS = /* @__PURE__ */ new Set(["name", "avatarColor"]);
+function registerProfileRoutes(app2, services) {
+  const { store: store2, sendError: sendError2, requireUser: requireUser2, publicAccessUser: publicAccessUser2, validText: validText2, personById: personById2, auditLog: auditLog2, persist: persist2 } = services;
+  app2.get("/api/profile", requireUser2, (req, res) => {
+    res.json({ user: publicAccessUser2(req.user) });
+  });
+  app2.put("/api/profile", requireUser2, (req, res) => {
+    const body = req.body || {};
+    const keys = Object.keys(body);
+    if (!keys.length || keys.some((key) => !PROFILE_FIELDS.has(key))) {
+      return sendError2(res, 400, "Only your display name and avatar color may be changed here");
+    }
+    const user = store2.users.find((candidate) => String(candidate.id) === String(req.user.id));
+    if (!user) return sendError2(res, 404, "User profile was not found");
+    const name = body.name === void 0 ? user.name : typeof body.name === "string" ? body.name.trim() : "";
+    const avatarColor = body.avatarColor === void 0 ? user.avatarColor || "purple" : body.avatarColor;
+    if (!validText2(name, 120)) return sendError2(res, 400, "A display name of 1 to 120 characters is required");
+    if (typeof avatarColor !== "string" || !AVATAR_COLORS.includes(avatarColor)) {
+      return sendError2(res, 400, "Choose one of the available avatar colors");
+    }
+    const changed = [];
+    if (user.name !== name) changed.push("name");
+    if ((user.avatarColor || "purple") !== avatarColor) changed.push("avatarColor");
+    if (changed.length) {
+      Object.assign(user, { name, avatarColor });
+      const person = personById2(user.personId);
+      if (person) {
+        if (changed.includes("name")) person.name = name;
+        if (changed.includes("avatarColor")) person.color = avatarColor;
+      }
+      auditLog2("user.profile.updated", user.id, { fields: changed });
+      persist2({ reason: "user-profile" });
+    }
+    res.json({ user: publicAccessUser2(user) });
   });
 }
 
@@ -2086,6 +2176,7 @@ function registerRoutes(app2, services) {
   registerActivityAlertRoutes(app2, services);
   registerUserRoutes(app2, services);
   registerPreferencesRoutes(app2, services);
+  registerProfileRoutes(app2, services);
   registerExportRoutes(app2, services);
   app2.use("/api", (_req, res) => services.sendError(res, 404, "API route not found"));
 }
@@ -3621,7 +3712,8 @@ var ENTITY_FIELDS = Object.freeze({
   milestones: ["name", "projectId", "dueDate", "status", "customFields"],
   alerts: ["title", "body", "type", "tone", "projectId", "taskId", "personId", "activityId", "source", "resolved", "createdAt", "lastSeenAt", "customFields"],
   activities: ["personId", "date", "time", "yesterday", "today", "blocked", "upcoming", "status", "customFields"],
-  preferences: ["filters"],
+  profile: ["name", "avatarColor"],
+  preferences: ["filters", "language"],
   settings: []
 });
 var CREATE_PATHS = /* @__PURE__ */ new Map([
@@ -3709,6 +3801,7 @@ function classifySyncRequest(method, pathname) {
   }
   if (verb === "PUT" && cleanPath === "/api/settings") return { collection: "settings", action: "update", id: "workspace" };
   if (verb === "PUT" && cleanPath === "/api/preferences") return { collection: "preferences", action: "update", id: "current-user" };
+  if (verb === "PUT" && cleanPath === "/api/profile") return { collection: "profile", action: "update", id: "current-user" };
   if (verb === "POST" && CREATE_PATHS.has(cleanPath)) return { collection: CREATE_PATHS.get(cleanPath), action: "create", id: "" };
   if (verb === "PUT" || verb === "PATCH" || verb === "DELETE") {
     const match = cleanPath.match(/^\/api\/(tasks|projects|people|teams|milestones|activity|alerts)\/([^/]+)(?:\/(status))?$/);
@@ -3827,6 +3920,7 @@ function mergeOfflineRecord({ collection, baseRecord, currentRecord, localBody, 
   return { ok: conflicts.length === 0, fields: conflicts, mergedBody: conflicts.length ? null : mergedBody };
 }
 function findRecord(store2, collection, entityId) {
+  if (collection === "profile") return store2?.users?.find((record) => String(record.id) === String(entityId)) || null;
   return store2?.[collection]?.find((record) => String(record.id) === String(entityId)) || null;
 }
 function syncRequestHash({ method, pathname, body, localId, baseRecord }) {
@@ -3887,6 +3981,7 @@ function maySynchronize(classification, actor, store2, body, can2, storeReposito
     return Boolean(task && String(task.assigneeId || "") === String(actor.personId || ""));
   };
   if (classification.collection === "preferences") return true;
+  if (classification.collection === "profile") return String(classification.id) === String(actor.id);
   if (classification.collection === "settings") return actor.role === "Administrator" && hasPermission(can2, actor, "manageSettings");
   if (classification.collection === "tasks") {
     if (classification.statusOnly && hasPermission(can2, actor, "writeTasks")) return hasPermission(can2, actor, "manageTasks") || ownsTask(classification.id);
@@ -3931,6 +4026,7 @@ function createOfflineSyncMiddleware({ getStore, sessions: sessions2, storeRepos
     const actor = store2?.users?.find((user) => user.id === session.userId && user.active !== false);
     if (!actor) return sendError2(res, 401, "Sign in to synchronize pending changes");
     req.user = actor;
+    if (classification.collection === "profile") classification.id = String(actor.id);
     const cleanBody = req.body || {};
     if (!maySynchronize(classification, actor, store2, cleanBody, can2, storeRepository2)) return sendError2(res, 403, "Your current role is not allowed to synchronize this change");
     const sendConflict = (payload) => {
@@ -4114,7 +4210,7 @@ var i18nRateLimits = /* @__PURE__ */ new Map();
 var isProduction = process.env.NODE_ENV === "production";
 var allowDemoData = process.env.ATLAS_ALLOW_DEMO_DATA === "true";
 var cookieSecure = process.env.ATLAS_COOKIE_SECURE === "true";
-var STORE_SCHEMA_VERSION = "4.0.0";
+var STORE_SCHEMA_VERSION = "5.0.0";
 var DATABASE_MODEL = "sqlite-relational";
 var DESIGN_SYSTEM_VERSION = "2.0.0";
 var DEFAULT_BACKUP_RETENTION = boundedInteger(process.env.ATLAS_BACKUP_RETENTION, 25, 3, 100);

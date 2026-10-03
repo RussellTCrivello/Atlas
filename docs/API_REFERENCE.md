@@ -146,6 +146,16 @@ Returns the data required by the UI shell:
 
 Public user objects never include password hashes. Ordinary users cannot request another person’s activity by changing a query parameter or export scope; server-side scoping overrides the supplied person id. Individual activity rankings and all-person evidence reports are Administrator-only.
 
+## Personal preferences
+
+### `GET /api/preferences`
+
+Requires authentication and returns the current account's saved-filter map and optional personal UI language.
+
+### `PUT /api/preferences`
+
+Accepts `filters`, `language`, or both. `language` must name an enabled workspace language; the empty string means use the workspace default. Each user's value is stored in SQLite and is separate from the administrator-controlled workspace default. Preference writes are included in the offline outbox.
+
 ## Reports
 
 ### `GET /api/reports/:period`
@@ -463,4 +473,12 @@ Safety rules:
 
 - Cannot delete your own account.
 - Cannot delete the last active administrator.
+
+### `GET /api/profile`
+
+Requires authentication and returns only the current account's public profile fields.
+
+### `PUT /api/profile`
+
+Allows a signed-in user to change only their own display name and avatar color. When linked to a workspace person, those two visible identity fields stay in sync. Email, password, role, and account status remain administrator-managed. Profile updates use field-aware offline conflict checks.
 

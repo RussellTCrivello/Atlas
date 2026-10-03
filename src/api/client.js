@@ -132,6 +132,8 @@ async function apiRequest(path, options = {}) {
       await cacheApiResponse(path, body).catch(() => {})
       const session = await getOfflineSession()
       if (session && ensureSessionNotExpired(session)) return applyOfflineProjection(path, body, session.userId).catch(() => body)
+    } else if (method === 'PUT' && ['/api/preferences', '/api/profile'].includes(String(path).split('?')[0])) {
+      await cacheApiResponse(String(path).split('?')[0], body).catch(() => {})
     }
     return body
   }

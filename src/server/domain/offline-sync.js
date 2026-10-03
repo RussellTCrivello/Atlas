@@ -8,7 +8,8 @@ const ENTITY_FIELDS = Object.freeze({
   milestones: ['name', 'projectId', 'dueDate', 'status', 'customFields'],
   alerts: ['title', 'body', 'type', 'tone', 'projectId', 'taskId', 'personId', 'activityId', 'source', 'resolved', 'createdAt', 'lastSeenAt', 'customFields'],
   activities: ['personId', 'date', 'time', 'yesterday', 'today', 'blocked', 'upcoming', 'status', 'customFields'],
-  preferences: ['filters'],
+  profile: ['name', 'avatarColor'],
+  preferences: ['filters', 'language'],
   settings: []
 })
 
@@ -80,6 +81,7 @@ export function classifySyncRequest(method, pathname) {
   }
   if (verb === 'PUT' && cleanPath === '/api/settings') return { collection: 'settings', action: 'update', id: 'workspace' }
   if (verb === 'PUT' && cleanPath === '/api/preferences') return { collection: 'preferences', action: 'update', id: 'current-user' }
+  if (verb === 'PUT' && cleanPath === '/api/profile') return { collection: 'profile', action: 'update', id: 'current-user' }
   if (verb === 'POST' && CREATE_PATHS.has(cleanPath)) return { collection: CREATE_PATHS.get(cleanPath), action: 'create', id: '' }
   if (verb === 'PUT' || verb === 'PATCH' || verb === 'DELETE') {
     const match = cleanPath.match(/^\/api\/(tasks|projects|people|teams|milestones|activity|alerts)\/([^/]+)(?:\/(status))?$/)
@@ -192,6 +194,7 @@ export function mergeOfflineRecord({ collection, baseRecord, currentRecord, loca
 }
 
 export function findRecord(store, collection, entityId) {
+  if (collection === 'profile') return store?.users?.find(record => String(record.id) === String(entityId)) || null
   return store?.[collection]?.find(record => String(record.id) === String(entityId)) || null
 }
 
@@ -250,6 +253,7 @@ function maySynchronize(classification, actor, store, body, can, storeRepository
     return Boolean(task && String(task.assigneeId || '') === String(actor.personId || ''))
   }
   if (classification.collection === 'preferences') return true
+  if (classification.collection === 'profile') return String(classification.id) === String(actor.id)
   if (classification.collection === 'settings') return actor.role === 'Administrator' && hasPermission(can, actor, 'manageSettings')
   if (classification.collection === 'tasks') {
     if (classification.statusOnly && hasPermission(can, actor, 'writeTasks')) return hasPermission(can, actor, 'manageTasks') || ownsTask(classification.id)
@@ -296,6 +300,7 @@ export function createOfflineSyncMiddleware({ getStore, sessions, storeRepositor
     const actor = store?.users?.find(user => user.id === session.userId && user.active !== false)
     if (!actor) return sendError(res, 401, 'Sign in to synchronize pending changes')
     req.user = actor
+    if (classification.collection === 'profile') classification.id = String(actor.id)
     const cleanBody = req.body || {}
     if (!maySynchronize(classification, actor, store, cleanBody, can, storeRepository)) return sendError(res, 403, 'Your current role is not allowed to synchronize this change')
     const sendConflict = payload => {

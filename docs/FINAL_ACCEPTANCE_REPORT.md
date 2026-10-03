@@ -32,8 +32,8 @@ The production web/server build succeeded, and the latest isolated production wo
 
 - Runtime database: `<ATLAS_DATA_DIR>/atlas.sqlite`; default `data/atlas.sqlite`.
 - Electron database: `<userData>/data/atlas.sqlite`.
-- Physical schema version: SQLite `PRAGMA user_version = 2`.
-- Domain data schema: `4.0.0`.
+- Physical schema version: SQLite `PRAGMA user_version = 5`.
+- Domain data schema: `5.0.0`; physical SQLite schema: version `5`.
 - Tables include teams, people, projects, tasks, milestones, activities, alerts, users, per-user `user_preferences`, work logs, audit logs, settings, metadata, counters, and migration history.
 - Writes use SQLite transactions, foreign-key checks, WAL journaling, and `synchronous=FULL`.
 - Backups are standalone `.sqlite` files created with `VACUUM INTO`; restore only with Atlas stopped and stale WAL/SHM files handled as documented.

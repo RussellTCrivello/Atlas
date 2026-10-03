@@ -82,6 +82,22 @@ assert.deepEqual(classifySyncRequest('PUT', '/api/settings'), { collection: 'set
 assert.deepEqual(classifySyncRequest('POST', '/api/offline-sync/conflicts/op-1234567890123456/resolve'), { collection: 'syncConflicts', action: 'resolve', id: 'op-1234567890123456' })
 assert.equal(classifySyncRequest('POST', '/api/users'), null)
 assert.deepEqual(classifySyncRequest('PUT', '/api/preferences'), { collection: 'preferences', action: 'update', id: 'current-user' })
+assert.deepEqual(classifySyncRequest('PUT', '/api/profile'), { collection: 'profile', action: 'update', id: 'current-user' })
+const profileBase = { name: 'Avery Example', avatarColor: 'purple' }
+const profileDisjoint = mergeOfflineRecord({
+  collection: 'profile', baseRecord: profileBase,
+  currentRecord: { ...profileBase, avatarColor: 'blue' },
+  localBody: { name: 'Avery Chen' }
+})
+assert.equal(profileDisjoint.ok, true, 'profile fields merge independently through the offline conflict path')
+assert.deepEqual(profileDisjoint.mergedBody, { name: 'Avery Chen' }, 'untouched profile fields remain server-owned and are omitted from the merged patch')
+const profileOverlap = mergeOfflineRecord({
+  collection: 'profile', baseRecord: profileBase,
+  currentRecord: { ...profileBase, name: 'Avery Server' },
+  localBody: { name: 'Avery Local' }
+})
+assert.equal(profileOverlap.ok, false)
+assert.deepEqual(profileOverlap.fields.map(field => field.path), ['name'])
 
 const requestHash = syncRequestHash({ method: 'PUT', pathname: '/api/tasks/41', body: { status: 'Review' }, localId: null, baseRecord: taskBase })
 assert.equal(requestHash, syncRequestHash({ method: 'PUT', pathname: '/api/tasks/41', body: { status: 'Review' }, localId: null, baseRecord: taskBase }))
