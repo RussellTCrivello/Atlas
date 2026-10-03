@@ -9,6 +9,7 @@
     "web": "tsx app.tsx",
     "dev": "tsx app.tsx",
     "build": "npm run build:web && npm run build:server",
+    "test:unit": "node src/lib/advanced-filters.test.mjs && node src/lib/legacy-filter-preferences.test.mjs && node src/lib/localization.test.mjs && node src/lib/workspace.test.mjs && node src/i18n/catalog.test.mjs && node src/i18n/export-catalog.test.mjs && node src/server/database/user-preferences-repository.test.mjs && node src/server/http/auth-middleware.test.mjs && node src/server/routes/preferences.routes.test.mjs && node src/server/routes/profile.routes.test.mjs && node src/server/domain/export-data.test.mjs && node src/server/domain/settings.test.mjs && node src/server/domain/store.test.mjs && node src/server/domain/offline-sync.test.mjs && node src/api/offline-sync.test.mjs && node src/lib/record-table.test.mjs",
     "build:web": "vite build",
     "build:server": "esbuild app.tsx --platform=node --format=esm --bundle --packages=external --outfile=dist-desktop/app.mjs",
     "preview": "npm run build && npm run start",
@@ -21,22 +22,22 @@
     "backup:data": "tsx app.tsx --backup-data"
   },
   "dependencies": {
-    "cookie-parser": "latest",
-    "express": "latest"
+    "cookie-parser": "1.4.7",
+    "express": "5.2.1"
   },
   "main": "electron/main.cjs",
   "devDependencies": {
-    "electron": "^44.5.1",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.2",
-    "@vitejs/plugin-react": "latest",
-    "fflate": "latest",
-    "jspdf": "latest",
-    "jspdf-autotable": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "tsx": "^4.23.15",
-    "vite": "latest"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "@vitejs/plugin-react": "6.1.1",
+    "fflate": "0.8.3",
+    "jspdf": "4.2.1",
+    "jspdf-autotable": "5.0.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tsx": "4.23.15",
+    "vite": "8.3.2"
   },
   "build": {
     "appId": "ai.arena.atlasworkspace",
@@ -81,6 +82,6 @@
   },
   "author": "Atlas Workspace Team",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   }
 }

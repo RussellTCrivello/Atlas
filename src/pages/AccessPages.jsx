@@ -1,0 +1,67 @@
+import React, { useEffect, useState } from 'react'
+import { api } from '../api/client.js'
+import { Icon } from '../components/Icon.jsx'
+import { Logo, RoleBadge } from '../components/common.jsx'
+import { defaultSettings } from '../config/workspace-defaults.js'
+import { textDirection } from '../lib/localization.js'
+import { slug } from '../lib/strings.js'
+import { languageOptions, mergeDeep } from '../lib/workspace.js'
+import { canonicalUiPhrase, translateUiText } from '../i18n/catalog.js'
+
+export function LoginScreen({ onLogin, setup }) {
+  const demoAccounts = setup?.demoAllowed ? (setup?.demo?.accounts || []) : []
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const submit = async e => { e.preventDefault(); setLoading(true); setError(''); try { await onLogin(email, password) } catch (err) { setError(err.message) } finally { setLoading(false) } }
+  const choose = account => { setEmail(account.email); setPassword(account.password) }
+  return <div className="login-shell"><div className="login-art"><div className="login-art-inner"><div className="brand login-brand"><Logo/><span>atlas</span></div><div className="login-quote"><span className="eyebrow"><span className="eyebrow-dot"/> Production workspace access</span><h1>Sign in with<br/><em>confidence.</em></h1><p>Secure access for your workspace.</p></div><div className="login-art-footer"><span>Atlas Workspace</span><span>Production workspace</span></div></div></div><div className="login-panel"><form className="login-form" onSubmit={submit}><span className="eyebrow"><span className="eyebrow-dot"/> Secure access</span><h2>Sign in to Atlas</h2><p>Sign in with your workspace account.</p><label>Email address<input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required autoFocus/></label><label>Password<input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label>{error && <div className="form-error"><Icon name="warning" size={15}/>{error}</div>}<button className="primary-button login-submit" disabled={loading}>{loading ? 'Signing in…' : 'Continue'}<Icon name="arrow" size={15}/></button>{demoAccounts.length > 0 ? <div className="demo-accounts"><strong>Development demo roles</strong><div className="demo-account-grid">{demoAccounts.map(account => <button type="button" key={account.email} onClick={() => choose(account)} className={email === account.email ? 'selected' : ''}><RoleBadge role={account.role}/><span>{account.name || account.email}</span><small>{account.email}</small></button>)}</div><small>Demo access appears only when ATLAS_ALLOW_DEMO_DATA=true.</small></div> : <div className="demo-accounts production-note"><strong>Production mode</strong><span>No sample credentials are exposed.</span><small>Ask a workspace administrator for access if you do not have an account.</small></div>}</form></div></div>
+}
+export function SetupWizard({ onComplete, setup, onPreviewLanguage }) {
+  const demoAllowed = Boolean(setup?.demoAllowed)
+  const moduleDefaults = { overview: true, projects: true, tasks: true, people: true, activity: true, reports: true, alerts: true }
+  const [form, setForm] = useState({
+    name: '', email: '', password: '', includeDemo: false,
+    workspaceName: 'Atlas Workspace', workspaceUnit: 'Operations', applicationName: 'Atlas Workspace', organizationName: '', contactEmail: '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles', language: 'en', currency: 'USD', dateFormat: 'MMM d, yyyy',
+    theme: 'light', accent: 'purple', density: 'comfortable', modules: moduleDefaults,
+    workflowName: 'Default task workflow', workflowStates: 'To do\nIn progress\nReview\nTesting\nDone'
+  })
+  const [step, setStep] = useState(0)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  useEffect(() => { onPreviewLanguage?.(form.language) }, [form.language, onPreviewLanguage])
+  useEffect(() => () => onPreviewLanguage?.(''), [onPreviewLanguage])
+  const steps = ['Workspace', 'Region & appearance', 'Operations', 'Administrator']
+  const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const toggleModule = (key, value) => setForm(current => ({ ...current, modules: { ...current.modules, [key]: value } }))
+  const workflowLabels = form.workflowStates.split('\n').map(item => item.trim()).filter(Boolean)
+  const languageSettings = { ...defaultSettings, localization: { ...defaultSettings.localization, defaultLanguage: form.language } }
+  const displayWorkflowStates = form.workflowStates.split('\n').map(label => translateUiText(languageSettings, label)).join('\n')
+  const selectedModules = Object.entries(form.modules).filter(([, enabled]) => enabled).map(([key]) => key)
+  const strength = Math.min(100, Math.max(10, (form.password.length / 14) * 100))
+  const canContinue = step === 0 ? form.workspaceName.trim() && form.workspaceUnit.trim() : step === 1 ? form.timezone.trim() && form.language : step === 2 ? selectedModules.length && workflowLabels.length >= 2 : form.name.trim() && form.email.trim() && form.password.length >= 8
+  const buildSettings = () => {
+    const states = workflowLabels.map((label, index) => ({ id: slug(label), label, color: index === workflowLabels.length - 1 ? 'green' : ['blue', 'purple', 'orange'][index % 3], terminal: index === workflowLabels.length - 1 }))
+    return mergeDeep(defaultSettings, {
+      workspaceName: form.workspaceName, workspaceUnit: form.workspaceUnit, language: form.language, dateFormat: form.dateFormat, theme: form.theme, accentColor: form.accent, density: form.density,
+      enabledPages: selectedModules,
+      workspace: { name: form.workspaceName, unit: form.workspaceUnit, applicationName: form.applicationName || form.workspaceName, organization: { legalName: form.organizationName, contactEmail: form.contactEmail }, defaultTimezone: form.timezone, defaultLanguage: form.language, regionalFormats: { date: form.dateFormat, currency: form.currency } },
+      interface: { theme: form.theme, colors: { accent: form.accent }, density: form.density, navigationVisibility: form.modules, defaultLandingPage: selectedModules.includes('overview') ? 'overview' : selectedModules[0] || 'overview' },
+      localization: { defaultLanguage: form.language, fallbackLanguage: 'en', activeLanguages: [...new Set(['en', form.language, 'ar', 'fa', 'he'])].filter(Boolean) },
+      modules: Object.fromEntries(Object.entries(form.modules).map(([key, enabled]) => [key, { ...(defaultSettings.modules[key] || {}), enabled }])),
+      workflows: { task: { name: form.workflowName, states, transitions: states.slice(0, -1).map((state, index) => ({ from: state.label, to: states[index + 1].label, permission: 'writeTasks' })), approvalSteps: [], automatedActions: [] } }
+    })
+  }
+  const submit = async e => {
+    e.preventDefault()
+    if (step < steps.length - 1) { setStep(step + 1); return }
+    setLoading(true); setError('')
+    try { await onComplete(await api.post('/api/setup', { ...form, settings: buildSettings() })) }
+    catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+  const moduleLabels = { overview: 'Overview', projects: 'Projects', tasks: 'Tasks', people: 'People', activity: 'Activity', reports: 'Reports', alerts: 'Alerts' }
+  return <div className="setup-shell setup-shell-advanced"><div className="setup-layout setup-layout-advanced"><aside className="setup-preview"><div className="setup-brand"><Logo/><strong>atlas</strong></div><label className="setup-language-picker">Interface language<select value={form.language} onChange={e => update('language', e.target.value)}>{languageOptions(defaultSettings).map(lang => <option value={lang.code} key={lang.code}>{lang.code} · {lang.name}</option>)}</select></label><span className="eyebrow"><span className="eyebrow-dot"/> First run</span><h1>{steps[step]}</h1><p>Configure the workspace before inviting the team.</p><div className="setup-steps setup-steps-vertical">{steps.map((label, index) => <button type="button" key={label} className={step === index ? 'active' : index < step ? 'done' : ''} onClick={() => index < step && setStep(index)}><span>{index + 1}</span>{label}</button>)}</div><div className="setup-summary"><div><strong>{form.workspaceName}</strong><span>{form.workspaceUnit}</span></div><div><strong>{form.language.toUpperCase()} · {textDirection({ localization: { defaultLanguage: form.language, textDirectionByLanguage: defaultSettings.localization.textDirectionByLanguage } }).toUpperCase()}</strong><span>{form.timezone}</span></div><div><strong>{selectedModules.length} modules</strong><span>{workflowLabels.length} workflow states</span></div></div></aside><form className="setup-card setup-card-wide setup-card-advanced" onSubmit={submit}><span className="eyebrow"><span className="eyebrow-dot"/> Setup</span>{step === 0 && <><h1>Workspace</h1><p>Name the workspace and organization.</p><div className="setup-grid"><label>Workspace name<input value={form.workspaceName} onChange={e => update('workspaceName', e.target.value)} required autoFocus/></label><label>Unit<input value={form.workspaceUnit} onChange={e => update('workspaceUnit', e.target.value)} required/></label><label>Application name<input value={form.applicationName} onChange={e => update('applicationName', e.target.value)}/></label><label>Organization<input value={form.organizationName} onChange={e => update('organizationName', e.target.value)}/></label><label>Contact email<input type="email" value={form.contactEmail} onChange={e => update('contactEmail', e.target.value)}/></label></div>{demoAllowed && <label className="checkbox-label"><input type="checkbox" checked={form.includeDemo} onChange={e => update('includeDemo', e.target.checked)}/> Install development sample data</label>}</>}{step === 1 && <><h1>Region & appearance</h1><p>Choose language, timezone, and layout defaults.</p><div className="setup-grid"><label>Default language<select value={form.language} onChange={e => update('language', e.target.value)}>{languageOptions(defaultSettings).map(lang => <option value={lang.code} key={lang.code}>{lang.code} · {lang.name}</option>)}</select></label><label>Timezone<input value={form.timezone} onChange={e => update('timezone', e.target.value)} required/></label><label>Date format<input value={form.dateFormat} onChange={e => update('dateFormat', e.target.value)}/></label><label>Currency<input value={form.currency} onChange={e => update('currency', e.target.value)}/></label><label>Theme<select value={form.theme} onChange={e => update('theme', e.target.value)}><option>light</option><option>dark</option><option>system</option></select></label><label>Accent<select value={form.accent} onChange={e => update('accent', e.target.value)}><option>purple</option><option>blue</option><option>green</option><option>orange</option></select></label><label>Density<select value={form.density} onChange={e => update('density', e.target.value)}><option>comfortable</option><option>compact</option></select></label></div></>}{step === 2 && <><h1>Operations</h1><p>Select modules and workflow states.</p><div className="setup-module-grid">{Object.entries(moduleLabels).map(([key, label]) => <label className="interface-toggle" key={key}><input type="checkbox" checked={Boolean(form.modules[key])} disabled={key === 'overview'} onChange={e => toggleModule(key, e.target.checked)}/>{label}</label>)}</div><label>Workflow name<input value={form.workflowName} onChange={e => update('workflowName', e.target.value)}/></label><label>Task workflow states<textarea value={displayWorkflowStates} onChange={e => update('workflowStates', e.target.value.split('\n').map(canonicalUiPhrase).join('\n'))} rows="6"/></label><div className="workflow-preview">{workflowLabels.map((label, index) => <span key={label}>{label}{index < workflowLabels.length - 1 && <Icon name="arrow" size={12}/>}</span>)}</div></>}{step === 3 && <><h1>Administrator</h1><p>Create the first owner account.</p><div className="setup-grid"><label>Administrator name<input value={form.name} onChange={e => update('name', e.target.value)} required autoFocus/></label><label>Email<input value={form.email} onChange={e => update('email', e.target.value)} type="email" required/></label><label>Password<input value={form.password} onChange={e => update('password', e.target.value)} type="password" minLength="8" required/></label></div><div className="password-meter"><span style={{ width: `${strength}%` }}/></div><small className="setup-small">Use at least 8 characters.</small><div className="setup-review"><strong>Ready to initialize</strong><span>{form.workspaceName} · {form.language.toUpperCase()} · {selectedModules.length} modules · {workflowLabels.length} workflow states</span></div></>}{error && <div className="form-error"><Icon name="warning" size={15}/>{error}</div>}<div className="setup-actions">{step > 0 && <button type="button" className="secondary-button" onClick={() => setStep(step - 1)}>Back</button>}<button className="primary-button setup-submit" disabled={loading || !canContinue}>{loading ? 'Preparing…' : step === steps.length - 1 ? 'Initialize workspace' : 'Continue'}<Icon name="arrow" size={15}/></button></div></form></div></div>
+}

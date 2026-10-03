@@ -6,7 +6,8 @@
 - Authentication: HTTP-only `atlas_sid` cookie.
 - Request bodies: JSON.
 - Error format: `{ "error": "Message" }`.
-- Authorization: role permissions enforced server-side.
+- Authorization: role permissions enforced server-side. Workspace settings, runtime metadata, account administration, and all-person activity data are Administrator-only.
+- Authentication is local email/password with Atlas-managed accounts; no external identity provider or SSO is used.
 - Production first-run: setup routes are available before authentication; operational routes require authentication.
 
 ## Roles and permissions
@@ -49,7 +50,7 @@ Response includes:
 
 ### `GET /api/runtime-config`
 
-Returns runtime packaging, design-system, and database metadata.
+Requires authentication and the `Administrator` role. Returns runtime packaging, design-system, and database metadata.
 
 Important fields:
 
@@ -128,7 +129,11 @@ Clears the current session.
 
 ### `GET /api/auth/me`
 
-Returns the current authenticated user.
+Returns the current authenticated user. Missing, expired, or invalid sessions return `401`.
+
+### `GET /api/auth/session`
+
+A non-error session probe for the application shell. Returns `200` with `{ "authenticated": false, "user": null }` when signed out, or `{ "authenticated": true, "user": { ... }, "sessionExpiresAt": 0 }` for a valid local session. The UI uses this route to avoid treating an ordinary signed-out state as a failed resource request; protected routes continue to use `401`.
 
 ## Bootstrap
 
@@ -136,22 +141,24 @@ Returns the current authenticated user.
 
 Requires authentication.
 
-Returns all data required by the UI shell:
+Returns the data required by the UI shell:
 
-- `today`
-- `user`
-- `settings`
-- `teams`
-- `people`
-- `users`
-- `projects`
-- `tasks`
-- `activity`
-- `alerts`
-- `dashboard`
-- `reports`
+- `today`, `user`, `teams`, `people`, `projects`, `tasks`, `activity`, `alerts`, `dashboard`, and aggregate `reports`.
+- `settings` is the complete configuration only for an Administrator. Other roles receive only the UI/runtime fields required to render the workspace; security, audit, retention, integration, and role-permission policy settings are omitted.
+- `users` is populated only for an Administrator.
+- Ordinary users receive only their own daily activity, activity-based alerts, and individual activity dashboard items. `teamActivitySummary` and overall delivery reporting contain non-identifying aggregate counts.
 
-Public user objects never include password hashes.
+Public user objects never include password hashes. Ordinary users cannot request another person’s activity by changing a query parameter or export scope; server-side scoping overrides the supplied person id. Individual activity rankings and all-person evidence reports are Administrator-only.
+
+## Personal preferences
+
+### `GET /api/preferences`
+
+Requires authentication and returns the current account's saved-filter map and optional personal UI language.
+
+### `PUT /api/preferences`
+
+Accepts `filters`, `language`, or both. `language` must name an enabled workspace language; the empty string means use the workspace default. Each user's value is stored in SQLite and is separate from the administrator-controlled workspace default. Preference writes are included in the offline outbox.
 
 ## Reports
 
@@ -183,7 +190,7 @@ Returns general delivery reporting:
 
 ### `GET /api/reports/activity/:period?userId=all|<personId>`
 
-Requires `viewReports`.
+Requires `viewReports`. Administrators may request `all` or a selected person. Every other role is forcibly scoped to the authenticated user’s linked person profile; a requested `userId` is ignored. A user without a linked person receives an empty personal report.
 
 Allowed periods:
 
@@ -191,12 +198,12 @@ Allowed periods:
 - `weekly`
 - `monthly`
 
-Use cases:
+Examples:
 
 ```txt
-/api/reports/activity/daily?userId=all
-/api/reports/activity/weekly?userId=all
-/api/reports/activity/monthly?userId=<personId>
+/api/reports/activity/daily?userId=all              # Administrator: all people
+/api/reports/activity/weekly?userId=<personId>      # Administrator: one person
+/api/reports/activity/monthly?userId=<any-value>    # Non-admin: own person only
 ```
 
 Returns:
@@ -235,11 +242,13 @@ Returns database integrity, schema metadata, checksum, backups, and collection c
 
 ### `PUT /api/settings`
 
-Requires Administrator.
+Requires the `Administrator` role (not merely a custom permission such as `manageSettings`).
 
 Body: partial or full settings object.
 
 Returns updated settings.
+
+All global settings, settings import/export, system metadata, user-account administration, and the full translation catalog require the `Administrator` role. The navigation and command search omit Settings for other roles, and the UI also guards direct settings navigation.
 
 ### `DELETE /api/setup/seed`
 
@@ -297,6 +306,22 @@ Requires `manageTasks`.
 Deletes a task.
 
 ## Projects
+
+### `GET /api/projects/:id/tasks`
+
+Requires authentication. Reads a fresh SQLite snapshot and returns the project plus **all** associated tasks and milestones; it does not return only the currently visible task-board rows.
+
+Response shape:
+
+```json
+{
+  "source": "sqlite",
+  "project": { "numericId": 42, "name": "..." },
+  "tasks": [],
+  "milestones": [],
+  "generatedAt": "..."
+}
+```
 
 ### `POST /api/projects`
 
@@ -403,6 +428,33 @@ Requires `writeTasks` or alert management role.
 
 Requires `manageAlerts`.
 
+## Exports
+
+### `POST /api/exports/prepare`
+
+Requires `exportData`. Report datasets additionally require `viewReports`; the `users` dataset additionally requires `manageUsers`.
+
+Prepares selected rows/fields from a fresh SQLite snapshot. The client sends identifiers and selected field keys, never screen-rendered row values. `fields` are checked against the dataset schema and configured visible custom-field definitions; user secrets such as password hashes are not allowlisted.
+
+Example body:
+
+```json
+{
+  "dataset": "tasks",
+  "recordIds": [41, 42],
+  "fields": ["id", "title", "status", "due", "customFields.client_code"],
+  "query": { "projectId": 7 }
+}
+```
+
+Supported datasets: `projects`, `tasks`, `people`, `activity`, `alerts`, `milestones`, `users`, `delivery-report`, `activity-evidence`, `activity-summary`, and `project-contributions`. `delivery-report` accepts `period` (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`); activity datasets accept `period` (`daily`, `weekly`, `monthly`) and optional `personId`. Task queries accept `projectId`. If `recordIds` or `fields` are omitted, all rows/allowlisted fields for that dataset are selected. At least one field is required when `fields` is supplied. There is no artificial record-count ceiling; practical payload and memory limits still apply. Non-administrators are forced to their own scope for individual activity/evidence exports. Project-contribution exports may return only workspace-level aggregates.
+
+Response includes `source: "sqlite"`, `dataset`, `generatedAt`, `recordCount`, database-derived `columns`, and `rows`.
+
+### `POST /api/audit/export`
+
+Requires `exportData`. Records the title, format, and row count of an export/print request in the workspace audit log when audit tracking is enabled.
+
 ## Users/access control
 
 ### `POST /api/users`
@@ -425,4 +477,12 @@ Safety rules:
 
 - Cannot delete your own account.
 - Cannot delete the last active administrator.
+
+### `GET /api/profile`
+
+Requires authentication and returns only the current account's public profile fields.
+
+### `PUT /api/profile`
+
+Allows a signed-in user to change only their own display name and avatar color. When linked to a workspace person, those two visible identity fields stay in sync. Email, password, role, and account status remain administrator-managed. Profile updates use field-aware offline conflict checks.
 

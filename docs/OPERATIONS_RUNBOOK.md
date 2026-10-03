@@ -5,11 +5,13 @@
 1. Install dependencies and build if running production:
 
    ```bash
-   npm install
-   npm run init:production
+   npm ci
    npm run build
+   npm run init:production  # fresh/empty data directory only
    npm run start
    ```
+
+   Do not run `init:production` during an upgrade. For an existing workspace, take a verified backup, deploy the build, and start normally.
 
 2. Open Atlas.
 3. Complete the setup wizard:
@@ -21,7 +23,7 @@
 4. Sign in with the created administrator account.
 5. Create teams, people, projects, tasks, and additional user accounts.
 
-Production setup creates no demo accounts and no sample data.
+Production setup creates no demo accounts and no sample data. Server-side workspace persistence is SQLite at `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`). A legacy `atlas-store.json` is imported only if that SQLite database has no workspace snapshot; a successful import archives the original under `data/legacy/`. Browser-local offline caches/outbox and saved table views are device-specific and do not replace the SQLite database.
 
 ## Daily operation
 
@@ -34,6 +36,10 @@ Typical operational loop:
 5. Use Alerts to resolve risk/overdue/blocker items.
 6. Use Reports to export daily/weekly/monthly/quarterly/yearly delivery reports and activity reports.
 7. Use Settings for access control, workspace configuration, and database integrity checks.
+
+## Offline edits and synchronization
+
+The service worker keeps the static shell/assets available after an online visit. A separate IndexedDB layer caches selected API responses and queues supported edits for retry and conflict handling. Offline coverage is not universal: unsupported routes still require the local host. Check the top-bar sync indicator and **Changes on this device** panel before signing out or closing a shared browser profile. Keep the browser profile intact until pending edits are acknowledged; clearing site data or losing the device profile can remove unsynchronized edits. Saved table views are also browser-local and are not synchronized across devices.
 
 ## Administrator responsibilities
 
@@ -73,13 +79,13 @@ Manual backup:
 npm run backup:data
 ```
 
-Backups are written to:
+Timestamped standalone SQLite backups are written to:
 
 ```txt
-data/backups/
+data/backups/atlas-db-<timestamp>-<reason>.sqlite
 ```
 
-Electron backups are under the app userData data directory.
+Electron backups are under the app userData data directory. Verify that backups are included in the organization's off-device backup policy; no encryption-at-rest layer is provided by Atlas.
 
 Recommended cadence:
 
@@ -90,18 +96,21 @@ Recommended cadence:
 
 ## Restore
 
-1. Stop Atlas.
-2. Copy the backup over the active store file.
-3. Start Atlas.
-4. Sign in as administrator.
-5. Check Settings → System store.
+1. Stop Atlas completely.
+2. Preserve the current `atlas.sqlite` and its `-wal` / `-shm` sidecars.
+3. Copy a standalone SQLite backup over `data/atlas.sqlite`.
+4. Remove stale `atlas.sqlite-wal` and `atlas.sqlite-shm` only while the app is stopped.
+5. Start Atlas, sign in as administrator, and check Settings → System store.
 
 Example:
 
 ```bash
-cp data/backups/atlas-store-<timestamp>-manual.json data/atlas-store.json
+cp data/backups/atlas-db-<timestamp>-manual.sqlite data/atlas.sqlite
+rm -f data/atlas.sqlite-wal data/atlas.sqlite-shm
 npm run start
 ```
+
+For details, see [Database Architecture](DATABASE_ARCHITECTURE.md).
 
 ## Health checks
 
@@ -185,11 +194,11 @@ Only do this behind a trusted reverse proxy/firewall.
 2. Review warnings/errors.
 3. Check for deleted teams/people/projects still referenced by records.
 4. Restore from backup if needed.
-5. If adding a new feature caused it, update `normalizeStore()` and `validateStoreState()`.
+5. If a new feature caused it, review domain normalization/integrity rules, SQLite schema migrations, indexes, and foreign keys together.
 
 ### Electron package opens but data is empty
 
-Desktop uses Electron `userData/data`, not the repository `data/` directory. Complete first-run setup in the desktop app or copy a data store into the Electron userData data path.
+Desktop uses Electron `<userData>/data/atlas.sqlite`, not the repository `data/` directory. Complete first-run setup in the desktop app or stop the app and restore a verified SQLite backup into the desktop data path. Do not copy a live database or its sidecars while Atlas is running.
 
 ## Maintenance checklist
 

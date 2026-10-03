@@ -2,64 +2,68 @@
 
 Atlas is a local-first engineering operations workspace with professional navigation, drag-and-drop task boards, advanced filters, live dashboards, alerts, and customizable reports.
 
-## Run
+## Run locally
+
+Use Node.js `>=22.13.0` (the built-in `node:sqlite` module is available without an extra runtime flag from Node 22.13 onward):
 
 ```bash
-# Node.js 22.12+ is required for the current production Electron toolchain.
-npm install
-npm run app
+npm ci
+npm run dev
 ```
 
-Open the local preview and complete the first-run production setup. Atlas does not expose bundled test credentials in production mode.
-
-For development-only sample data, explicitly run:
+Open the local app and complete first-run setup. Production mode does not expose bundled test credentials. For development-only sample data:
 
 ```bash
 ATLAS_ALLOW_DEMO_DATA=true npm run reset:data
 ```
 
-## What is included
+## Architecture and persistence
 
-- One Node.js application entrypoint: `app.tsx`. It serves the TSX React UI, API, local assets, exports, and data from one process.
-- Internal API routes and the embedded schema-versioned document store live inside the same Node application at `data/atlas-store.json`.
-- Local fonts only: `public/fonts/AtlasSans-Regular.ttf`, `AtlasSans-Bold.ttf`, and `AtlasDisplay-Bold.ttf`.
-- No Google Fonts, CDN stylesheets, or remote UI assets.
-- PWA manifest, icon, and service worker with local shell caching.
-- Drag-and-drop task workflow board with API persistence.
-- Advanced query builder on projects, tasks, people, activity, and alerts.
-- Daily, weekly, monthly, quarterly, and yearly reports.
-- Export and print customization: selected columns, title, CSV, Excel, JSON, PDF, orientation, margins, and print templates.
-- Settings for theme, accent, density, sidebar mode, default landing page, default task view, page size, and demo data removal.
-- Role-based access control with Administrator, Manager, Developer, and Viewer permissions enforced in both UI and Node routes.
-- Access control interface for creating, editing, disabling, exporting, and deleting user accounts.
-- Production first-run setup with no sample users or default credentials unless explicitly enabled through `ATLAS_ALLOW_DEMO_DATA=true`.
-- Salted password hashing for local accounts.
-- Database metadata, schema normalization, integrity checks, atomic persistence, backup support, and schema-versioned configuration branches for workspace/interface/localization/modules/workflows/custom fields/permissions/reports/integrations/security/audit.
-- Current Electron production toolchain pinned to the actively patched release line with zero npm audit findings at validation time.
+Atlas stays a single Node.js application: Express serves the API and React UI, Vite is mounted in development, and Electron runs the same server bundle. Server responsibilities are organized by role under `src/server/`:
+
+- `database/` — SQLite schema/migrations, connection setup, relational repository, backup and integrity operations.
+- `routes/` — API routes grouped by system, users, directory, projects/tasks, and activity/alerts.
+- `domain/` — settings, workspace/report mapping, security, time, and store normalization rules.
+- `http/` — authentication/permission middleware and request rate limiting.
+- `shared/` — validated primitive helpers shared across services.
+
+SQLite is the authoritative server-side persistence source. The default database is `data/atlas.sqlite`; Electron uses `<userData>/data/atlas.sqlite`. Settings, records, metadata, counters, account preferences, and audit/work logs are stored in SQLite and written transactionally. The old `atlas-store.json` is read only when no SQLite snapshot exists; after a successful import it is archived under `data/legacy/` and is never the runtime source of truth. SQLite backups are stored under `data/backups/`. The browser also keeps selected offline API responses and queued edits in IndexedDB; saved table views remain in per-browser `localStorage`. Those local stores are not authoritative and are not a substitute for synchronizing to SQLite; saved table views do not sync across devices.
+
+`node:sqlite` is built into supported Node runtimes, so no external/native SQLite dependency is installed. The API is still experimental in Node 22 and release-candidate in Node 24; the Electron 44.5.1 release bundles Node 24.21.0, but launching a packaged Electron build remains a separate release check. Run one Atlas process per data directory because each process keeps an in-memory workspace snapshot and concurrent application instances could overwrite each other's changes.
+
+## Included functionality
+
+- Local fonts and assets; no remote UI fonts, CSS CDN, or core UI dependencies.
+- PWA manifest, icon, and service worker with static shell caching.
+- Projects, teams, people, tasks, milestones, activity updates, alerts, and reports. Project cards open a complete, searchable task portfolio loaded from SQLite.
+- An SQL-backed report studio builds CSV, Excel, JSON, PDF, and standalone print output from allowlisted database fields, including configured visible custom fields, with field selection, locale-aware formatting, grouping, sorting, branded templates, and export audit logging.
+- Role-based access control enforced by the API, plus role-aware interface controls.
+- Production first-run setup with no sample users or default credentials unless demo mode is explicitly enabled.
+- Salted password hashing, HTTP-only sessions, SQLite integrity checks, and timestamped SQLite backups.
 
 ## Useful scripts
 
 ```bash
-npm run init:production # clear to production first-run setup
-npm run build           # production web + server build
+npm run build           # production web + server builds
 npm run start           # run the built production application
-npm run preview         # build, then run production locally
-npm run reset:data      # development only: restore seeded local demo data
-npm run backup:data     # create a timestamped embedded-store backup
+npm run preview         # build, then start production locally
+npm run init:production # initialize a fresh database only; refuses existing data by default
+npm run reset:data      # development only: restore seeded demo data
+npm run backup:data     # create a timestamped SQLite backup
+npm run desktop         # build and launch Electron
+npm run desktop:dir     # build an unpacked desktop directory
+npm run desktop:pack    # build platform installer packages
 ```
 
-## Production desktop deployment
-
-See [`PRODUCTION.md`](PRODUCTION.md) for desktop packaging, production build, health checks, and detailed user activity reporting.
-
+**Do not run `npm run init:production` as a normal upgrade command.** It initializes an empty production workspace and intentionally replaces existing data only when the explicit `ATLAS_FORCE_INIT_PRODUCTION=true` override is set. Back up before any migration or recovery operation.
 
 ## Documentation
 
-Complete production documentation is maintained in [`docs/`](docs/README.md):
+Complete documentation is maintained in [`docs/`](docs/README.md):
 
 - Complete manual: [`docs/ATLAS_WORKSPACE_MANUAL.md`](docs/ATLAS_WORKSPACE_MANUAL.md)
 - Design standards: [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md)
-- Database architecture: [`docs/DATABASE_ARCHITECTURE.md`](docs/DATABASE_ARCHITECTURE.md)
+- SQLite architecture and legacy import: [`docs/DATABASE_ARCHITECTURE.md`](docs/DATABASE_ARCHITECTURE.md)
 - API reference: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 - Developer guide: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
 - Build/deployment: [`docs/BUILD_AND_DEPLOYMENT.md`](docs/BUILD_AND_DEPLOYMENT.md)
@@ -67,8 +71,3 @@ Complete production documentation is maintained in [`docs/`](docs/README.md):
 - Functionality reference: [`docs/FUNCTIONALITY_REFERENCE.md`](docs/FUNCTIONALITY_REFERENCE.md)
 - Configuration/i18n/extensibility: [`docs/CONFIGURATION_I18N_EXTENSIBILITY.md`](docs/CONFIGURATION_I18N_EXTENSIBILITY.md)
 - Final acceptance report: [`docs/FINAL_ACCEPTANCE_REPORT.md`](docs/FINAL_ACCEPTANCE_REPORT.md)
-
-- `docs/CONFIGURATION_SETUP_ADVANCEMENTS.md` — latest advanced setup and full configuration console improvements.
-- `docs/FIELD_ENTRY_CONFIGURATION_FIX.md` — field entry stability fix and modern configuration field layout update.
-- `docs/FULL_INTERFACE_I18N_UPDATE.md` — full interface translation coverage and setup-first language selection.
-- `docs/TRANSLATION_SYSTEM_ARCHITECTURE.md` — advanced translation runtime, API endpoints, and integration model for custom interfaces.
