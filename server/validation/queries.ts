@@ -16,6 +16,25 @@ const csv = z
 const flag = z.enum(['true', 'false']).transform(value => value === 'true')
 const isoDate = z.iso.date()
 
+/** A JSON list of up to 20 conditions in a query-string parameter. */
+function conditionList(name: string) {
+  return z
+    .string()
+    .max(10_000)
+    .optional()
+    .transform((text, ctx) => {
+      if (!text) return undefined
+      try {
+        const parsed = z.array(conditionSchema).max(20).safeParse(JSON.parse(text))
+        if (parsed.success) return parsed.data
+      } catch {
+        /* falls through to the issue below */
+      }
+      ctx.addIssue({ code: 'custom', message: `${name} must be a JSON list of up to 20 conditions` })
+      return z.NEVER
+    })
+}
+
 export const SORT_KEYS = [
   'due',
   'title',
@@ -51,21 +70,9 @@ export const taskQuerySchema = z.object({
   /** Tag ids; a task matches when it carries any of them. */
   tag: csv.optional(),
   /** The advanced filter as JSON: [{ join?, field, operator, value }, …]. */
-  where: z
-    .string()
-    .max(10_000)
-    .optional()
-    .transform((text, ctx) => {
-      if (!text) return undefined
-      try {
-        const parsed = z.array(conditionSchema).max(20).safeParse(JSON.parse(text))
-        if (parsed.success) return parsed.data
-      } catch {
-        /* falls through to the issue below */
-      }
-      ctx.addIssue({ code: 'custom', message: 'where must be a JSON list of up to 20 conditions' })
-      return z.NEVER
-    }),
+  where: conditionList('where'),
+  /** Per-column filters as JSON, same shape; unlike `where` every one of them must hold. */
+  cf: conditionList('cf'),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50)
 })
@@ -86,7 +93,8 @@ export function toTaskListing(query: TaskQuery, me: { personId: string }) {
     done: query.scope === 'done',
     overdue: query.scope === 'overdue',
     tagIds: query.tag,
-    conditions: query.where
+    conditions: query.where,
+    columnFilters: query.cf
   }
   if (query.assignee === 'none') filter.unassigned = true
   else if (query.assignee === 'me') filter.assigneeId = me.personId || '\u0000no-person'

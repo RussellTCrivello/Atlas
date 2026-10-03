@@ -1,7 +1,7 @@
 // Printing. A print job is a document the server builds from the database (format "print"); it is shown in a preview and only
 // then handed to the browser's or the desktop app's print dialog. The interface itself is never printed: the stylesheet hides
 // it when a print is attempted by any other route (see styles/22-print.css).
-import { type ExportRequest, requestExport } from '../../lib/export'
+import { type ExportRequest, fetchExportCatalog, requestExport } from '../../lib/export'
 
 export const PRINT_PREVIEW_EVENT = 'atlas:print-preview'
 export interface PrintPreviewDetail {
@@ -17,6 +17,19 @@ export async function openPrintPreview(request: Omit<ExportRequest, 'format'>) {
       detail: { html: await file.blob.text(), title: request.title || 'Atlas' }
     })
   )
+}
+
+/** Print chosen records (a selection, or one record) with the dataset's default columns. Rejects with the server's explanation. */
+export async function printRecords(language: string, dataset: string, ids: (string | number)[], title: string) {
+  const entry = (await fetchExportCatalog(language)).datasets.find(item => item.id === dataset)
+  if (!entry) throw new Error('Your role cannot print this.')
+  await openPrintPreview({
+    dataset,
+    ids,
+    title,
+    language,
+    columns: entry.columns.filter(column => column.defaultVisible).map(column => column.key)
+  })
 }
 
 // The page that is on screen says what "print" means for it: Ctrl/Cmd+P, the desktop File > Print item and the Print button all

@@ -60,7 +60,7 @@ async function open(api: Api, hash: string, ready: string) {
   await ui.waitFor(() => ui.doc.querySelector(ready))
   return ui
 }
-const rows = (ui: BootedUI) => [...ui.doc.querySelectorAll('.project-tasks-table tbody tr')]
+const rows = (ui: BootedUI) => [...ui.doc.querySelectorAll('.project-tasks-table tbody tr[data-row]')]
 const meta = (ui: BootedUI) => textOf(ui.doc.querySelector('.table-pager .results-meta'))
 const tile = (ui: BootedUI, label: string) =>
   [...ui.doc.querySelectorAll('.kpi-tile')].find(el => textOf(el).startsWith(label))!
@@ -83,7 +83,7 @@ describe('a project is a link to its page', () => {
     assert.equal(bootstrapped.taskStats.total, TOTAL + 1)
     assert.equal(bootstrapped.taskStats.truncated, true)
     ui.click('.project-card-link', 'Payments platform')
-    await ui.waitFor(() => ui.doc.querySelector('.project-page .project-tasks-table tbody tr'))
+    await ui.waitFor(() => ui.doc.querySelector('.project-page .project-tasks-table tbody tr[data-row]'))
     assert.equal(textOf(ui.doc.querySelector('.project-hero h1')), 'Payments platform')
     assert.equal(textOf(ui.doc.querySelector('.project-code-chip')), 'PAY')
     assert.equal(rows(ui).length, 50)
@@ -108,7 +108,7 @@ describe('a project is a link to its page', () => {
   })
 
   test('opening the address directly works too, and another project shows only its own tasks', async () => {
-    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     assert.deepEqual(
       rows(ui).map(row => textOf(row.querySelector('.task-title-cell'))),
       ['Only task of search']
@@ -134,7 +134,7 @@ describe('a project is a link to its page', () => {
 
 describe('filters, sorting and numbers are answered by the server', () => {
   test('the numbers on top are clickable filters: overdue shows exactly the overdue tasks', async () => {
-    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const overdue = Math.floor(TOTAL / 10) - Math.floor(TOTAL / 40) // every 10th, except the ones that are Done (every 4th: 20, 40…)
     ui.click('.kpi-tile', 'Overdue')
     await settled(ui, () => /of \d+ tasks/.test(meta(ui)) && !new RegExp(`of ${TOTAL} tasks`).test(meta(ui)))
@@ -152,7 +152,7 @@ describe('filters, sorting and numbers are answered by the server', () => {
   })
 
   test('search finds a task anywhere in the project, whatever page it would have been on', async () => {
-    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr[data-row]')
     ui.type('input[aria-label="Search this project"]', 'zebra')
     await settled(ui, () => rows(ui).length === 1)
     assert.equal(textOf(rows(ui)[0].querySelector('.task-title-cell')), 'The zebra migration')
@@ -168,12 +168,12 @@ describe('filters, sorting and numbers are answered by the server', () => {
     ui.click('.status-segment', 'Done')
     await settled(ui, () => new RegExp(`of ${count} tasks`).test(meta(ui)))
     assert.ok(rows(ui).every(row => (row.querySelector('select') as HTMLSelectElement).value === 'Done'))
-    ui.click('.project-task-toolbar .text-button', 'Clear filters')
+    ui.click('.grid-toolbar .text-button', 'Clear filters')
     await settled(ui, () => new RegExp(`of ${TOTAL} tasks`).test(meta(ui)))
   })
 
   test('columns sort on the server and say which way (aria-sort)', async () => {
-    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const sortBy = (label: string) =>
       [...ui.doc.querySelectorAll('.sort-button')]
         .find(button => textOf(button).replace(/[▲▼]/g, '').trim() === label)!
@@ -183,7 +183,7 @@ describe('filters, sorting and numbers are answered by the server', () => {
       ui,
       () =>
         ui.doc.querySelector('th[aria-sort="ascending"]') &&
-        ui.fetchLog.some(line => /sort=title&dir=asc.*200/.test(line))
+        ui.fetchLog.some(line => /sort=title%3Aasc.*200/.test(line))
     )
     await ui.settle(250)
     const titles = rows(ui).map(row => textOf(row.querySelector('.task-title-cell')))
@@ -193,12 +193,18 @@ describe('filters, sorting and numbers are answered by the server', () => {
     )
     sortBy('Task')
     await settled(ui, () => ui.doc.querySelector('th[aria-sort="descending"]'))
-    assert.ok(ui.requests.some(r => /sort=title&dir=desc/.test(r.url)))
+    assert.ok(ui.requests.some(r => /sort=title%3Adesc/.test(r.url)))
   })
 
   test('filtering by owner uses the people who work on the project', async () => {
-    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr')
-    ui.type('select[aria-label="Owner"]', 'none')
+    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr[data-row]')
+    ui.click('.grid-toolbar button', 'Column filters')
+    await ui.waitFor(() => ui.doc.querySelector('.filter-row'))
+    ui.click('.filter-row .pick-button[aria-label^="Filter Owner"]')
+    const unassigned = (await ui.waitFor(() =>
+      [...ui.doc.querySelectorAll('.pick-list label')].find(el => textOf(el) === 'Unassigned')
+    )) as HTMLElement
+    ;(unassigned.querySelector('input') as HTMLInputElement).click()
     await settled(ui, () => new RegExp(`of ${TOTAL / 5} tasks`).test(meta(ui)))
     assert.ok(rows(ui).every(row => /Unassigned/.test(textOf(row.querySelector('.owner-cell')))))
   })
@@ -206,7 +212,7 @@ describe('filters, sorting and numbers are answered by the server', () => {
 
 describe('working on the project from its page', () => {
   test('adding a task there puts it in this project, immediately', async () => {
-    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     ui.type('.quick-add input', 'Write the release notes')
     ui.click('.quick-add button')
     await settled(ui, () => rows(ui).length === 2)
@@ -217,9 +223,9 @@ describe('working on the project from its page', () => {
   })
 
   test('a status can be changed in the table, and the change is recorded', async () => {
-    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const select = ui.doc.querySelector('.project-tasks-table select') as HTMLSelectElement
-    const id = select.closest('tr')!.getAttribute('data-task-id')
+    const id = select.closest('tr')!.getAttribute('data-row')
     ui.type('.project-tasks-table select', 'In progress')
     await settled(ui, () => ui.requests.some(r => r.method === 'PATCH' && r.url === `/api/tasks/${id}/status`))
     await ui.settle(300)
@@ -230,7 +236,7 @@ describe('working on the project from its page', () => {
   })
 
   test('someone who may only read sees the tasks but cannot add or move anything', async () => {
-    const ui = await open(viewer.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(viewer.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     assert.equal(ui.doc.querySelector('.quick-add'), null)
     assert.equal(ui.doc.querySelector('.project-tasks-table select'), null)
     assert.equal(ui.doc.querySelector('.project-hero-actions .primary-button'), null, 'no "Add task"')
@@ -258,17 +264,21 @@ describe('exporting and printing a project come from the database', () => {
   }
 
   test("the tasks export holds exactly this project's tasks, all of them, whatever page is showing", async () => {
-    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${big.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const text = await exportCsv(ui)
     const lines = text.split('\r\n')
     assert.equal(lines.length, TOTAL + 1, 'every task, not the 50 on screen')
     assert.ok(lines.slice(1).every(line => line.includes('Payments platform')))
     const request = ui.requests.find(r => r.url === '/api/exports' && !JSON.parse(r.body!).preview)!
-    assert.equal(JSON.parse(request.body!).scope.projectId, big.numericId)
+    assert.equal(
+      new URLSearchParams(JSON.parse(request.body!).grid).get('project'),
+      String(big.numericId),
+      'scoped to this project'
+    )
   })
 
   test('Print opens a preview of a document the server built; the interface is not printed', async () => {
-    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const printed: string[] = []
     ui.w.print = () => printed.push('window')
     ui.click('.export-wrap > button', 'Export / print')
@@ -286,7 +296,7 @@ describe('exporting and printing a project come from the database', () => {
   })
 
   test("Ctrl+P prints the page's report instead of the screen", async () => {
-    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr')
+    const ui = await open(manager.api, `/projects/${small.numericId}`, '.project-tasks-table tbody tr[data-row]')
     const printed: string[] = []
     ui.w.print = () => printed.push('window')
     await ui.settle(300) // the export menu registers itself as the page's printer

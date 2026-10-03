@@ -32,6 +32,10 @@ export interface ExportRequest {
   format: 'csv' | 'xlsx' | 'json' | 'pdf' | 'print'
   columns?: string[]
   filters?: Condition[]
+  /** Tasks: the list's own query string, so "filtered" means exactly what the list shows. */
+  grid?: string
+  /** Only these records (the ones selected on screen). */
+  ids?: (string | number)[]
   q?: string
   scope?: Record<string, string | number | boolean>
   sort?: { key: string; dir?: string }

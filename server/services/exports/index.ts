@@ -160,6 +160,12 @@ export class ExportService {
       scope: name => (request.scope?.[name] === undefined ? undefined : String(request.scope[name]))
     }
     const result = dataset.run(dc)
+    // A document built from a selection says so on its face, so a printout cannot be mistaken for the whole dataset.
+    if (request.ids) {
+      const main = result.sections.find(section => section.kind === 'table' && section.primary)
+      const shown = main && main.kind === 'table' ? main.rows.length : request.ids.length
+      result.filters = [...result.filters, `${label('Selected records')}: ${shown.toLocaleString('en')}`]
+    }
 
     // Narrow the main table to the columns the person chose (in their order), then group it if asked.
     const sections = result.sections.map(section =>

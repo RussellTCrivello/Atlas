@@ -43,6 +43,8 @@ export const exportRequestSchema = z.object({
   margin: z.number().min(5).max(30).optional(),
   template: z.enum(['executive', 'standard', 'compact']).optional(),
   groupBy: key.optional(),
+  /** For tasks: the list's own query string (what the screen filtered and sorted by), run through the same code as the list. */
+  grid: z.string().max(12_000).optional(),
   /** Only these records (the ones selected on screen). Only datasets made of individual records accept it. */
   ids: z
     .array(z.union([z.number().int().positive(), z.string().trim().min(1).max(100)]))

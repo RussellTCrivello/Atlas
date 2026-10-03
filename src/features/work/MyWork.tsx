@@ -1,6 +1,6 @@
 // The tasks page: board and list views, drag and drop, filters.
 import { useState, useMemo, useEffect } from 'react'
-import { workflowStateLabels, customFieldDefinitions } from '../../lib/settings'
+import { workflowStateLabels, customFieldDefinitions, hasPermission } from '../../lib/settings'
 import { sortRows, applyAdvancedFilters } from '../../lib/filters'
 import { api, errorMessage } from '../../lib/api'
 import { tr, uiLanguage } from '../../lib/i18n'
@@ -10,11 +10,12 @@ import { useApp } from '../../ui/app-context'
 import { Icon } from '../../ui/icons'
 import { AdvancedFilter, FilterChips } from '../export/AdvancedFilter'
 import { ExportMenu } from '../export/ExportMenu'
-import { TaskRow } from '../overview/TaskRow'
+import { TaskGrid } from '../records/TaskGrid'
 import { Avatar, EmptyState, PermissionNotice } from '../../ui/primitives'
 
 export function MyWork({ data, openModal, refresh, notify, canWriteTasks = true }) {
   const { user, settings } = useApp()
+  const canManageTasks = hasPermission(user, 'manageTasks')
   const pageSize = Math.max(10, Number(settings.pageSize) || 50)
   const hasPerson = Boolean(user?.personId)
   const [view, setView] = useState(settings.defaultTaskView || 'board')
@@ -139,34 +140,38 @@ export function MyWork({ data, openModal, refresh, notify, canWriteTasks = true 
             </button>
           </div>
         )}
-        <div className="work-search">
-          <Icon name="search" size={15} />
-          <input
-            aria-label="Filter tasks"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Filter tasks"
-          />
-        </div>
-        <select aria-label="Priority" value={filter} onChange={e => setFilter(e.target.value)}>
-          <option>All tasks</option>
-          <option>High</option>
-          <option>Medium</option>
-          <option>Low</option>
-        </select>
-        <AdvancedFilter filterKey="tasks" fields={fields} onApply={setAdvanced} />
-        <ExportMenu
-          dataset="tasks"
-          title="Atlas tasks"
-          scope={{
-            ...(scope === 'mine' ? { assignee: 'me' } : {}),
-            ...(filter !== 'All tasks' ? { priority: filter } : {})
-          }}
-          filters={advanced}
-          query={query}
-          sort={sort}
-          rowsHint={filtered.length}
-        />
+        {view === 'board' && (
+          <>
+            <div className="work-search">
+              <Icon name="search" size={15} />
+              <input
+                aria-label="Filter tasks"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Filter tasks"
+              />
+            </div>
+            <select aria-label="Priority" value={filter} onChange={e => setFilter(e.target.value)}>
+              <option>All tasks</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+            <AdvancedFilter filterKey="tasks" fields={fields} onApply={setAdvanced} />
+            <ExportMenu
+              dataset="tasks"
+              title="Atlas tasks"
+              scope={{
+                ...(scope === 'mine' ? { assignee: 'me' } : {}),
+                ...(filter !== 'All tasks' ? { priority: filter } : {})
+              }}
+              filters={advanced}
+              query={query}
+              sort={sort}
+              rowsHint={filtered.length}
+            />
+          </>
+        )}
         {canWriteTasks ? (
           <button type="button" className="primary-button" onClick={() => openModal('task')}>
             <Icon name="plus" size={15} /> Add task
@@ -175,20 +180,24 @@ export function MyWork({ data, openModal, refresh, notify, canWriteTasks = true 
           <span className="readonly-pill">Read-only</span>
         )}
       </div>
-      <FilterChips
-        conditions={advanced}
-        fields={fields}
-        onClear={() => setAdvanced([])}
-        onRemove={i => setAdvanced(c => c.filter((_, idx) => idx !== i))}
-      />
-      <div className="results-meta" role="status" aria-live="polite">
-        {tr(settings, 'Showing {shown} of {total} matching tasks', { shown, total: filtered.length })}
-        {filtered.length !== data.tasks.length &&
-          ` · ${tr(settings, '{total} in the workspace', { total: data.tasks.length })}`}
-        {canWriteTasks &&
-          view === 'board' &&
-          ` · ${tr(settings, 'drag cards or use “Move to” to change workflow state')}`}
-      </div>
+      {view === 'board' && (
+        <>
+          <FilterChips
+            conditions={advanced}
+            fields={fields}
+            onClear={() => setAdvanced([])}
+            onRemove={i => setAdvanced(c => c.filter((_, idx) => idx !== i))}
+          />
+          <div className="results-meta" role="status" aria-live="polite">
+            {tr(settings, 'Showing {shown} of {total} matching tasks', { shown, total: filtered.length })}
+            {filtered.length !== data.tasks.length &&
+              ` · ${tr(settings, '{total} in the workspace', { total: data.tasks.length })}`}
+            {canWriteTasks &&
+              view === 'board' &&
+              ` · ${tr(settings, 'drag cards or use “Move to” to change workflow state')}`}
+          </div>
+        </>
+      )}
       {view === 'board' ? (
         <div className="board">
           {columns.map(status => {
@@ -247,48 +256,25 @@ export function MyWork({ data, openModal, refresh, notify, canWriteTasks = true 
           })}
         </div>
       ) : (
-        <div className="panel task-table-panel">
-          <div className="table-head sortable-head">
-            {['title', 'priority', 'status', 'dueDate', 'assignee'].map(key => (
-              <button
-                type="button"
-                key={key}
-                className={sort.key === key ? 'sorted' : ''}
-                onClick={() => toggleSort(key)}
-              >
-                {fields.find(f => f.key === key)?.label || key}
-                <Icon name="down" size={11} />
-              </button>
-            ))}
-          </div>
-          {filtered.slice(0, listLimit).map(t => (
-            <TaskRow
-              key={t.numericId}
-              task={t}
-              onAdvance={canWriteTasks ? advance : undefined}
-              onEdit={canWriteTasks ? () => openModal('task', t) : undefined}
-            />
-          ))}
-          {filtered.length > listLimit && (
-            <button
-              type="button"
-              className="text-button show-more"
-              onClick={() => setListLimit(limit => limit + pageSize)}
-            >
-              {tr(settings, 'Show {count} more ({remaining} left)', {
-                count: Math.min(pageSize, filtered.length - listLimit),
-                remaining: filtered.length - listLimit
-              })}
-            </button>
-          )}
-        </div>
+        <TaskGrid
+          scope="my-work"
+          fixed={scope === 'mine' ? { assignee: 'me' } : {}}
+          fullScope={{}}
+          data={data}
+          canWrite={canWriteTasks}
+          canManage={canManageTasks}
+          openModal={openModal}
+          refresh={refresh}
+          exportTitle={scope === 'mine' ? 'My tasks' : 'Atlas tasks'}
+          tableClass="task-table-panel"
+        />
       )}
       {!canWriteTasks && (
         <PermissionNotice>
           Your role can inspect tasks, filters, exports, and reports, but cannot change workflow state.
         </PermissionNotice>
       )}
-      {!filtered.length && (
+      {view === 'board' && !filtered.length && (
         <EmptyState
           title="No tasks match"
           message={

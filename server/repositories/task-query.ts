@@ -25,6 +25,8 @@ export interface TaskFilter {
   tagIds?: string[]
   /** The advanced filter: conditions joined by AND / OR. */
   conditions?: Condition[]
+  /** Per-column filters: every one must hold, whatever the advanced filter's own AND / OR says (it applies to the whole result). */
+  columnFilters?: Condition[]
   /** Terminal workflow labels plus the day to compare with: `open` and `overdue` need them. */
   terminal?: string[]
   today?: string
@@ -154,6 +156,16 @@ export function taskWhere(filter: TaskFilter): { sql: string; params: SqlValue[]
     if (compiled.sql) {
       clauses.push(`(${compiled.sql})`)
       params.push(...compiled.params)
+    }
+  }
+  if (filter.columnFilters?.length) {
+    // Each filter is compiled on its own and joined with AND outside, so `(A OR B) AND column` is exactly what is asked.
+    for (const condition of filter.columnFilters) {
+      const compiled = compileConditions([{ ...condition, join: 'AND' }], TASK_FIELDS)
+      if (compiled.sql) {
+        clauses.push(`(${compiled.sql})`)
+        params.push(...compiled.params)
+      }
     }
   }
   const text = filter.q?.trim()

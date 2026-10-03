@@ -4,11 +4,27 @@ import { isActive, FIELD_OPERATORS, VALUELESS_OPERATORS } from '../../lib/filter
 import { useApp } from '../../ui/app-context'
 import { Icon } from '../../ui/icons'
 
-export function AdvancedFilter({ filterKey, fields, onApply }) {
+/**
+ * `value` makes the builder follow the page (a grid that owns its filters, a saved view being applied); without it the builder
+ * keeps its own conditions and remembers them for this person in the browser.
+ */
+export function AdvancedFilter({
+  filterKey,
+  fields,
+  onApply,
+  value
+}: {
+  filterKey: string
+  fields: any[]
+  onApply: (conditions: any[]) => void
+  value?: any[]
+}) {
   const { user } = useApp()
+  const controlled = value !== undefined
   const storageKey = `atlas-filter-${user?.id || 'anonymous'}-${filterKey}`
   const [open, setOpen] = useState(false)
   const [conditions, setConditions] = useState(() => {
+    if (controlled) return value
     try {
       return JSON.parse(localStorage.getItem(storageKey) || '[]')
     } catch {
@@ -16,7 +32,12 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
     }
   })
   useEffect(() => {
-    onApply(conditions.filter(isActive))
+    if (controlled) setConditions(value)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlled && JSON.stringify(value)])
+  useEffect(() => {
+    if (!controlled) onApply(conditions.filter(isActive))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const update = (i, key, value) =>
     setConditions(current => current.map((c, index) => (index === i ? { ...c, [key]: value } : c)))
@@ -27,21 +48,23 @@ export function AdvancedFilter({ filterKey, fields, onApply }) {
     ])
   const apply = () => {
     const active = conditions.filter(isActive)
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(active))
-    } catch {
-      /* storage unavailable: the filter still applies for this session */
-    }
+    if (!controlled)
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(active))
+      } catch {
+        /* storage unavailable: the filter still applies for this session */
+      }
     onApply(active)
     setOpen(false)
   }
   const clear = () => {
     setConditions([])
-    try {
-      localStorage.removeItem(storageKey)
-    } catch {
-      /* ignore */
-    }
+    if (!controlled)
+      try {
+        localStorage.removeItem(storageKey)
+      } catch {
+        /* ignore */
+      }
     onApply([])
   }
   const fieldType = key => fields.find(f => f.key === key)?.type || 'text'

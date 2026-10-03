@@ -38,6 +38,8 @@ import { CommandSearch } from '../features/shell/CommandSearch'
 import { FormModal } from '../features/records/FormModal'
 import { PrintPreviewHost } from '../features/export/PrintPreview'
 import { openPrintPreview, printCurrentPage } from '../features/export/print'
+import { TRASH_DAYS, deletedToast } from '../features/records/undo'
+import { type ConfirmOptions, ConfirmHost, confirmAction } from '../ui/confirm'
 
 export function App() {
   const [setup, setSetup] = useState(null)
@@ -91,7 +93,9 @@ export function App() {
   const notify = useCallback(toast => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
     setToasts(t => [...t.slice(-4), { id, ...toast }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), toast.tone === 'warning' ? 8000 : 4200)
+    // A toast with an action (Undo) stays long enough to be used; warnings stay longer than confirmations.
+    const duration = toast.duration ?? (toast.action ? 12000 : toast.tone === 'warning' ? 8000 : 4200)
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), duration)
   }, [])
   const signedOut = useCallback((message = '') => {
     setUser(null)
@@ -339,23 +343,29 @@ export function App() {
     signedOut('')
     setPage('overview')
   }
-  const openModal = (type, record = null) => setModal({ type, record })
+  const openModal = (type, record = null) => setModal({ type, record, nonce: Date.now() })
   const saveEntity = async (type, record, form) => {
+    let saved: any
     if (type === 'task')
-      await (record?.numericId ? api.put(`/api/tasks/${record.numericId}`, form) : api.post('/api/tasks', form))
+      saved = await (record?.numericId ? api.put(`/api/tasks/${record.numericId}`, form) : api.post('/api/tasks', form))
     if (type === 'project')
-      await (record?.numericId ? api.put(`/api/projects/${record.numericId}`, form) : api.post('/api/projects', form))
+      saved = await (record?.numericId
+        ? api.put(`/api/projects/${record.numericId}`, form)
+        : api.post('/api/projects', form))
     if (type === 'person')
-      await (record?.id ? api.put(`/api/people/${record.id}`, form) : api.post('/api/people', form))
-    if (type === 'team') await (record?.id ? api.put(`/api/teams/${record.id}`, form) : api.post('/api/teams', form))
+      saved = await (record?.id ? api.put(`/api/people/${record.id}`, form) : api.post('/api/people', form))
+    if (type === 'team')
+      saved = await (record?.id ? api.put(`/api/teams/${record.id}`, form) : api.post('/api/teams', form))
     if (type === 'milestone')
-      await (record?.id ? api.put(`/api/milestones/${record.id}`, form) : api.post('/api/milestones', form))
-    if (type === 'activity') await api.post('/api/activity', form)
+      saved = await (record?.id ? api.put(`/api/milestones/${record.id}`, form) : api.post('/api/milestones', form))
+    if (type === 'activity') saved = await api.post('/api/activity', form)
     if (type === 'alert')
-      await (record?.id ? api.patch(`/api/alerts/${record.id}`, form) : api.post('/api/alerts', form))
-    if (type === 'user') await (record?.id ? api.put(`/api/users/${record.id}`, form) : api.post('/api/users', form))
+      saved = await (record?.id ? api.patch(`/api/alerts/${record.id}`, form) : api.post('/api/alerts', form))
+    if (type === 'user')
+      saved = await (record?.id ? api.put(`/api/users/${record.id}`, form) : api.post('/api/users', form))
     notify({ title: record?.numericId || record?.id ? 'Changes saved' : 'Record created', tone: 'success' })
     await loadData(true)
+    return saved
   }
   const deleteEntity = async (type, record) => {
     const paths = {
@@ -369,38 +379,59 @@ export function App() {
       user: 'users'
     }
     let query = ''
-    let message = tr(settings, 'Delete this {type}? This cannot be undone.', { type })
-    if (type === 'task')
-      message = tr(settings, 'Delete task {id}: “{title}”? This cannot be undone.', {
-        id: record.id,
-        title: record.title
-      })
+    const ask: ConfirmOptions = {
+      title: tr(settings, 'Delete this {type}?', { type }),
+      tone: 'danger',
+      irreversible: true,
+      confirmLabel: tr(settings, 'Delete')
+    }
+    if (type === 'task') {
+      ask.title = tr(settings, 'Delete task {id}?', { id: record.id })
+      ask.message = `“${record.title}”`
+      ask.irreversible = false
+      ask.undoHint = tr(settings, 'You can undo this for {days} days.', { days: TRASH_DAYS })
+      ask.confirmLabel = tr(settings, 'Delete task')
+    }
     if (type === 'project') {
-      const tasks = data.tasks.filter(task => task.projectId === record.numericId).length
+      // The numbers come from the database, not from the (capped) set of tasks the browser holds.
+      let tasks = 0
+      try {
+        tasks = (await api.get(`/api/projects/${record.numericId}`)).totals?.total ?? 0
+      } catch {
+        tasks = data.tasks.filter(task => task.projectId === record.numericId).length
+      }
       const milestones = (record.milestoneRows || []).length
+      ask.title = tr(settings, 'Delete project “{name}”?', { name: record.name })
       if (tasks || milestones) {
         query = '?cascade=true'
-        message = tr(
+        ask.message = tr(
           settings,
-          'Delete project “{name}” together with its {tasks} task(s) and {milestones} milestone(s)? This cannot be undone. A backup is taken first.',
+          'Delete project “{name}” together with its {tasks} task(s) and {milestones} milestone(s)? A backup is taken first.',
           { name: record.name, tasks, milestones }
         )
-      } else message = tr(settings, 'Delete project “{name}”? This cannot be undone.', { name: record.name })
+        ask.details = [
+          tr(settings, '{count} task(s)', { count: tasks }),
+          tr(settings, '{count} milestone(s)', { count: milestones })
+        ]
+      }
+      ask.confirmLabel = tr(settings, 'Delete project')
     }
     if (type === 'person') {
       const tasks = data.tasks.filter(task => task.assigneeId === record.id).length
-      message = tr(settings, 'Delete {name}? Their {tasks} assigned task(s) will become unassigned.', {
-        name: record.name,
-        tasks
-      })
+      ask.title = tr(settings, 'Delete {name}?', { name: record.name })
+      ask.message = tr(settings, 'Their {tasks} assigned task(s) will become unassigned.', { tasks })
     }
-    if (type === 'user')
-      message = tr(settings, 'Delete the account for {name}? Their person profile stays.', { name: record.name })
-    if (!window.confirm(message)) return
+    if (type === 'user') {
+      ask.title = tr(settings, 'Delete the account for {name}?', { name: record.name })
+      ask.message = tr(settings, 'Their person profile stays.')
+    }
+    if (!(await confirmAction(ask))) return
     const key = type === 'task' || type === 'project' ? record.numericId : record.id
     try {
-      await api.delete(`/api/${paths[type]}/${key}${query}`)
-      notify({ title: 'Deleted', tone: 'success' })
+      const result = await api.delete(`/api/${paths[type]}/${key}${query}`)
+      if (type === 'task' && result.batch)
+        notify(deletedToast(settings, 1, record.title, result.batch, notify, () => loadData(true)))
+      else notify({ title: 'Deleted', tone: 'success' })
       setModal(null)
       await loadData(true)
     } catch (err) {
@@ -420,15 +451,17 @@ export function App() {
     return next
   }
   const removeDemo = async () => {
-    if (
-      !window.confirm(
-        tr(
-          settings,
-          'Remove all sample rows and the demo sign-in accounts, keeping your live data? A backup is taken first.'
-        )
-      )
-    )
-      return
+    const proceed = await confirmAction({
+      title: tr(settings, 'Remove the demo data?'),
+      message: tr(
+        settings,
+        'Remove all sample rows and the demo sign-in accounts, keeping your live data? A backup is taken first.'
+      ),
+      tone: 'danger',
+      irreversible: true,
+      confirmLabel: tr(settings, 'Remove demo data')
+    })
+    if (!proceed) return
     try {
       await api.delete('/api/setup/seed')
       notify({ title: 'Demo data removed', tone: 'success' })
@@ -669,8 +702,10 @@ export function App() {
           onClose={() => setModal(null)}
           onSave={saveEntity}
           onDelete={deleteEntity}
+          onReopen={openModal}
         />
         <PrintPreviewHost />
+        <ConfirmHost />
         <ToastHost toasts={toasts} dismiss={id => setToasts(t => t.filter(x => x.id !== id))} />
       </div>
     </AppContext.Provider>

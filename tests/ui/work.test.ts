@@ -134,8 +134,8 @@ describe('changing status is deliberate and failures are visible (UX-06, UX-04)'
   test('the list view has an explicit advance control too, with an accessible name', async () => {
     const ui = await openWork()
     ui.click('.view-toggle button', 'List')
-    await ui.waitFor(() => ui.doc.querySelector('.task-table-panel .task-row'))
-    const check = ui.doc.querySelector('.task-row .task-check')!
+    await ui.waitFor(() => ui.doc.querySelector('.task-table-panel tbody tr[data-row]'))
+    const check = ui.doc.querySelector('.task-table-panel tr[data-row] .task-check')!
     assert.match(check.getAttribute('aria-label') || '', /^Advance .* to the next status$/)
   })
 })

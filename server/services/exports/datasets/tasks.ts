@@ -2,7 +2,9 @@
 // the shared condition engine for the "advanced filter" the screen offers.
 import type { TableSection } from '../../../export/model'
 import { dueLabel } from '../../../presenters/tasks'
-import type { TaskFilter } from '../../../repositories/tasks'
+import type { TaskFilter, TaskSort } from '../../../repositories/tasks'
+import { taskQuerySchema, toTaskListing } from '../../../validation/queries'
+import { parse } from '../../../validation/schemas'
 import {
   type DatasetContext,
   type DatasetDefinition,
@@ -66,6 +68,18 @@ export function taskFilterFor(dc: DatasetContext, extra: Partial<TaskFilter> = {
   return filter
 }
 
+/**
+ * What the screen's own list asked for (`request.grid` is its query string): filtered, searched, tagged and sorted exactly as
+ * the list endpoint would, because it is the same code.
+ */
+function gridListing(dc: DatasetContext): { filter: TaskFilter; sort: TaskSort[] } | undefined {
+  if (!dc.request.grid) return undefined
+  const query = parse(taskQuerySchema, Object.fromEntries(new URLSearchParams(dc.request.grid)))
+  const { filter, sort } = toTaskListing(query, dc.user)
+  // Only what the screen actually asked for: an absent filter must not wipe out one set elsewhere (a project in `scope`).
+  return { filter: Object.fromEntries(Object.entries(filter).filter(([, value]) => value !== undefined)), sort }
+}
+
 /** Task rows as export rows, plus the tones that colour them. */
 export function taskTable(
   dc: DatasetContext,
@@ -75,9 +89,10 @@ export function taskTable(
 ): TableSection {
   const { label, ref, terminal } = dc
   const columns = taskColumns(dc)
-  const filter = taskFilterFor(dc, extra)
+  const listing = gridListing(dc)
+  const filter = { ...taskFilterFor(dc, extra), ...(listing?.filter ?? {}) }
   const rows = []
-  for (const r of dc.ctx.repos.tasks.iterate(filter, { key: 'due', dir: 'asc' })) {
+  for (const r of dc.ctx.repos.tasks.iterate(filter, listing?.sort ?? { key: 'due', dir: 'asc' })) {
     const done = terminal.includes(r.status)
     const overdue = !done && Boolean(r.due_date) && r.due_date < ref.today
     const row: Record<string, string | number | boolean | null> = {

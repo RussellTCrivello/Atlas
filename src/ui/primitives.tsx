@@ -54,6 +54,18 @@ export function ToastHost({ toasts, dismiss }) {
           <div>
             <strong>{t.title}</strong>
             {t.body && <span>{t.body}</span>}
+            {t.action && (
+              <button
+                type="button"
+                className="text-button toast-action"
+                onClick={() => {
+                  dismiss(t.id)
+                  t.action.onClick()
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
           <button
             type="button"

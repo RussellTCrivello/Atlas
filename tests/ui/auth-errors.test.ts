@@ -267,39 +267,44 @@ describe('routing and dialogs (UX-08, UX-05, UX-06)', () => {
     try {
       const admin = await setupAdmin(server)
       await admin.post('/api/projects', { name: 'P', code: 'PRJ' })
-      let answer = false
-      const ui = await boot({ base: server.url, cookie: admin.cookie, hash: '/tasks', confirm: () => answer })
+      const ui = await boot({ base: server.url, cookie: admin.cookie, hash: '/tasks' })
       await ui.waitFor(() => ui.doc.querySelector('.board'))
       ui.click('.work-toolbar .primary-button')
       const dialog = (await ui.waitFor(() => ui.doc.querySelector('[role="dialog"]'))) as HTMLElement
       assert.equal(dialog.getAttribute('aria-modal'), 'true')
       assert.equal(textOf(ui.doc.getElementById(dialog.getAttribute('aria-labelledby')!)), 'Create task')
-      const escape = () => dialog.dispatchEvent(new ui.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      escape()
+      const escape = (el: Element) =>
+        el.dispatchEvent(new ui.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      escape(dialog)
       await ui.settle(100)
       assert.equal(ui.doc.querySelector('[role="dialog"]'), null, 'nothing was typed: closes without asking')
-      assert.equal(ui.confirms.length, 0)
+      assert.equal(ui.doc.querySelector('[role="alertdialog"]'), null)
+      assert.equal(ui.confirms.length, 0, "and the browser's own confirm() is never used")
 
       ui.click('.work-toolbar .primary-button')
       await ui.waitFor(() => ui.doc.querySelector('[role="dialog"]'))
       ui.type('[role="dialog"] input[required]', 'Half-written task')
-      const again = ui.doc.querySelector('[role="dialog"]') as HTMLElement
-      again.dispatchEvent(new ui.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      assert.match(textOf(ui.doc.querySelector('.dirty-badge')), /Unsaved changes/, 'unsaved edits are noticed')
+      escape(ui.doc.querySelector('[role="dialog"]')!)
+      const ask = (await ui.waitFor(() => ui.doc.querySelector('[role="alertdialog"]'))) as HTMLElement
+      assert.match(textOf(ask), /Discard your changes/)
+      assert.equal(ask.getAttribute('aria-modal'), 'true')
+      assert.ok(ask.getAttribute('aria-labelledby') && ask.getAttribute('aria-describedby'), 'labelled and described')
+      ui.click('[role="alertdialog"] button', 'Keep editing')
       await ui.settle(100)
+      assert.equal(ui.doc.querySelector('[role="alertdialog"]'), null)
       assert.ok(ui.doc.querySelector('[role="dialog"]'), 'declined to discard: stays open with the text intact')
       assert.equal(
         (ui.doc.querySelector('[role="dialog"] input[required]') as HTMLInputElement).value,
         'Half-written task'
       )
-      assert.match(ui.confirms.at(-1)!, /Discard your changes/)
       ui.click('.modal-backdrop')
       assert.ok(ui.doc.querySelector('[role="dialog"]'), 'a stray click on the backdrop does not throw away typing')
-      answer = true
-      ui.doc
-        .querySelector('[role="dialog"]')!
-        .dispatchEvent(new ui.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      await ui.settle(100)
-      assert.equal(ui.doc.querySelector('[role="dialog"]'), null)
+      escape(ui.doc.querySelector('[role="dialog"]')!)
+      await ui.waitFor(() => ui.doc.querySelector('[role="alertdialog"]'))
+      ui.click('[role="alertdialog"] button', 'Discard changes')
+      await ui.waitFor(() => !ui.doc.querySelector('[role="dialog"]'))
+      assert.equal(ui.doc.querySelector('[role="alertdialog"]'), null)
     } finally {
       await server.cleanup()
     }
@@ -334,8 +339,22 @@ describe('routing and dialogs (UX-08, UX-05, UX-06)', () => {
       ui.click('.project-card [aria-label="Edit"]')
       await ui.waitFor(() => ui.doc.querySelector('[role="dialog"]'))
       ui.click('[role="dialog"] .danger-button')
+      const ask = (await ui.waitFor(() => ui.doc.querySelector('[role="alertdialog"]'))) as HTMLElement
+      assert.match(textOf(ask), /Doomed Project.*3 task\(s\)/, 'it names the project and the tasks that go with it')
+      assert.match(textOf(ask), /cannot be undone/i, 'and says there is no way back')
+      assert.equal(
+        ui.requests.filter(r => r.method === 'DELETE').length,
+        0,
+        'nothing is deleted until the person agrees'
+      )
+      ui.click('[role="alertdialog"] button', 'Cancel')
+      await ui.settle(150)
+      assert.equal(ui.requests.filter(r => r.method === 'DELETE').length, 0, 'cancelling deletes nothing')
+      assert.ok(ui.doc.querySelector('.project-card'))
+      ui.click('[role="dialog"] .danger-button')
+      await ui.waitFor(() => ui.doc.querySelector('[role="alertdialog"]'))
+      ui.click('[role="alertdialog"] button', 'Delete project')
       await ui.waitFor(() => ui.requests.some(r => r.method === 'DELETE'))
-      assert.match(ui.confirms.at(-1)!, /Doomed Project.*3 task\(s\)/)
       assert.ok(ui.requests.find(r => r.method === 'DELETE')!.url.endsWith('?cascade=true'))
       await ui.waitFor(() => !ui.doc.querySelector('.project-card'))
     } finally {

@@ -37,11 +37,38 @@ interface Props {
   primary?: boolean
   /** The text of the button that opens the panel. */
   label?: string
+  /** The records ticked on the page. When there are any, "Selected rows" is offered (and chosen first). */
+  selection?: (string | number)[]
+  /** What the dataset is without the filters on the page (a project, say). "Entire dataset" exports exactly this. */
+  fullScope?: Record<string, string | number | boolean>
+  /** How many records the whole dataset has, if the page knows. */
+  totalHint?: number
+  /** Tasks: the grid's own query string. "Filtered rows" is then exactly what the grid shows (same code on the server). */
+  grid?: string
+  /** Lists that filter in the browser: the ids of the rows that pass. "Filtered rows" is then exactly these. */
+  filteredIds?: (string | number)[]
 }
+
+type Extent = 'selected' | 'filtered' | 'all'
 
 const FILE_FORMATS = ['pdf', 'xlsx', 'csv', 'json']
 
-export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHint, primary = true, label }: Props) {
+export function ExportMenu({
+  dataset,
+  title,
+  scope,
+  filters,
+  query,
+  sort,
+  rowsHint,
+  primary = true,
+  label,
+  selection,
+  fullScope,
+  totalHint,
+  grid,
+  filteredIds
+}: Props) {
   const { user, notify, settings } = useApp()
   const language = uiLanguage(settings)
   const allowed = hasPermission(user, 'exportData') && settings?.interface?.actionVisibility?.export !== false
@@ -57,6 +84,12 @@ export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHi
   const [preview, setPreview] = useState<ExportPreview | null>(null)
   const [previewError, setPreviewError] = useState('')
   const [busy, setBusy] = useState(false)
+  const selectedCount = selection?.length ?? 0
+  const [extent, setExtent] = useState<Extent>(selectedCount ? 'selected' : 'filtered')
+  // Ticking rows makes "Selected rows" the starting choice; clearing the selection takes it away again.
+  useEffect(() => {
+    setExtent(current => (selectedCount ? 'selected' : current === 'selected' ? 'filtered' : current))
+  }, [selectedCount > 0])
 
   const entry = catalog?.datasets.find(item => item.id === dataset)
   const columns = entry?.columns ?? []
@@ -69,9 +102,20 @@ export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHi
     (): Omit<ExportRequest, 'format'> => ({
       dataset,
       columns: chosen,
-      filters: activeFilters,
-      q: query?.trim() || undefined,
-      scope: scope && Object.keys(scope).length ? scope : undefined,
+      // What is exported depends on the choice: exactly the ticked rows, everything the filters find, or the whole dataset.
+      ...(extent === 'selected'
+        ? { ids: selection }
+        : extent === 'all'
+          ? { scope: fullScope && Object.keys(fullScope).length ? fullScope : undefined }
+          : grid !== undefined
+            ? { grid }
+            : filteredIds !== undefined
+              ? { ids: filteredIds }
+              : {
+                  filters: activeFilters,
+                  q: query?.trim() || undefined,
+                  scope: scope && Object.keys(scope).length ? scope : undefined
+                }),
       sort,
       title: fileTitle,
       language,
@@ -84,6 +128,11 @@ export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHi
     [
       dataset,
       chosen.join('|'),
+      extent,
+      grid,
+      JSON.stringify(filteredIds),
+      JSON.stringify(selection),
+      JSON.stringify(fullScope),
       JSON.stringify(activeFilters),
       query,
       scopeKey,
@@ -218,6 +267,42 @@ export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHi
               <Icon name="close" size={14} />
             </button>
           </div>
+          <fieldset className="export-extent">
+            <legend>What to export</legend>
+            {selectedCount > 0 && (
+              <label>
+                <input
+                  type="radio"
+                  name="extent"
+                  checked={extent === 'selected'}
+                  onChange={() => setExtent('selected')}
+                />
+                <span>
+                  <strong>Selected rows ({selectedCount.toLocaleString('en')})</strong>
+                  <small>Only the rows you ticked.</small>
+                </span>
+              </label>
+            )}
+            <label>
+              <input
+                type="radio"
+                name="extent"
+                checked={extent === 'filtered'}
+                onChange={() => setExtent('filtered')}
+              />
+              <span>
+                <strong>Filtered rows{rowsHint !== undefined ? ` (${rowsHint.toLocaleString('en')})` : ''}</strong>
+                <small>Every row your search and filters find, not only the page on screen.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="extent" checked={extent === 'all'} onChange={() => setExtent('all')} />
+              <span>
+                <strong>Entire dataset{totalHint !== undefined ? ` (${totalHint.toLocaleString('en')})` : ''}</strong>
+                <small>Every record, ignoring your filters and search.</small>
+              </span>
+            </label>
+          </fieldset>
           <label className="tiny-label">
             Report title
             <input value={fileTitle} onChange={event => setFileTitle(event.target.value)} />
@@ -325,8 +410,11 @@ export function ExportMenu({ dataset, title, scope, filters, query, sort, rowsHi
             </p>
           )}
           <p className="filter-hint">
-            Exports contain every row that matches your filters, read straight from the database, not only the rows on
-            screen.
+            {extent === 'selected'
+              ? 'Only the rows you ticked are exported, read straight from the database.'
+              : extent === 'all'
+                ? 'Every record is exported, whatever is filtered on screen.'
+                : 'Exports contain every row that matches your filters, read straight from the database, not only the rows on screen.'}
           </p>
           <div className="export-actions">
             {formats.length > 0 && (

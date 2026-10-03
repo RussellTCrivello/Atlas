@@ -1,591 +1,460 @@
-// The dialog for creating and editing every kind of record.
-import { useState, useRef, useEffect } from 'react'
+// The dialog for creating and editing every kind of record. What it asks for comes from form-specs.ts; this file is how it
+// behaves: required fields are marked and checked, a problem is shown beside the field it belongs to (and summarised, and the
+// first one is focused), unsaved edits are noticed and never thrown away without asking, and a record can be saved in four ways:
+// Save, Save and continue editing, Save and create another, or not at all (Cancel, Reset).
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { api, errorMessage } from '../../lib/api'
 import { tr } from '../../lib/i18n'
-import { workflowStateLabels, customFieldDefinitions } from '../../lib/settings'
-import { errorMessage } from '../../lib/api'
-import { useApp } from '../../ui/app-context'
 import { roleDefinitions } from '../../lib/roles'
-import { Icon } from '../../ui/icons'
+import { useApp } from '../../ui/app-context'
+import { confirmAction } from '../../ui/confirm'
 import { CustomFieldInputs } from '../../ui/custom-fields'
+import { Icon } from '../../ui/icons'
+import { useDialogKeys } from '../../ui/use-dialog'
+import { type FieldSpec, type RecordType, carryOver, customFieldsOf, presetsFor, specsFor } from './form-specs'
+import { TagInput } from './TagInput'
 
-export function FormModal({ modal, data, user, onClose, onSave, onDelete }) {
+type SaveMode = 'close' | 'stay' | 'another'
+
+interface Props {
+  modal: { type: RecordType; record?: any; nonce?: number } | null
+  data: any
+  user: any
+  onClose: () => void
+  /** Create or update. Resolves with the saved record so the dialog can carry on editing it. */
+  onSave: (type: RecordType, record: any, form: any) => Promise<any>
+  onDelete?: (type: RecordType, record: any) => void
+  /** Show another record (or a new one with these starting values) in the same dialog. */
+  onReopen?: (type: RecordType, record: any) => void
+}
+
+/** Turn a failed save into messages beside the fields they are about, plus whatever is left over for the summary. */
+export function explainFailure(
+  error: unknown,
+  fields: Set<string>
+): { byField: Record<string, string>; message: string } {
+  const byField: Record<string, string> = {}
+  const details = (error as any)?.details
+  if (Array.isArray(details))
+    for (const issue of details) {
+      const name = String(issue?.field || '').split('.')[0]
+      if (fields.has(name) && !byField[name]) byField[name] = String(issue.message)
+    }
+  if ((error as any)?.code === 'DUPLICATE_CODE' && fields.has('code')) byField.code = errorMessage(error)
+  return { byField, message: errorMessage(error) }
+}
+
+export function FormModal({ modal, data, user, onClose, onSave, onDelete, onReopen }: Props) {
   const type = modal?.type
   const record = modal?.record
   const { settings } = useApp()
+  const t = (phrase: string, values?: Record<string, unknown>) => tr(settings, phrase, values)
   const [form, setForm] = useState<any>({})
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [failure, setFailure] = useState('')
+  const [busy, setBusy] = useState<SaveMode | ''>('')
+  const [tagNames, setTagNames] = useState<string[]>([])
   const initialForm = useRef('')
-  const dialogRef = useRef(null)
-  const dirty = JSON.stringify(form) !== initialForm.current
-  const requestClose = () => {
-    if (dirty && !window.confirm(tr(settings, 'Discard your changes?'))) return
+  const dialogRef = useRef<HTMLFormElement>(null)
+  const focusedInvalid = useRef(false)
+  const titleId = useId()
+  const dirty = Boolean(type) && JSON.stringify(form) !== initialForm.current
+
+  const requestClose = async () => {
+    if (
+      dirty &&
+      !(await confirmAction({
+        title: t('Discard your changes?'),
+        message: t('Your edits to this record have not been saved.'),
+        confirmLabel: t('Discard changes'),
+        cancelLabel: t('Keep editing'),
+        tone: 'danger'
+      }))
+    )
+      return
     onClose()
   }
-  // Keyboard: Escape closes (asking first if there are unsaved edits), Tab stays inside the dialog.
-  const onDialogKeyDown = event => {
-    if (event.key === 'Escape') {
-      event.stopPropagation()
-      requestClose()
-    }
-    if (event.key === 'Tab' && dialogRef.current) {
-      const focusable = [
-        ...dialogRef.current.querySelectorAll(
-          'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  // Focus goes to the first field, not to the close button that comes first in the page.
+  const firstField = useMemo(
+    () => ({
+      get current() {
+        return (
+          dialogRef.current?.querySelector<HTMLElement>(
+            '.form-fields input:not([type="checkbox"]), .form-fields select, .form-fields textarea'
+          ) ?? null
         )
-      ].filter(el => el.offsetParent !== null)
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
       }
+    }),
+    []
+  )
+  const onKeyDown = useDialogKeys(dialogRef, Boolean(type), requestClose, firstField)
+
+  // Leaving the page with edits in the box asks first (the browser shows its own prompt for this).
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
     }
-  }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  const context = useMemo(
+    () => ({
+      data: { ...data, settings: data.settings || settings },
+      user,
+      record,
+      isEdit: Boolean(record?.numericId || record?.id),
+      settings
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, user, record, settings]
+  )
+
   useEffect(() => {
     if (!type) return
-    const opener = document.activeElement as HTMLElement | null
+    const start = presetsFor(type, context)
+    initialForm.current = JSON.stringify(start)
+    setForm(start)
+    setErrors({})
+    setFailure('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, record?.numericId, record?.id, modal?.nonce])
+
+  // Existing tags are offered while typing one (only task forms use them).
+  useEffect(() => {
+    if (type !== 'task') return
+    let alive = true
+    api
+      .get('/api/tags')
+      .then(result => alive && setTagNames((result.tags || []).map((tag: any) => tag.name)))
+      .catch(() => undefined)
     return () => {
-      if (opener && typeof opener.focus === 'function' && document.contains(opener)) (opener as HTMLElement).focus()
+      alive = false
     }
   }, [type])
-  useEffect(() => {
-    if (!type) return
-    const firstProject = data.projects[0]?.numericId || ''
-    const firstPerson = data.people[0]?.id || user?.personId || ''
-    const firstTeam = data.teams[0]?.id || ''
-    const taskStatuses = workflowStateLabels(data.settings)
-    const presets = {
-      task: {
-        title: record?.title || '',
-        projectId: record?.projectId || firstProject,
-        assigneeId: record?.assigneeId || user?.personId || firstPerson,
-        priority: record?.priority || 'Medium',
-        dueDate: record?.dueDate || data.today,
-        status: record?.status || taskStatuses[0] || 'To do',
-        type: record?.type || 'Development',
-        blocked: Boolean(record?.blocked),
-        customFields: record?.customFields || {}
-      },
-      project: {
-        name: record?.name || '',
-        code: record?.code || '',
-        description: record?.description || '',
-        teamId: record?.teamId || firstTeam,
-        ownerId: record?.ownerId || user?.personId || firstPerson,
-        color: record?.color || 'purple',
-        status: record?.status || 'On track',
-        deadline: record?.deadlineDate || data.today,
-        customFields: record?.customFields || {}
-      },
-      person: {
-        name: record?.name || '',
-        email: record?.email || '',
-        jobTitle: record?.jobTitle || record?.role || 'Contributor',
-        teamId: record?.teamId || firstTeam,
-        focus: record?.focus || 'Workspace priorities',
-        capacity: record?.capacity ?? record?.load ?? 70,
-        status: record?.status || 'On track',
-        color: record?.color || 'purple',
-        customFields: record?.customFields || {}
-      },
-      team: { name: record?.name || '', color: record?.color || 'purple', customFields: record?.customFields || {} },
-      milestone: {
-        name: record?.name || '',
-        projectId: record?.projectId || record?.project?.numericId || firstProject,
-        dueDate: record?.dueDate || data.today,
-        status: record?.status || 'Upcoming',
-        customFields: record?.customFields || {}
-      },
-      activity: {
-        personId: record?.personId || user?.personId || firstPerson,
-        yesterday: '',
-        today: '',
-        blocked: '',
-        upcoming: '',
-        status: 'Confirmed',
-        customFields: record?.customFields || {}
-      },
-      alert: {
-        title: record?.title || '',
-        body: record?.body || '',
-        type: record?.type || 'info',
-        tone: record?.tone || 'blue',
-        projectId: record?.projectId || '',
-        taskId: record?.taskId || '',
-        customFields: record?.customFields || {}
-      },
-      user: {
-        name: record?.name || '',
-        email: record?.email || '',
-        password: '',
-        role: record?.role || 'Viewer',
-        personId: record?.personId || '',
-        avatarColor: record?.avatarColor || 'purple',
-        active: record?.active !== false,
-        mustChangePassword: true
-      }
-    }
-    initialForm.current = JSON.stringify(presets[type] || {})
-    setForm(presets[type] || {})
-    setError('')
-  }, [type, record?.numericId, record?.id])
+
   if (!type) return null
-  const isEdit = Boolean(record?.numericId || record?.id)
-  const taskStatuses = workflowStateLabels(data.settings)
-  const roles = roleDefinitions(data.settings)
-  const fieldDefs = customFieldDefinitions(data.settings, type)
-  const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
-  const submit = async e => {
-    e.preventDefault()
-    if (busy) return
-    setError('')
-    setBusy(true)
-    try {
-      await onSave(type, record, form)
-      initialForm.current = JSON.stringify(form)
-      onClose()
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setBusy(false)
+  const isEdit = context.isEdit
+  const specs = specsFor(type, context, form)
+  const known = new Set(specs.map(spec => spec.name))
+  const fieldDefs = customFieldsOf(data.settings || settings, type)
+  const roles = roleDefinitions(data.settings || settings)
+  const set = (name: string, value: any) => {
+    setForm((current: any) => ({ ...current, [name]: value }))
+    setErrors(current => {
+      if (!current[name]) return current
+      const { [name]: _gone, ...rest } = current
+      void _gone
+      return rest
+    })
+  }
+  const reset = () => {
+    setForm(JSON.parse(initialForm.current))
+    setErrors({})
+    setFailure('')
+  }
+
+  const invalidMessage = (el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, spec?: FieldSpec) => {
+    const v = el.validity
+    if (v.valueMissing) return t('This field is required')
+    if (v.patternMismatch)
+      return spec?.patternHint
+        ? t('Use {hint}', { hint: spec.patternHint })
+        : t('This value is not in the expected format')
+    if (v.typeMismatch) return t('Enter a valid value')
+    if (v.tooShort) return t('Use at least {count} characters', { count: spec?.minLength ?? 0 })
+    if (v.rangeUnderflow || v.rangeOverflow)
+      return t('Enter a number between {min} and {max}', { min: spec?.min ?? 0, max: spec?.max ?? 100 })
+    return el.validationMessage || t('This value is not valid')
+  }
+  const onInvalid = (event: FormEvent, spec: FieldSpec) => {
+    // The browser still refuses to submit; we say why next to the field instead of in a bubble that disappears.
+    event.preventDefault()
+    const el = event.currentTarget as HTMLInputElement
+    setErrors(current => ({ ...current, [spec.name]: invalidMessage(el, spec) }))
+    if (!focusedInvalid.current) {
+      focusedInvalid.current = true
+      el.focus()
     }
   }
-  const fields = () => {
-    if (type === 'task')
-      return (
-        <>
-          <label>
-            Task title
-            <input autoFocus value={form.title || ''} onChange={e => set('title', e.target.value)} required />
-          </label>
-          <div className="form-row">
-            <label>
-              Project
-              <select value={form.projectId || ''} onChange={e => set('projectId', e.target.value)}>
-                {data.projects.map(p => (
-                  <option key={p.numericId} value={p.numericId}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Owner
-              <select value={form.assigneeId || ''} onChange={e => set('assigneeId', e.target.value)}>
-                {data.people.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Priority
-              <select value={form.priority || 'Medium'} onChange={e => set('priority', e.target.value)}>
-                <option>High</option>
-                <option>Medium</option>
-                <option>Low</option>
-              </select>
-            </label>
-            <label>
-              Due date
-              <input type="date" value={form.dueDate || ''} onChange={e => set('dueDate', e.target.value)} />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Status
-              <select value={form.status || 'To do'} onChange={e => set('status', e.target.value)}>
-                {taskStatuses.map(s => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Type
-              <select value={form.type || 'Development'} onChange={e => set('type', e.target.value)}>
-                <option>Development</option>
-                <option>Design</option>
-                <option>Testing</option>
-                <option>Documentation</option>
-              </select>
-            </label>
-          </div>
-          <label className="checkbox-label">
-            <input type="checkbox" checked={Boolean(form.blocked)} onChange={e => set('blocked', e.target.checked)} />{' '}
-            This task is blocked
-          </label>
-        </>
-      )
-    if (type === 'project')
-      return (
-        <>
-          <div className="form-row">
-            <label>
-              Project name
-              <input autoFocus value={form.name || ''} onChange={e => set('name', e.target.value)} required />
-            </label>
-            <label>
-              Code
-              <input value={form.code || ''} onChange={e => set('code', e.target.value.toUpperCase())} required />
-            </label>
-          </div>
-          <label>
-            Objective
-            <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} rows={3} />
-          </label>
-          <div className="form-row">
-            <label>
-              Team
-              <select value={form.teamId || ''} onChange={e => set('teamId', e.target.value)}>
-                {data.teams.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Owner
-              <select value={form.ownerId || ''} onChange={e => set('ownerId', e.target.value)}>
-                {data.people.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Status
-              <select value={form.status || 'On track'} onChange={e => set('status', e.target.value)}>
-                <option>On track</option>
-                <option>At risk</option>
-                <option>Completed</option>
-              </select>
-            </label>
-            <label>
-              Deadline
-              <input type="date" value={form.deadline || ''} onChange={e => set('deadline', e.target.value)} />
-            </label>
-          </div>
-        </>
-      )
-    if (type === 'person')
-      return (
-        <>
-          <div className="form-row">
-            <label>
-              Full name
-              <input autoFocus value={form.name || ''} onChange={e => set('name', e.target.value)} required />
-            </label>
-            <label>
-              Email
-              <input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Job title
-              <input value={form.jobTitle || ''} onChange={e => set('jobTitle', e.target.value)} />
-            </label>
-            <label>
-              Team
-              <select value={form.teamId || ''} onChange={e => set('teamId', e.target.value)}>
-                {data.teams.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label>
-            Current focus
-            <input value={form.focus || ''} onChange={e => set('focus', e.target.value)} />
-          </label>
-          <div className="form-row">
-            <label>
-              Planned capacity (%)
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={form.capacity ?? 70}
-                onChange={e => set('capacity', e.target.value)}
-              />
-            </label>
-            <label>
-              Status
-              <select value={form.status || 'On track'} onChange={e => set('status', e.target.value)}>
-                <option>On track</option>
-                <option>Needs attention</option>
-              </select>
-            </label>
-          </div>
-        </>
-      )
-    if (type === 'team')
-      return (
-        <>
-          <label>
-            Team name
-            <input autoFocus value={form.name || ''} onChange={e => set('name', e.target.value)} required />
-          </label>
-          <label>
-            Color
-            <select value={form.color || 'purple'} onChange={e => set('color', e.target.value)}>
-              <option>purple</option>
-              <option>blue</option>
-              <option>orange</option>
-              <option>green</option>
-              <option>teal</option>
-            </select>
-          </label>
-        </>
-      )
-    if (type === 'milestone')
-      return (
-        <>
-          <label>
-            Milestone name
-            <input autoFocus value={form.name || ''} onChange={e => set('name', e.target.value)} required />
-          </label>
-          <label>
-            Project
-            <select value={form.projectId || ''} onChange={e => set('projectId', e.target.value)}>
-              {data.projects.map(p => (
-                <option key={p.numericId} value={p.numericId}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-row">
-            <label>
-              Due date
-              <input type="date" value={form.dueDate || ''} onChange={e => set('dueDate', e.target.value)} />
-            </label>
-            <label>
-              Status
-              <select value={form.status || 'Upcoming'} onChange={e => set('status', e.target.value)}>
-                <option>Upcoming</option>
-                <option>At risk</option>
-                <option>Complete</option>
-              </select>
-            </label>
-          </div>
-        </>
-      )
-    if (type === 'activity')
-      return (
-        <>
-          <label>
-            Person
-            <select value={form.personId || ''} onChange={e => set('personId', e.target.value)}>
-              {data.people.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Yesterday
-            <textarea
-              autoFocus
-              value={form.yesterday || ''}
-              onChange={e => set('yesterday', e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label>
-            Today
-            <textarea value={form.today || ''} onChange={e => set('today', e.target.value)} rows={2} />
-          </label>
-          <label>
-            Blocked
-            <textarea value={form.blocked || ''} onChange={e => set('blocked', e.target.value)} rows={2} />
-          </label>
-          <label>
-            Upcoming
-            <textarea value={form.upcoming || ''} onChange={e => set('upcoming', e.target.value)} rows={2} />
-          </label>
-        </>
-      )
-    if (type === 'user')
-      return (
-        <>
-          <div className="form-row">
-            <label>
-              Full name
-              <input autoFocus value={form.name || ''} onChange={e => set('name', e.target.value)} required />
-            </label>
-            <label>
-              Email
-              <input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Role
-              <select value={form.role || 'Viewer'} onChange={e => set('role', e.target.value)}>
-                {Object.keys(roles).map(role => (
-                  <option key={role}>{role}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Linked person
-              <select value={form.personId || ''} onChange={e => set('personId', e.target.value)}>
-                {!record && <option value="">Create a new person profile</option>}
-                {data.people
-                  .filter(p => p.id === record?.personId || !(data.users || []).some(u => u.personId === p.id))
-                  .map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          </div>
-          <label>
-            {record ? 'New password (optional)' : 'Password'}
+  const onBlurCheck = (spec: FieldSpec, el: HTMLInputElement) => {
+    if (!el.validity.valid) setErrors(current => ({ ...current, [spec.name]: invalidMessage(el, spec) }))
+  }
+
+  const submit = async (mode: SaveMode, event?: FormEvent) => {
+    event?.preventDefault()
+    if (busy) return
+    setFailure('')
+    setErrors({})
+    setBusy(mode)
+    try {
+      const saved = await onSave(type, record, form)
+      initialForm.current = JSON.stringify(form)
+      if (mode === 'close' || !onReopen) onClose()
+      else if (mode === 'stay') onReopen(type, saved && (saved.numericId || saved.id) ? saved : record)
+      else onReopen(type, carryOver(type, form))
+    } catch (error) {
+      const { byField, message } = explainFailure(error, known)
+      setErrors(byField)
+      setFailure(message)
+      const first = Object.keys(byField)[0]
+      if (first) setTimeout(() => dialogRef.current?.querySelector<HTMLElement>(`[name="${first}"]`)?.focus(), 0)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // The two extra save buttons go through the browser's own validation too (so required fields are enforced the same way).
+  const submitVia = (mode: SaveMode) => {
+    const formElement = dialogRef.current
+    if (!formElement) return
+    focusedInvalid.current = false
+    if (formElement.checkValidity()) void submit(mode)
+  }
+
+  const renderField = (spec: FieldSpec) => {
+    const id = `${titleId}-${spec.name}`
+    const error = errors[spec.name]
+    const aria = {
+      'aria-invalid': error ? true : undefined,
+      'aria-describedby':
+        [error ? `${id}-error` : '', spec.hint ? `${id}-hint` : ''].filter(Boolean).join(' ') || undefined
+    }
+    const value = form[spec.name]
+    const common = {
+      id,
+      name: spec.name,
+      required: spec.required,
+      ...aria,
+      onInvalid: (event: FormEvent) => onInvalid(event, spec),
+      onBlur: (event: any) => onBlurCheck(spec, event.currentTarget)
+    }
+    let control
+    switch (spec.kind) {
+      case 'checkbox':
+        return (
+          <label className="checkbox-label" key={spec.name}>
             <input
-              type="password"
-              value={form.password || ''}
-              onChange={e => set('password', e.target.value)}
-              minLength={record ? undefined : Number(settings.security?.passwordMinLength) || 8}
-              required={!record}
-              autoComplete="new-password"
-            />
+              type="checkbox"
+              name={spec.name}
+              checked={spec.name === 'active' || spec.name === 'mustChangePassword' ? value !== false : Boolean(value)}
+              onChange={event => set(spec.name, event.target.checked)}
+            />{' '}
+            {t(spec.label)}
           </label>
-          {(form.password || !record) && (
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={form.mustChangePassword !== false}
-                onChange={e => set('mustChangePassword', e.target.checked)}
-              />{' '}
-              Require a new password at next sign-in
-            </label>
-          )}
-          <div className="form-row">
-            <label>
-              Avatar color
-              <select value={form.avatarColor || 'purple'} onChange={e => set('avatarColor', e.target.value)}>
-                <option>purple</option>
-                <option>blue</option>
-                <option>orange</option>
-                <option>green</option>
-                <option>pink</option>
-                <option>teal</option>
-              </select>
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={form.active !== false} onChange={e => set('active', e.target.checked)} />{' '}
-              Account active
-            </label>
-          </div>
-          <div className="settings-note">
-            <Icon name="check" size={15} />
-            <span>{roles[form.role || 'Viewer']?.summary || roles[form.role || 'Viewer']?.description}</span>
-          </div>
-        </>
-      )
+        )
+      case 'select':
+        control = (
+          <select {...common} value={value ?? ''} onChange={event => set(spec.name, event.target.value)}>
+            {(spec.options || []).map(option => (
+              <option key={`${option.value}`} value={option.value}>
+                {t(String(option.label))}
+              </option>
+            ))}
+          </select>
+        )
+        break
+      case 'textarea':
+        control = (
+          <textarea
+            {...common}
+            autoFocus={spec.autoFocus}
+            rows={spec.rows}
+            maxLength={spec.maxLength}
+            value={value ?? ''}
+            onChange={event => set(spec.name, event.target.value)}
+          />
+        )
+        break
+      case 'tags':
+        control = (
+          <TagInput
+            inputId={id}
+            value={Array.isArray(value) ? value : []}
+            onChange={tags => set(spec.name, tags)}
+            suggestions={tagNames}
+            describedBy={aria['aria-describedby']}
+            invalid={Boolean(error)}
+          />
+        )
+        break
+      default:
+        control = (
+          <input
+            {...common}
+            autoFocus={spec.autoFocus}
+            type={spec.kind === 'text' ? 'text' : spec.kind}
+            maxLength={spec.maxLength}
+            minLength={spec.minLength}
+            min={spec.min}
+            max={spec.max}
+            pattern={spec.pattern}
+            autoComplete={spec.autoComplete}
+            title={spec.patternHint}
+            value={value ?? ''}
+            onChange={event => set(spec.name, spec.upper ? event.target.value.toUpperCase() : event.target.value)}
+          />
+        )
+    }
+    const near = spec.maxLength && typeof value === 'string' && value.length >= spec.maxLength * 0.9
     return (
-      <>
-        <label>
-          Alert title
-          <input autoFocus value={form.title || ''} onChange={e => set('title', e.target.value)} required />
+      <div className="field" key={spec.name} data-invalid={error ? 'true' : undefined}>
+        <label htmlFor={id}>
+          {t(spec.label)}
+          {spec.required && (
+            <span className="req" aria-hidden="true">
+              {' '}
+              *
+            </span>
+          )}
         </label>
-        <label>
-          Details
-          <textarea value={form.body || ''} onChange={e => set('body', e.target.value)} rows={3} />
-        </label>
-        <div className="form-row">
-          <label>
-            Type
-            <select value={form.type || 'info'} onChange={e => set('type', e.target.value)}>
-              <option value="info">Info</option>
-              <option value="deadline">Deadline</option>
-              <option value="blocker">Blocker</option>
-              <option value="risk">Risk</option>
-            </select>
-          </label>
-          <label>
-            Project
-            <select value={form.projectId || ''} onChange={e => set('projectId', e.target.value)}>
-              <option value="">Workspace</option>
-              {data.projects.map(p => (
-                <option key={p.numericId} value={p.numericId}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </>
+        {control}
+        {spec.hint && !error && (
+          <span className="field-hint" id={`${id}-hint`}>
+            {t(spec.hint)}
+          </span>
+        )}
+        {near ? (
+          <span className="field-hint" aria-live="polite">
+            {value.length}/{spec.maxLength}
+          </span>
+        ) : null}
+        {error && (
+          <span className="field-error" id={`${id}-error`}>
+            <Icon name="warning" size={12} /> {error}
+          </span>
+        )}
+      </div>
     )
   }
+
+  // Fields that share a row sit side by side; the order of the spec is the order on screen.
+  const rows: (FieldSpec | FieldSpec[])[] = []
+  for (const spec of specs) {
+    const last = rows[rows.length - 1]
+    if (spec.row && Array.isArray(last) && last[0].row === spec.row) last.push(spec)
+    else rows.push(spec.row ? [spec] : spec)
+  }
   const title = `${isEdit ? 'Edit' : type === 'activity' ? 'Log' : 'Create'} ${type}`
+  const note = type === 'user' ? roles[form.role || 'Viewer']?.summary || roles[form.role || 'Viewer']?.description : ''
+  const errorCount = Object.keys(errors).length
   return (
-    <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && !dirty && onClose()}>
+    <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && !dirty && onClose()}>
       <form
-        className="modal"
-        onSubmit={submit}
+        className="modal record-modal"
+        onSubmit={event => submit('close', event)}
+        onClickCapture={event => {
+          // a fresh attempt to save: the first problem it finds gets the focus again
+          if ((event.target as HTMLElement).closest('button[type="submit"], [data-save]'))
+            focusedInvalid.current = false
+        }}
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="record-dialog-title"
-        onKeyDown={onDialogKeyDown}
+        aria-labelledby={titleId}
+        onKeyDown={onKeyDown}
       >
         <div className="modal-head">
           <div>
             <span className="eyebrow">
               <span className="eyebrow-dot" /> Atlas record
             </span>
-            <h2 id="record-dialog-title">{title}</h2>
-            <p>Changes are saved to this workspace's data store when you press Save.</p>
+            <h2 id={titleId}>{title}</h2>
+            <p>
+              {t("Changes are saved to this workspace's data store when you press Save.")}{' '}
+              {dirty && (
+                <span className="dirty-badge" role="status">
+                  {t('Unsaved changes')}
+                </span>
+              )}
+            </p>
           </div>
           <button type="button" className="icon-button" aria-label="Close" onClick={requestClose}>
             <Icon name="close" size={17} />
           </button>
         </div>
         <div className="form-fields">
-          {fields()}
+          <p className="required-legend">
+            <span aria-hidden="true">*</span> {t('Required')}
+          </p>
+          {rows.map((row, index) =>
+            Array.isArray(row) ? (
+              <div className="form-row" key={index}>
+                {row.map(renderField)}
+              </div>
+            ) : (
+              renderField(row)
+            )
+          )}
+          {note && (
+            <div className="settings-note">
+              <Icon name="check" size={15} />
+              <span>{note}</span>
+            </div>
+          )}
           <CustomFieldInputs
             definitions={fieldDefs}
             values={form.customFields || {}}
             onChange={value => set('customFields', value)}
           />
-          {error && (
-            <div className="form-error">
+          {(failure || errorCount > 0) && (
+            <div className="form-error" role="alert">
               <Icon name="warning" size={15} />
-              {error}
+              <div>
+                {failure && <div>{failure}</div>}
+                {errorCount > 1 && (
+                  <div className="form-error-count">{t('{count} fields need attention', { count: errorCount })}</div>
+                )}
+              </div>
             </div>
           )}
         </div>
-        <div className="modal-foot">
+        <div className="modal-foot record-foot">
           {isEdit && onDelete && (
             <button type="button" className="secondary-button danger-button" onClick={() => onDelete(type, record)}>
               Delete
             </button>
           )}
           <span />
+          <button
+            type="button"
+            className="text-button"
+            disabled={!dirty || Boolean(busy)}
+            onClick={reset}
+            title={t('Put every field back as it was when this dialog opened')}
+          >
+            {t('Reset')}
+          </button>
           <button type="button" className="secondary-button" onClick={requestClose}>
             Cancel
           </button>
-          <button className="primary-button" disabled={busy}>
-            {busy ? 'Saving…' : 'Save'} <Icon name="arrow" size={14} />
+          {onReopen && type !== 'activity' && (
+            <button
+              type="button"
+              className="secondary-button"
+              data-save="stay"
+              disabled={Boolean(busy)}
+              onClick={() => submitVia('stay')}
+            >
+              {busy === 'stay' ? t('Saving…') : t('Save & continue')}
+            </button>
+          )}
+          {onReopen && (
+            <button
+              type="button"
+              className="secondary-button"
+              data-save="another"
+              disabled={Boolean(busy)}
+              onClick={() => submitVia('another')}
+            >
+              {busy === 'another' ? t('Saving…') : t('Save & create another')}
+            </button>
+          )}
+          <button className="primary-button" disabled={Boolean(busy)}>
+            {busy === 'close' ? 'Saving…' : 'Save'} <Icon name="arrow" size={14} />
           </button>
         </div>
       </form>

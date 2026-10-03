@@ -1,47 +1,7 @@
-// Data for the project page: the project's numbers and its tasks, both read from the database through the API. The task list is
-// filtered, sorted and paged by the server, so a project with ten thousand tasks costs the same to open as one with ten.
+// Data for the project page: the project's numbers (totals, breakdowns, people, milestones, alerts, recent activity), read from the
+// database through the API. Its tasks are the task grid's business (features/records/TaskGrid.tsx), which asks the server itself.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorMessage } from '../../lib/api'
-
-export interface TaskFilters {
-  q: string
-  status: string[]
-  priority: string[]
-  assignee: string
-  /** '' (everything), 'open', 'done' or 'overdue'. */
-  scope: '' | 'open' | 'done' | 'overdue'
-  blocked: boolean
-}
-export const NO_FILTERS: TaskFilters = { q: '', status: [], priority: [], assignee: '', scope: '', blocked: false }
-export const hasFilters = (filters: TaskFilters) =>
-  Boolean(
-    filters.q ||
-    filters.status.length ||
-    filters.priority.length ||
-    filters.assignee ||
-    filters.scope ||
-    filters.blocked
-  )
-
-export interface TaskSortState {
-  key: string
-  dir: 'asc' | 'desc'
-}
-
-export function taskQuery(filters: TaskFilters, sort: TaskSortState, page: number, pageSize: number): string {
-  const params = new URLSearchParams()
-  if (filters.q.trim()) params.set('q', filters.q.trim())
-  if (filters.status.length) params.set('status', filters.status.join(','))
-  if (filters.priority.length) params.set('priority', filters.priority.join(','))
-  if (filters.assignee) params.set('assignee', filters.assignee)
-  if (filters.scope) params.set('scope', filters.scope)
-  if (filters.blocked) params.set('blocked', 'true')
-  params.set('sort', sort.key)
-  params.set('dir', sort.dir)
-  params.set('page', String(page))
-  params.set('pageSize', String(pageSize))
-  return params.toString()
-}
 
 export interface Loaded<T> {
   data: T | null
@@ -84,25 +44,5 @@ export interface ProjectDetail {
   recent: any[]
   today: string
 }
-export interface TaskPage {
-  projectId: number
-  rows: any[]
-  total: number
-  page: number
-  pageSize: number
-  pages: number
-  byStatus: Record<string, number>
-  byPriority: Record<string, number>
-}
-
 export const useProjectDetail = (projectId: number, revision: number) =>
   useFetched<ProjectDetail>(`/api/projects/${projectId}`, revision)
-
-export const useProjectTasks = (
-  projectId: number,
-  filters: TaskFilters,
-  sort: TaskSortState,
-  page: number,
-  pageSize: number,
-  revision: number
-) => useFetched<TaskPage>(`/api/projects/${projectId}/tasks?${taskQuery(filters, sort, page, pageSize)}`, revision)

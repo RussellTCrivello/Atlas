@@ -88,6 +88,27 @@ describe('select all matching: the ids endpoint', () => {
     assert.equal(empty.body.total, 0)
   })
 
+  test('a column filter narrows the whole result, even when the advanced filter itself uses OR', async () => {
+    const high = await make({ title: 'Colf one', priority: 'High' })
+    await make({ title: 'Colf two', priority: 'Low' })
+    const get = (where: unknown[], cf: unknown[]) =>
+      admin.get(
+        `/api/tasks/ids?sort=key&where=${encodeURIComponent(JSON.stringify(where))}&cf=${encodeURIComponent(JSON.stringify(cf))}`
+      )
+    const where = [
+      { field: 'title', operator: 'contains', value: 'Colf' },
+      { join: 'OR', field: 'title', operator: 'equals', value: 'No such title' }
+    ]
+    const res = await get(where, [{ field: 'priority', operator: 'equals', value: 'High' }])
+    assert.deepEqual(res.body.ids, [high.numericId], 'only the High one: the column filter is not absorbed into the OR')
+    const two = await get(where, [
+      { field: 'priority', operator: 'equals', value: 'High' },
+      { field: 'title', operator: 'contains', value: 'two' }
+    ])
+    assert.equal(two.body.total, 0, 'several column filters must all hold')
+    assert.equal((await admin.get('/api/tasks/ids?cf=nope')).status, 400)
+  })
+
   test('a condition cannot name a column, only a known field; values are never SQL', async () => {
     const before = (await admin.get('/api/tasks/ids')).body.total
     const injected = await admin.get(
@@ -592,6 +613,86 @@ describe('exporting a selection', () => {
       (await manager.api.post('/api/exports', { dataset: 'tasks', format: 'csv', ids: [] })).status,
       400,
       'an empty selection is not "everything"'
+    )
+  })
+
+  test('a printout or file built from a selection says so, and how many rows it holds', async () => {
+    const picked = await makeMany(3, { title: 'Scope stated' })
+    const res = await manager.api.post('/api/exports', {
+      dataset: 'tasks',
+      format: 'json',
+      columns: ['id'],
+      ids: idsOf(picked.slice(0, 2))
+    })
+    assert.equal(res.status, 200)
+    assert.match(JSON.stringify(res.body.filters ?? res.body), /Selected records: 2/)
+  })
+
+  test('a "filtered" export built from the grid query holds exactly the rows the list shows, in the same order', async () => {
+    const make1 = (title: string, priority: string, status: string, tags: string[]) =>
+      make({ title, priority, status, tags })
+    await make1('Gridx a', 'High', 'To do', ['gx'])
+    await make1('Gridx b', 'High', 'In progress', ['gx'])
+    await make1('Gridx c', 'Low', 'To do', ['gx'])
+    await make1('Gridx d', 'High', 'Done', ['gx'])
+    await make1('Gridx e', 'High', 'To do', [])
+    const query = new URLSearchParams({
+      status: 'In progress,To do',
+      priority: 'High',
+      cf: JSON.stringify([{ field: 'title', operator: 'contains', value: 'Gridx' }]),
+      where: JSON.stringify([{ field: 'tags', operator: 'contains', value: 'gx' }]),
+      sort: 'title:desc'
+    })
+    const list = await admin.get(`/api/tasks?${query}&pageSize=200`)
+    assert.deepEqual(
+      list.body.rows.map((row: any) => row.title),
+      ['Gridx b', 'Gridx a'],
+      'the list itself applies all of it'
+    )
+    const file = await manager.api.post('/api/exports', {
+      dataset: 'tasks',
+      format: 'csv',
+      columns: ['id'],
+      grid: query.toString()
+    })
+    assert.equal(file.status, 200)
+    assert.deepEqual(
+      csv(file).map(row => row.replace(/"/g, '')),
+      list.body.rows.map((row: any) => row.id),
+      'the export holds the same tasks in the same order'
+    )
+    const count = await manager.api.post('/api/exports', {
+      dataset: 'tasks',
+      format: 'csv',
+      columns: ['id'],
+      grid: query.toString(),
+      preview: true
+    })
+    assert.equal(count.body.rows, list.body.total)
+  })
+
+  test('the grid query cannot widen an export, and a bad one is refused', async () => {
+    const mine = await make({ title: 'Grid scoped', projectId: other.numericId })
+    await make({ title: 'Grid scoped elsewhere', projectId: project.numericId })
+    const inProject = await manager.api.post('/api/exports', {
+      dataset: 'tasks',
+      format: 'csv',
+      columns: ['id'],
+      scope: { projectId: other.numericId },
+      grid: new URLSearchParams({ q: 'Grid scoped' }).toString()
+    })
+    assert.deepEqual(
+      csv(inProject).map(row => row.replace(/"/g, '')),
+      [mine.id],
+      'the project in scope still applies'
+    )
+    assert.equal(
+      (await manager.api.post('/api/exports', { dataset: 'tasks', format: 'csv', grid: 'where=not-json' })).status,
+      400
+    )
+    assert.equal(
+      (await manager.api.post('/api/exports', { dataset: 'tasks', format: 'csv', grid: 'x'.repeat(13_000) })).status,
+      400
     )
   })
 
