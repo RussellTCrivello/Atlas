@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client.js'
 import { Icon } from '../components/Icon.jsx'
-import { Avatar, EmptyState, PermissionNotice, RoleBadge, StatusPill } from '../components/common.jsx'
+import { Avatar, EmptyState, Logo, PermissionNotice, RoleBadge, StatusPill } from '../components/common.jsx'
 import { LazyExportMenu as ExportMenu } from '../components/exports/LazyExportMenu.jsx'
 import { actionVisible } from '../lib/advanced-filters.js'
 import { textDirection } from '../lib/localization.js'

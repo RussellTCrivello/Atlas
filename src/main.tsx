@@ -210,7 +210,36 @@ function App() {
   useEffect(() => { if (user) loadData() }, [user, loadData])
   useEffect(() => { if (isAdministrator) api.get('/api/system').then(setSystem).catch(() => setSystem(null)); else setSystem(null) }, [isAdministrator, user, data.tasks, data.projects, data.people])
   useEffect(() => { if (!isAdministrator && page === 'settings') setPage('overview') }, [isAdministrator, page])
-  useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {}) }, [])
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    if (import.meta.env.DEV) {
+      const resetKey = `atlas-dev-service-worker-cleanup:${location.origin}`
+      const wasControlled = Boolean(navigator.serviceWorker.controller)
+      if (!wasControlled) {
+        try { sessionStorage.removeItem(resetKey) } catch {}
+      }
+      navigator.serviceWorker.getRegistrations().then(async registrations => {
+        const appRegistrations = registrations.filter(registration => {
+          try {
+            const scope = new URL(registration.scope)
+            return scope.origin === location.origin && scope.pathname === '/'
+          } catch { return false }
+        })
+        await Promise.all(appRegistrations.map(registration => registration.unregister()))
+        if (typeof caches !== 'undefined') {
+          await caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('atlas-local-')).map(key => caches.delete(key)))).catch(() => {})
+        }
+        let alreadyReloaded = false
+        try { alreadyReloaded = sessionStorage.getItem(resetKey) === '1' } catch {}
+        if (wasControlled && appRegistrations.length && !alreadyReloaded) {
+          try { sessionStorage.setItem(resetKey, '1') } catch {}
+          window.location.reload()
+        }
+      }).catch(() => {})
+      return
+    }
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  }, [])
   useEffect(() => { const detect = () => setDisplayMode(detectDisplayMode()); const media = window.matchMedia?.('(display-mode: standalone)'); media?.addEventListener?.('change', detect); return () => media?.removeEventListener?.('change', detect) }, [])
   useEffect(() => {
     const onKey = event => {
