@@ -111,15 +111,16 @@ The single app design reduces deployment complexity, supports desktop packaging,
 
 ## 11. Database architecture
 
-Atlas uses an embedded, relational SQLite database for all runtime persistence:
+Atlas uses an embedded, relational SQLite database as the authoritative server-side persistence source:
 
 - Database: `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`)
 - Physical SQLite schema: version 5; domain store schema: `5.0.0`
-- User accounts have a personal profile page and administrators have a dedicated user-management page; interface-language preferences are saved per account in SQLite.
+- User accounts have a personal profile page and administrators have a dedicated user-management page; advanced filters and interface-language preferences are saved per account in SQLite.
 - Snapshot writes: SQLite transactions with foreign-key validation
 - Integrity checks: SQLite and domain-level checks
 - Backup command: `npm run backup:data` creates `.sqlite` backups
 - Legacy JSON: one-time import into SQLite, then archived under `data/legacy/`
+- Browser-local stores are not authoritative: IndexedDB holds selected offline API responses and supported queued edits, while saved table views remain in `localStorage` on that browser and do not sync across devices.
 
 See [Database Architecture](DATABASE_ARCHITECTURE.md) for complete schema details.
 

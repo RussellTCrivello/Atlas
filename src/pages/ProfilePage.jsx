@@ -55,7 +55,7 @@ export function ProfilePage({ user, person, settings, onSave, isAdministrator = 
         <form className="profile-edit-form" onSubmit={submit}>
           <div className="profile-preview-row">
             <Avatar name={name || user?.name} color={avatarColor}/>
-            <div><strong>{name.trim() || t(settings, 'profile.your_name', 'Your name')}</strong><small>{user?.email || ''}</small></div>
+            <div>{name.trim() ? <strong data-no-i18n>{name.trim()}</strong> : <strong>{t(settings, 'profile.your_name', 'Your name')}</strong>}<small data-no-i18n>{user?.email || ''}</small></div>
           </div>
           <label>{t(settings, 'profile.display_name', 'Display name')}
             <input value={name} onChange={event => setName(event.target.value)} maxLength={120} required autoComplete="name"/>
@@ -86,9 +86,9 @@ export function ProfilePage({ user, person, settings, onSave, isAdministrator = 
       <section className="panel profile-account-card">
         <div className="section-head"><div><h2>{t(settings, 'profile.account_access', 'Account access')}</h2><p>{t(settings, 'profile.account_access_hint', 'Identity and role information for this local workspace account.')}</p></div></div>
         <dl className="profile-account-details">
-          <div><dt>{t(settings, 'profile.email', 'Email address')}</dt><dd>{user?.email || '—'}</dd></div>
+          <div><dt>{t(settings, 'profile.email', 'Email address')}</dt><dd data-no-i18n>{user?.email || '—'}</dd></div>
           <div><dt>{t(settings, 'profile.role', 'Access role')}</dt><dd><RoleBadge role={user?.role || 'Viewer'}/></dd></div>
-          <div><dt>{t(settings, 'profile.team', 'Team')}</dt><dd>{person?.team || t(settings, 'profile.not_linked', 'Not linked')}</dd></div>
+          <div><dt>{t(settings, 'profile.team', 'Team')}</dt><dd>{person?.team ? <span data-no-i18n>{person.team}</span> : t(settings, 'profile.not_linked', 'Not linked')}</dd></div>
         </dl>
         <div className="profile-note"><Icon name="warning" size={15}/><span>{t(settings, 'profile.admin_managed_fields', 'Email address, password, and role are managed by a workspace administrator.')}</span></div>
         <div className="profile-language-note"><Icon name="globe" size={15}/><span>{t(settings, 'profile.language_hint', 'Use the language control in the top bar to set your personal interface language. It does not change the workspace default.')}</span></div>

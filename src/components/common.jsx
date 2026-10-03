@@ -8,7 +8,7 @@ export function Logo() {
 }
 
 export function Avatar({ name, color, small = false }) {
-  return <span className={`avatar ${small ? 'avatar-small' : ''} avatar-${color || colorFor(name)}`} title={name}>{initials(name)}</span>
+  return <span data-no-i18n className={`avatar ${small ? 'avatar-small' : ''} avatar-${color || colorFor(name)}`} title={name}>{initials(name)}</span>
 }
 
 export function StatusPill({ children, tone }) {

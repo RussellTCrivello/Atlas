@@ -102,7 +102,7 @@ function App() {
             filters: preferencesResponse?.filters || mergedFilters,
             language: typeof preferencesResponse?.language === 'string' ? preferencesResponse.language : storedPreferences.language || ''
           }
-      clearLegacyFilterPreferences()
+      if (!preferencesResponse?.offlineQueued) clearLegacyFilterPreferences()
       userPreferencesRef.current = preferences
       setUserPreferences(preferences)
       setData(next)
@@ -227,9 +227,9 @@ function App() {
         setSetup(status)
         if (!status.configured) { setAuthChecked(true); return }
         try {
-          const result = await api.get('/api/auth/me')
+          const result = await api.get('/api/auth/session')
           if (!current) return
-          setUser(result.user)
+          setUser(result.authenticated ? result.user : null)
           setAuthChecked(true)
         } catch (authError) {
           if ((authError.status === 0 || authError.status >= 500) && await restoreCachedSession()) return
@@ -257,33 +257,8 @@ function App() {
   useEffect(() => { if (isAdministrator) api.get('/api/system').then(setSystem).catch(() => setSystem(null)); else setSystem(null) }, [isAdministrator, user, data.tasks, data.projects, data.people])
   useEffect(() => { if (!isAdministrator && page === 'settings') setPage('overview') }, [isAdministrator, page])
   useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    if (import.meta.env.DEV) {
-      const resetKey = `atlas-dev-service-worker-cleanup:${location.origin}`
-      const wasControlled = Boolean(navigator.serviceWorker.controller)
-      if (!wasControlled) {
-        try { sessionStorage.removeItem(resetKey) } catch {}
-      }
-      navigator.serviceWorker.getRegistrations().then(async registrations => {
-        const appRegistrations = registrations.filter(registration => {
-          try {
-            const scope = new URL(registration.scope)
-            return scope.origin === location.origin && scope.pathname === '/'
-          } catch { return false }
-        })
-        await Promise.all(appRegistrations.map(registration => registration.unregister()))
-        if (typeof caches !== 'undefined') {
-          await caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('atlas-local-')).map(key => caches.delete(key)))).catch(() => {})
-        }
-        let alreadyReloaded = false
-        try { alreadyReloaded = sessionStorage.getItem(resetKey) === '1' } catch {}
-        if (wasControlled && appRegistrations.length && !alreadyReloaded) {
-          try { sessionStorage.setItem(resetKey, '1') } catch {}
-          window.location.reload()
-        }
-      }).catch(() => {})
-      return
-    }
+    // The development cleanup runs in the Vite HTML transform before modules load.
+    if (!('serviceWorker' in navigator) || import.meta.env.DEV) return
     navigator.serviceWorker.register('/sw.js').catch(() => {})
   }, [])
   useEffect(() => { const detect = () => setDisplayMode(detectDisplayMode()); const media = window.matchMedia?.('(display-mode: standalone)'); media?.addEventListener?.('change', detect); return () => media?.removeEventListener?.('change', detect) }, [])
@@ -599,7 +574,7 @@ function App() {
           languagePreference={selectedUserLanguage}
           languagePreferenceEnabled={userLanguagePreferenceEnabled} canCreate={canCreate} settings={settings}
         />
-        <OfflineSyncBar userId={user.id} connected={connectionReachable} status={syncStatus} onOpen={() => setSyncPanelOpen(true)}/>
+        <OfflineSyncBar userId={user.id} connected={connectionReachable} status={syncStatus} onOpen={() => setSyncPanelOpen(true)} settings={settings}/>
         <div className="content" tabIndex={-1}>
           {page === 'overview' && <QuickActionRail openModal={openModal} setPage={navigateTo} canManage={canManageProjects} canCreateTasks={canCreateTasks} canLogActivity={canLogActivity} settings={settings} onSearch={() => setSearchOpen(true)}/>}
           {error && <div className="global-error"><Icon name="warning" size={15}/>{error}<button type="button" onClick={loadData}>Retry</button></div>}
@@ -617,7 +592,7 @@ function App() {
       </main>
       <CommandSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} setPage={navigateTo} openModal={openModal} settings={settings} canEditTasks={canManageTasks} canEditProjects={canManageProjects} canEditPeople={canManagePeople} isAdministrator={isAdministrator}/>
       <EntityFormModal modal={modal} data={data} user={user} onClose={() => setModal(null)} onCreateAnother={type => setModal({ type, record: null })} onSave={saveEntity} onDelete={deleteEntity} notify={notify}/>
-      <OfflineSyncPanel open={syncPanelOpen} onClose={() => setSyncPanelOpen(false)} userId={user.id} status={syncStatus} connected={connectionReachable} onRefresh={async () => { await refreshSyncStatus(); await loadData() }}/>
+      <OfflineSyncPanel open={syncPanelOpen} onClose={() => setSyncPanelOpen(false)} userId={user.id} status={syncStatus} connected={connectionReachable} onRefresh={async () => { await refreshSyncStatus(); await loadData() }} settings={settings}/>
       <ToastHost toasts={toasts} dismiss={id => setToasts(current => current.filter(toast => toast.id !== id))}/>
     </div>
   </UserPreferencesProvider>

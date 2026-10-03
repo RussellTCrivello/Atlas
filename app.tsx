@@ -203,7 +203,7 @@ function createDatabaseExportContext() {
 function sendError(res, status, error) { res.status(status).json({ error }) }
 const { rateLimitMiddleware } = createRateLimitMiddleware({ sendError })
 const authMiddleware = createAuthMiddleware({ getStore: () => store, sessions, can, invalidateUserSessions, sendError })
-const { requireUser, requirePermission, requireManager, requireAdmin } = authMiddleware
+const { requireUser, optionalUser, requirePermission, requireManager, requireAdmin } = authMiddleware
 const app = express()
 app.set('trust proxy', boundedInteger(process.env.ATLAS_TRUST_PROXY_HOPS, 0, 0, 5))
 app.use((req, res, next) => {
@@ -260,7 +260,7 @@ const routeServices = {
   rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword,
   configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA,
   publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum, createDatabaseExportContext,
-  validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
+  validateStoreState, requireUser, optionalUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
   invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor,
   bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path,
   validOptionalDate, personReferenceExists, customFieldInputError, nextProjectId, nextTaskId, taskPublic, projectPublic, taskById, taskWorkflowStates, pruneWorkLedger,
@@ -285,7 +285,42 @@ if (process.env.NODE_ENV === 'production') {
   app.use((req, res) => res.sendFile(path.join(staticDir, 'index.html')))
 } else {
   const { createServer: createViteServer } = await import('vite')
-  const vite = await createViteServer({ root: process.env.ATLAS_SOURCE_ROOT || root, server: { middlewareMode: true, host: '0.0.0.0', allowedHosts: true }, appType: 'spa' })
+  const devServiceWorkerCleanup = {
+    name: 'atlas-dev-service-worker-cleanup',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        const script = `<script>(() => {
+          if (!('serviceWorker' in navigator)) return
+          const resetKey = 'atlas-dev-service-worker-cleanup:' + location.origin
+          const wasControlled = Boolean(navigator.serviceWorker.controller)
+          navigator.serviceWorker.getRegistrations().then(async registrations => {
+            const appRegistrations = registrations.filter(registration => {
+              try {
+                const scope = new URL(registration.scope)
+                return scope.origin === location.origin && scope.pathname === '/'
+              } catch { return false }
+            })
+            await Promise.all(appRegistrations.map(registration => registration.unregister()))
+            if ('caches' in window) {
+              const keys = await caches.keys().catch(() => [])
+              await Promise.all(keys.filter(key => key.startsWith('atlas-local-')).map(key => caches.delete(key).catch(() => false)))
+            }
+            let alreadyReloaded = false
+            try { alreadyReloaded = sessionStorage.getItem(resetKey) === '1' } catch {}
+            if (wasControlled && appRegistrations.length && !alreadyReloaded) {
+              try { sessionStorage.setItem(resetKey, '1') } catch {}
+              location.reload()
+            } else if (!wasControlled) {
+              try { sessionStorage.removeItem(resetKey) } catch {}
+            }
+          }).catch(() => {})
+        })()</script>`
+        return html.replace(/<\/head>/i, `${script}</head>`)
+      }
+    }
+  }
+  const vite = await createViteServer({ root: process.env.ATLAS_SOURCE_ROOT || root, plugins: [devServiceWorkerCleanup], server: { middlewareMode: true, host: '0.0.0.0', allowedHosts: true }, appType: 'spa' })
   app.use(vite.middlewares)
 }
 const host = process.env.ATLAS_HOST || process.env.HOST || (isProduction ? '127.0.0.1' : '0.0.0.0')

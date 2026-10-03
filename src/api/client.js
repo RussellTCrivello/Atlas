@@ -51,7 +51,12 @@ async function sendFetch(path, options, bodyOverride) {
 
 async function saveSessionFromResponse(path, body) {
   try {
-    if ((path === '/api/auth/login' || path === '/api/setup' || path === '/api/auth/me') && body?.user?.id) {
+    if (path === '/api/auth/session' && body?.authenticated === false) {
+      const previous = await getOfflineSession({ allowExpired: true })
+      if (previous?.userId) await clearOfflineSession(previous.userId, { clearResponses: false })
+      return
+    }
+    if ((path === '/api/auth/login' || path === '/api/setup' || path === '/api/auth/me' || path === '/api/auth/session') && body?.user?.id) {
       await saveOfflineSession({ user: body.user, sessionExpiresAt: body.sessionExpiresAt })
     }
   } catch {}

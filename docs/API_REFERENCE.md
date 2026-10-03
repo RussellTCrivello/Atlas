@@ -129,7 +129,11 @@ Clears the current session.
 
 ### `GET /api/auth/me`
 
-Returns the current authenticated user.
+Returns the current authenticated user. Missing, expired, or invalid sessions return `401`.
+
+### `GET /api/auth/session`
+
+A non-error session probe for the application shell. Returns `200` with `{ "authenticated": false, "user": null }` when signed out, or `{ "authenticated": true, "user": { ... }, "sessionExpiresAt": 0 }` for a valid local session. The UI uses this route to avoid treating an ordinary signed-out state as a failed resource request; protected routes continue to use `401`.
 
 ## Bootstrap
 

@@ -1,44 +1,48 @@
 {
-  "startedAt": "2026-10-02T16:57:36.582Z",
+  "startedAt": "2026-10-03T05:36:24.858Z",
   "port": 5193,
-  "dataDir": "/home/user/Atlas/.audit-test-data/final-validation-data",
+  "dataDir": "<isolated-temporary-validation-directory>",
   "checks": [
     {
-      "name": "SQLite schema v1-to-v2 migration and user-preference cascade",
+      "name": "SQLite schema v1-to-v5 migrations, offline-sync receipts and conflict-audit retention, and user-preference cascade",
       "status": "pass"
     },
     {
       "name": "production server startup",
       "status": "pass",
-      "logs": "(node:2879) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
     },
     {
       "name": "health endpoint",
       "status": "pass",
-      "ms": 2
+      "ms": 4
     },
     {
       "name": "production first-run has no demo credentials",
       "status": "pass"
     },
     {
-      "name": "runtime config schema/design metadata",
-      "status": "pass",
-      "schema": 2,
-      "designSystem": "2.0.0"
+      "name": "signed-out status probe avoids a browser 401 while protected /api/auth/me remains guarded",
+      "status": "pass"
+    },
+    {
+      "name": "runtime configuration is not exposed before local authentication",
+      "status": "pass"
     },
     {
       "name": "production HTML served",
       "status": "pass",
-      "ms": 5
+      "ms": 6
     },
     {
       "name": "invalid setup password rejected",
       "status": "pass"
     },
     {
-      "name": "administrator setup and bootstrap",
-      "status": "pass"
+      "name": "administrator setup, bootstrap, schema, and offline global-settings field merge/conflict audit",
+      "status": "pass",
+      "schema": 5,
+      "designSystem": "2.0.0"
     },
     {
       "name": "authenticated SQL saved filters, input validation, and per-user preferences",
@@ -63,12 +67,12 @@
     {
       "name": "backup creation",
       "status": "pass",
-      "backup": "atlas-db-2026-10-02T16-57-36-940Z-admin.sqlite"
+      "backup": "atlas-db-2026-10-03T05-36-25-372Z-admin.sqlite"
     },
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:2891) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "backup restoration and restart persistence",
@@ -84,6 +88,14 @@
     },
     {
       "name": "user creation and invalid relationship operations",
+      "status": "pass"
+    },
+    {
+      "name": "settings permission alone does not bypass Administrator-only settings access",
+      "status": "pass"
+    },
+    {
+      "name": "non-administrator access to global settings, runtime metadata, translation catalog, and account directory is denied",
       "status": "pass"
     },
     {
@@ -103,11 +115,24 @@
       "status": "pass"
     },
     {
+      "name": "offline sync merges disjoint fields, surfaces same-field and delete/edit conflicts, and deduplicates retries",
+      "status": "pass"
+    },
+    {
+      "name": "production restart",
+      "status": "pass",
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+    },
+    {
+      "name": "offline outbox replay remains idempotent across an interrupted-client/server-restart boundary",
+      "status": "pass"
+    },
+    {
       "name": "developer task/activity journey and protected project mutation",
       "status": "pass"
     },
     {
-      "name": "viewer report access and protected mutations rejected",
+      "name": "ordinary users receive only own activity plus team aggregates; cross-person reports/exports are denied",
       "status": "pass"
     },
     {
@@ -117,32 +142,33 @@
     {
       "name": "realistic data volume performance",
       "status": "pass",
-      "create160TasksMs": 1845,
-      "bootstrapMs": 7,
-      "weeklyReportMs": 3,
-      "monthlyActivityReportMs": 39
+      "create160TasksMs": 2327,
+      "bootstrapMs": 9,
+      "weeklyReportMs": 4,
+      "monthlyActivityReportMs": 50
     },
     {
       "name": "system integrity and audit log",
       "status": "pass",
       "counts": {
         "teams": 2,
-        "people": 4,
+        "people": 5,
         "projects": 2,
-        "tasks": 162,
+        "tasks": 163,
         "milestones": 1,
-        "activities": 2,
+        "activities": 3,
         "alerts": 2,
-        "users": 4,
-        "workLogs": 165,
-        "auditLogs": 189,
-        "userPreferences": 2
+        "users": 5,
+        "workLogs": 170,
+        "auditLogs": 203,
+        "userPreferences": 2,
+        "syncOperations": 5
       }
     },
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:2899) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "final restart data/settings and per-user filters persistence",
@@ -151,7 +177,7 @@
     {
       "name": "production restart",
       "status": "pass",
-      "logs": "(node:2907) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
       "name": "legacy work-log migration removes generated rows and preserves explicit minutes",
@@ -160,25 +186,50 @@
     {
       "name": "legacy JSON import server startup",
       "status": "pass",
-      "logs": "Imported legacy JSON store into SQLite and archived the source at /home/user/Atlas/.audit-test-data/legacy-json-import-data/legacy/atlas-store-imported-2026-10-02T16-57-58-480Z.json\n(node:2914) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
+      "logs": "Imported legacy JSON store into SQLite and archived the source at <isolated-test-data>/legacy-json-import-data/legacy/atlas-store-imported-2026-10-03T05-36-54-717Z.json\n(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; first-run setup required"
     },
     {
       "name": "legacy SQLite restart server startup",
       "status": "pass",
-      "logs": "(node:2921) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
     },
     {
-      "name": "one-time legacy JSON import, SQL restart persistence, content preservation, and source archival",
+      "name": "one-time legacy JSON import, SQL restart persistence, content preservation, archival, and unchanged legacy retention",
       "status": "pass",
-      "archivedFile": "atlas-store-imported-2026-10-02T16-57-58-480Z.json"
+      "archivedFile": "atlas-store-imported-2026-10-03T05-36-54-717Z.json"
+    },
+    {
+      "name": "50,000-task scale benchmark server startup",
+      "status": "pass",
+      "logs": "(node:<pid>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nAtlas Workspace listening on http://127.0.0.1:5193\nProduction-safe mode: no default or demo credentials; workspace configured"
+    },
+    {
+      "name": "50,000-task benchmark: SQL seed, bootstrap, project drill-down, unbounded selected export, and aggregate report",
+      "status": "pass",
+      "create160TasksMs": 2327,
+      "bootstrapMs": 9,
+      "weeklyReportMs": 4,
+      "monthlyActivityReportMs": 50,
+      "seed50kTasksMs": 2502,
+      "taskCountBenchmark": 50000,
+      "bootstrap50kMs": 749,
+      "projectDrilldown50kMs": 1182,
+      "export50kMs": 1084,
+      "weeklyReport50kMs": 175
     }
   ],
   "metrics": {
-    "create160TasksMs": 1845,
-    "bootstrapMs": 7,
-    "weeklyReportMs": 3,
-    "monthlyActivityReportMs": 39
+    "create160TasksMs": 2327,
+    "bootstrapMs": 9,
+    "weeklyReportMs": 4,
+    "monthlyActivityReportMs": 50,
+    "seed50kTasksMs": 2502,
+    "taskCountBenchmark": 50000,
+    "bootstrap50kMs": 749,
+    "projectDrilldown50kMs": 1182,
+    "export50kMs": 1084,
+    "weeklyReport50kMs": 175
   },
   "knownLimitations": [],
-  "finishedAt": "2026-10-02T16:58:04.858Z"
+  "finishedAt": "2026-10-03T05:37:16.086Z"
 }

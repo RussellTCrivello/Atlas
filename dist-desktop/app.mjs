@@ -826,7 +826,7 @@ var UserPreferencesRepository = class {
 
 // src/server/routes/system.routes.js
 function registerSystemRoutes(app2, services) {
-  const { store: store2, getStore, setStore, root: root2, databaseFile: databaseFile2, DATABASE_MODEL: DATABASE_MODEL2, STORE_SCHEMA_VERSION: STORE_SCHEMA_VERSION2, DESIGN_SYSTEM_VERSION: DESIGN_SYSTEM_VERSION2, configuredBackupRetention: configuredBackupRetention2, allowDemoData: allowDemoData2, rateLimitMiddleware: rateLimitMiddleware2, setupRateLimits: setupRateLimits2, loginRateLimits: loginRateLimits2, i18nRateLimits: i18nRateLimits2, sendError: sendError2, normalizeEmail: normalizeEmail2, isValidEmail: isValidEmail2, validatePassword: validatePassword2, configuredPasswordMinLength: configuredPasswordMinLength2, settingsInputError: settingsInputError2, mergeDeep: mergeDeep2, defaultSettings: defaultSettings2, normalizeSettings: normalizeSettings2, hashPassword: hashPassword2, todayLA: todayLA2, timeLA: timeLA2, publicUser: publicUser2, newSession: newSession2, sessionCookieOptions: sessionCookieOptions2, auditLog: auditLog2, persist: persist2, pruneWorkLedger: pruneWorkLedger2, can: can2, storeRepository: storeRepository2, listBackups: listBackups2, auditRead: auditRead2, storeChecksum: storeChecksum2, validateStoreState: validateStoreState2, requireUser: requireUser2, requireAdmin: requireAdmin2, requirePermission: requirePermission2, createBackup: createBackup2, roleRank: roleRank2, publicAccessUser: publicAccessUser2, verifyPassword: verifyPassword2, invalidateUserSessions: invalidateUserSessions2, sessions: sessions2, normalizeUserSecrets: normalizeUserSecrets2, projectById: projectById2, validText: validText2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, activityReportFor: activityReportFor2, reportFor: reportFor2, bootstrapFor: bootstrapFor2, settingsForUser: settingsForUser2, demoStore: demoStore2, id: id2, MAX_I18N_KEY_LENGTH: MAX_I18N_KEY_LENGTH2, I18N_MISSING_LIMIT: I18N_MISSING_LIMIT2, isPlainObject: isPlainObject2, path: path4 } = services;
+  const { store: store2, getStore, setStore, root: root2, databaseFile: databaseFile2, DATABASE_MODEL: DATABASE_MODEL2, STORE_SCHEMA_VERSION: STORE_SCHEMA_VERSION2, DESIGN_SYSTEM_VERSION: DESIGN_SYSTEM_VERSION2, configuredBackupRetention: configuredBackupRetention2, allowDemoData: allowDemoData2, rateLimitMiddleware: rateLimitMiddleware2, setupRateLimits: setupRateLimits2, loginRateLimits: loginRateLimits2, i18nRateLimits: i18nRateLimits2, sendError: sendError2, normalizeEmail: normalizeEmail2, isValidEmail: isValidEmail2, validatePassword: validatePassword2, configuredPasswordMinLength: configuredPasswordMinLength2, settingsInputError: settingsInputError2, mergeDeep: mergeDeep2, defaultSettings: defaultSettings2, normalizeSettings: normalizeSettings2, hashPassword: hashPassword2, todayLA: todayLA2, timeLA: timeLA2, publicUser: publicUser2, newSession: newSession2, sessionCookieOptions: sessionCookieOptions2, auditLog: auditLog2, persist: persist2, pruneWorkLedger: pruneWorkLedger2, can: can2, storeRepository: storeRepository2, listBackups: listBackups2, auditRead: auditRead2, storeChecksum: storeChecksum2, validateStoreState: validateStoreState2, requireUser: requireUser2, optionalUser: optionalUser2, requireAdmin: requireAdmin2, requirePermission: requirePermission2, createBackup: createBackup2, roleRank: roleRank2, publicAccessUser: publicAccessUser2, verifyPassword: verifyPassword2, invalidateUserSessions: invalidateUserSessions2, sessions: sessions2, normalizeUserSecrets: normalizeUserSecrets2, projectById: projectById2, validText: validText2, MAX_PASSWORD_LENGTH: MAX_PASSWORD_LENGTH2, activityReportFor: activityReportFor2, reportFor: reportFor2, bootstrapFor: bootstrapFor2, settingsForUser: settingsForUser2, demoStore: demoStore2, id: id2, MAX_I18N_KEY_LENGTH: MAX_I18N_KEY_LENGTH2, I18N_MISSING_LIMIT: I18N_MISSING_LIMIT2, isPlainObject: isPlainObject2, path: path4 } = services;
   app2.get("/api/health", (req, res) => res.json({ ok: true, name: "Atlas Workspace", version: "1.0.0", mode: process.env.NODE_ENV || "development", desktopReady: process.env.ATLAS_DESKTOP === "true", time: (/* @__PURE__ */ new Date()).toISOString() }));
   app2.get("/api/runtime-config", requireUser2, requireAdmin2, (req, res) => {
     const databaseInfo = storeRepository2.databaseInfo();
@@ -916,6 +916,11 @@ function registerSystemRoutes(app2, services) {
     res.json({ ok: true });
   });
   app2.get("/api/auth/me", requireUser2, (req, res) => res.json({ user: publicUser2(req.user), sessionExpiresAt: sessions2.get(req.cookies?.atlas_sid)?.expiresAt || Date.now() }));
+  app2.get("/api/auth/session", optionalUser2, (req, res) => {
+    if (!req.user) return res.json({ authenticated: false, user: null });
+    const sessionExpiresAt = sessions2.get(req.cookies?.atlas_sid)?.expiresAt || Date.now();
+    res.json({ authenticated: true, user: publicUser2(req.user), sessionExpiresAt });
+  });
   app2.get("/api/bootstrap", requireUser2, (req, res) => {
     auditRead2("bootstrap", req.user.id);
     res.json(bootstrapFor2(req.user));
@@ -3664,6 +3669,28 @@ function createAuthMiddleware({ getStore, sessions: sessions2, can: can2, invali
     req.user = user;
     next();
   }
+  function optionalUser2(req, res, next) {
+    const sid = req.cookies?.atlas_sid;
+    const session = sid && sessions2.get(sid);
+    if (!session || session.expiresAt <= Date.now()) {
+      if (sid) sessions2.delete(sid);
+      req.user = null;
+      return next();
+    }
+    const user = getStore()?.users?.find((candidate) => candidate.id === session.userId);
+    if (!user) {
+      sessions2.delete(sid);
+      req.user = null;
+      return next();
+    }
+    if (user.active === false) {
+      invalidateUserSessions2(user.id);
+      req.user = null;
+      return next();
+    }
+    req.user = user;
+    next();
+  }
   function requirePermission2(permission, message = "You do not have permission to complete this action") {
     return (req, res, next) => {
       if (!can2(req.user, permission)) return sendError2(res, 403, message);
@@ -3678,7 +3705,7 @@ function createAuthMiddleware({ getStore, sessions: sessions2, can: can2, invali
     if (req.user?.role !== "Administrator" || !can2(req.user, "manageSettings")) return sendError2(res, 403, "Administrator access required");
     next();
   }
-  return { requireUser: requireUser2, requirePermission: requirePermission2, requireManager: requireManager2, requireAdmin: requireAdmin2 };
+  return { requireUser: requireUser2, optionalUser: optionalUser2, requirePermission: requirePermission2, requireManager: requireManager2, requireAdmin: requireAdmin2 };
 }
 
 // src/server/domain/workflows.js
@@ -4395,7 +4422,7 @@ function sendError(res, status, error) {
 }
 var { rateLimitMiddleware } = createRateLimitMiddleware({ sendError });
 var authMiddleware = createAuthMiddleware({ getStore: () => store, sessions, can, invalidateUserSessions, sendError });
-var { requireUser, requirePermission, requireManager, requireAdmin } = authMiddleware;
+var { requireUser, optionalUser, requirePermission, requireManager, requireAdmin } = authMiddleware;
 var app = express();
 app.set("trust proxy", boundedInteger(process.env.ATLAS_TRUST_PROXY_HOPS, 0, 0, 5));
 app.use((req, res, next) => {
@@ -4496,6 +4523,7 @@ var routeServices = {
   createDatabaseExportContext,
   validateStoreState,
   requireUser,
+  optionalUser,
   requireAdmin,
   requirePermission,
   createBackup,
@@ -4562,7 +4590,42 @@ if (process.env.NODE_ENV === "production") {
   app.use((req, res) => res.sendFile(path3.join(staticDir, "index.html")));
 } else {
   const { createServer: createViteServer } = await import("vite");
-  const vite = await createViteServer({ root: process.env.ATLAS_SOURCE_ROOT || root, server: { middlewareMode: true, host: "0.0.0.0", allowedHosts: true }, appType: "spa" });
+  const devServiceWorkerCleanup = {
+    name: "atlas-dev-service-worker-cleanup",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        const script = `<script>(() => {
+          if (!('serviceWorker' in navigator)) return
+          const resetKey = 'atlas-dev-service-worker-cleanup:' + location.origin
+          const wasControlled = Boolean(navigator.serviceWorker.controller)
+          navigator.serviceWorker.getRegistrations().then(async registrations => {
+            const appRegistrations = registrations.filter(registration => {
+              try {
+                const scope = new URL(registration.scope)
+                return scope.origin === location.origin && scope.pathname === '/'
+              } catch { return false }
+            })
+            await Promise.all(appRegistrations.map(registration => registration.unregister()))
+            if ('caches' in window) {
+              const keys = await caches.keys().catch(() => [])
+              await Promise.all(keys.filter(key => key.startsWith('atlas-local-')).map(key => caches.delete(key).catch(() => false)))
+            }
+            let alreadyReloaded = false
+            try { alreadyReloaded = sessionStorage.getItem(resetKey) === '1' } catch {}
+            if (wasControlled && appRegistrations.length && !alreadyReloaded) {
+              try { sessionStorage.setItem(resetKey, '1') } catch {}
+              location.reload()
+            } else if (!wasControlled) {
+              try { sessionStorage.removeItem(resetKey) } catch {}
+            }
+          }).catch(() => {})
+        })()</script>`;
+        return html.replace(/<\/head>/i, `${script}</head>`);
+      }
+    }
+  };
+  const vite = await createViteServer({ root: process.env.ATLAS_SOURCE_ROOT || root, plugins: [devServiceWorkerCleanup], server: { middlewareMode: true, host: "0.0.0.0", allowedHosts: true }, appType: "spa" });
   app.use(vite.middlewares);
 }
 var host = process.env.ATLAS_HOST || process.env.HOST || (isProduction ? "127.0.0.1" : "0.0.0.0");

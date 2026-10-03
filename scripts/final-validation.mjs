@@ -270,6 +270,9 @@ async function main() {
     const setupStatus = await publicClient.get('/api/setup/status')
     assert.deepEqual(setupStatus.body, { configured: false, demoAllowed: false, demo: null })
     record('production first-run has no demo credentials', 'pass')
+    assert.deepEqual((await publicClient.get('/api/auth/session')).body, { authenticated: false, user: null })
+    await publicClient.get('/api/auth/me', 401)
+    record('signed-out status probe avoids a browser 401 while protected /api/auth/me remains guarded', 'pass')
     await publicClient.get('/api/runtime-config', 401)
     record('runtime configuration is not exposed before local authentication', 'pass')
     const rootHtml = await raw('/')
@@ -282,6 +285,9 @@ async function main() {
 
     const admin = new Client('admin')
     await admin.post('/api/setup', { name: 'Amina Admin', email: 'admin@example.com', password: 'StrongPass123', workspaceName: 'Atlas Acceptance', workspaceUnit: 'Operations' })
+    const authenticatedSession = (await admin.get('/api/auth/session')).body
+    assert.equal(authenticatedSession.authenticated, true)
+    assert.equal(authenticatedSession.user.email, 'admin@example.com')
     let bootstrap = await admin.get('/api/bootstrap')
     assert.equal(bootstrap.body.user.role, 'Administrator')
     assert.equal(bootstrap.body.settings.workspace.name, 'Atlas Acceptance')

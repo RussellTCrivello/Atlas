@@ -3,6 +3,7 @@ import { api } from '../../api/client.js'
 import { Icon } from '../Icon.jsx'
 import { textDirection } from '../../lib/localization.js'
 import { slug } from '../../lib/strings.js'
+import { EXPORT_DATASET_LABELS, exportText as uiText, localizeExportColumns, localizeExportValue } from '../../i18n/export-catalog.js'
 
 const TEMPLATE_LABELS = { executive: 'Executive', ledger: 'Detailed ledger', compact: 'Compact' }
 const ACCENTS = { atlas: '#6257E8', ocean: '#087E8B', graphite: '#344054', forest: '#26734D' }
@@ -34,7 +35,7 @@ function asIsoDate(value) {
 function formattedValue(value, column, options, settings) {
   if (value === null || value === undefined || value === '') return ''
   const locale = settings?.localization?.defaultLanguage || settings?.language || 'en'
-  if (column.type === 'boolean') return value === true || value === 1 ? 'Yes' : value === false || value === 0 ? 'No' : String(value)
+  if (column.type === 'boolean') return localizeExportValue(value, column, settings)
   if (column.type === 'date') {
     if (options.dateStyle === 'iso') return String(value)
     const date = asIsoDate(value)
@@ -51,6 +52,7 @@ function formattedValue(value, column, options, settings) {
     if (!Number.isFinite(number)) return String(value)
     try { return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(number) } catch { return String(number) }
   }
+  if (column.translateValue && !(Array.isArray(value) || (value && typeof value === 'object'))) return localizeExportValue(value, column, settings)
   if (Array.isArray(value) || (value && typeof value === 'object')) return JSON.stringify(value)
   return String(value)
 }
@@ -80,11 +82,11 @@ function orderRows(rows, options, columns, settings) {
   })
   return ordered
 }
-function summaryMetrics(rows, columns) {
+function summaryMetrics(rows, columns, settings) {
   return columns.filter(column => column.type === 'number' || column.type === 'percent').slice(0, 4).map(column => {
     const total = rows.reduce((sum, row) => sum + (Number(row[column.key]) || 0), 0)
     const isPercent = column.type === 'percent'
-    return { label: isPercent ? `${column.label} · avg` : `Total ${column.label}`, value: isPercent && rows.length ? total / rows.length : total, type: column.type }
+    return { label: isPercent ? `${column.label} · ${uiText(settings, 'avg')}` : `${uiText(settings, 'Total')} ${column.label}`, value: isPercent && rows.length ? total / rows.length : total, type: column.type }
   })
 }
 function downloadBlob(blob, filename) {
@@ -112,7 +114,7 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
   const locale = settings?.localization?.defaultLanguage || 'en'
   const generatedAt = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.generatedAt))
   const workspaceName = settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace'
-  const metrics = [{ label: 'Records', value: String(rows.length) }, ...summaryMetrics(rows, columns).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
+  const metrics = [{ label: uiText(settings, 'Records'), value: String(rows.length) }, ...summaryMetrics(rows, columns, settings).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
   let rowIndex = 1
   const rowXml = []
   const merges = []
@@ -122,9 +124,9 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
     rowIndex += 1
   }
   addBanner(title, 5, 27)
-  const metadata = `${options.includeBranding ? `${workspaceName} · ` : ''}Generated ${generatedAt} · ${meta.recordCount} SQLite records`
+  const metadata = `${options.includeBranding ? `${workspaceName} · ` : ''}${uiText(settings, 'Generated')} ${generatedAt} · ${meta.recordCount} ${uiText(settings, 'SQLite records')}`
   addBanner(metadata, 6, 19)
-  if (options.includeSummary) addBanner(`Summary · ${metrics.map(metric => `${metric.label}: ${metric.value}`).join('   ·   ')}`, 7, 21)
+  if (options.includeSummary) addBanner(`${uiText(settings, 'Summary')} · ${metrics.map(metric => `${metric.label}: ${metric.value}`).join('   ·   ')}`, 7, 21)
   rowIndex += 1
   const headerRowIndex = rowIndex
   const headerRow = columns.map((column, index) => textCell(column.label, columnName(index), headerRowIndex, 1)).join('')
@@ -136,7 +138,7 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
     const groupValue = options.groupBy === 'none' ? '' : String(record[options.groupBy] ?? 'Unassigned')
     if (groupColumn && groupValue !== activeGroup) {
       activeGroup = groupValue
-      const groupLabel = `${groupColumn.label}: ${formattedValue(groupValue, groupColumn, options, settings) || 'Unassigned'}`
+      const groupLabel = `${groupColumn.label}: ${formattedValue(groupValue, groupColumn, options, settings) || uiText(settings, 'Unassigned')}`
       const groupCells = columns.map((column, index) => textCell(index === 0 ? groupLabel : '', columnName(index), rowIndex, 4)).join('')
       rowXml.push(`<row r="${rowIndex}" ht="20" customHeight="1">${groupCells}</row>`)
       rowIndex += 1
@@ -147,8 +149,8 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
   }
   if (options.includeSignoff) {
     rowIndex += 1
-    const preparedCell = textCell('Prepared by: ______________________________', 'A', rowIndex, 8)
-    const reviewedCell = columns.length > 1 ? textCell('Reviewed by: ______________________________', lastColumn, rowIndex, 8) : ''
+    const preparedCell = textCell(uiText(settings, 'Prepared by: ______________________________'), 'A', rowIndex, 8)
+    const reviewedCell = columns.length > 1 ? textCell(uiText(settings, 'Reviewed by: ______________________________'), lastColumn, rowIndex, 8) : ''
     rowXml.push(`<row r="${rowIndex}" ht="24" customHeight="1">${preparedCell}${reviewedCell}</row>`)
   }
   const widths = columns.map((column, index) => {
@@ -175,7 +177,7 @@ function groupTableRows(rows, columns, options, settings) {
     const groupValue = options.groupBy === 'none' ? '' : String(row[options.groupBy] ?? 'Unassigned')
     if (groupColumn && groupValue !== activeGroup) {
       activeGroup = groupValue
-      body.push([{ content: `${groupColumn.label}: ${formattedValue(groupValue, groupColumn, options, settings) || 'Unassigned'}`, colSpan: columns.length, styles: { fillColor: [239, 238, 255], textColor: [63, 58, 133], fontStyle: 'bold' } }])
+      body.push([{ content: `${groupColumn.label}: ${formattedValue(groupValue, groupColumn, options, settings) || uiText(settings, 'Unassigned')}`, colSpan: columns.length, styles: { fillColor: [239, 238, 255], textColor: [63, 58, 133], fontStyle: 'bold' } }])
     }
     body.push(columns.map(column => formattedValue(row[column.key], column, options, settings)))
   }
@@ -212,10 +214,10 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
   doc.setFillColor(...accentRgb); doc.rect(0, 0, pageWidth, 4, 'F')
   doc.setTextColor(27, 35, 50); doc.setFontSize(options.template === 'compact' ? 15 : 19); doc.text(title, x, 15, { align })
   if (options.includeBranding) { doc.setTextColor(...accentRgb); doc.setFontSize(8); doc.text(workspaceName, x, 21, { align }) }
-  doc.setTextColor(111, 119, 136); doc.setFontSize(8); doc.text(`${meta.recordCount} database records · Generated ${generation}`, x, options.includeBranding ? 26 : 22, { align })
+  doc.setTextColor(111, 119, 136); doc.setFontSize(8); doc.text(`${meta.recordCount} ${uiText(settings, 'database records')} · ${uiText(settings, 'Generated')} ${generation}`, x, options.includeBranding ? 26 : 22, { align })
   if (options.includeSummary) {
     let y = options.includeBranding ? 33 : 29
-    const metrics = [{ label: 'Records', value: String(rows.length) }, ...summaryMetrics(rows, columns).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
+    const metrics = [{ label: uiText(settings, 'Records'), value: String(rows.length) }, ...summaryMetrics(rows, columns, settings).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
     const width = (pageWidth - margin * 2) / metrics.length
     metrics.forEach((metric, index) => {
       const left = direction === 'rtl' ? pageWidth - margin - width * (index + 1) : margin + width * index
@@ -255,7 +257,7 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
     const starts = direction === 'rtl' ? [pageWidth - margin - lineWidth, margin] : [margin, margin + lineWidth + 18]
     starts.forEach((start, index) => {
       doc.line(start, y, start + lineWidth, y)
-      doc.text(index === 0 ? 'Prepared by' : 'Reviewed by', direction === 'rtl' ? start + lineWidth : start, y + 5, { align: direction === 'rtl' ? 'right' : 'left' })
+      doc.text(uiText(settings, index === 0 ? 'Prepared by' : 'Reviewed by'), direction === 'rtl' ? start + lineWidth : start, y + 5, { align: direction === 'rtl' ? 'right' : 'left' })
     })
   }
   doc.save(`${slug(title) || 'atlas-export'}.pdf`)
@@ -265,9 +267,12 @@ function printHtml(rows, columns, title, options, settings, meta) {
   const accent = ACCENTS[options.accent] || ACCENTS.atlas
   const locale = settings?.localization?.defaultLanguage || 'en'
   const generatedAt = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.generatedAt))
-  const metrics = [{ label: 'Records', value: String(rows.length) }, ...summaryMetrics(rows, columns).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
+  const metrics = [{ label: uiText(settings, 'Records'), value: String(rows.length) }, ...summaryMetrics(rows, columns, settings).map(metric => ({ label: metric.label, value: formattedValue(metric.value, { type: metric.type }, options, settings) }))].slice(0, 4)
   const summary = options.includeSummary ? `<section class="summary">${metrics.map(item => `<div><small>${htmlSafe(item.label)}</small><strong>${htmlSafe(item.value)}</strong></div>`).join('')}</section>` : ''
   const headers = columns.map(column => `<th>${htmlSafe(column.label)}</th>`).join('')
+  const datasetLabel = uiText(settings, EXPORT_DATASET_LABELS[meta.dataset] || meta.dataset)
+  const reportWorkspaceName = settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace'
+  const localizedWorkspaceName = reportWorkspaceName === 'Atlas Workspace' ? uiText(settings, reportWorkspaceName) : reportWorkspaceName
   const body = []
   let activeGroup = null
   const groupColumn = columns.find(column => column.key === options.groupBy)
@@ -275,15 +280,15 @@ function printHtml(rows, columns, title, options, settings, meta) {
     const groupValue = options.groupBy === 'none' ? '' : String(row[options.groupBy] ?? 'Unassigned')
     if (groupColumn && groupValue !== activeGroup) {
       activeGroup = groupValue
-      body.push(`<tr class="group"><th colspan="${columns.length}">${htmlSafe(groupColumn.label)} · ${htmlSafe(formattedValue(groupValue, groupColumn, options, settings) || 'Unassigned')}</th></tr>`)
+      body.push(`<tr class="group"><th colspan="${columns.length}">${htmlSafe(groupColumn.label)} · ${htmlSafe(formattedValue(groupValue, groupColumn, options, settings) || uiText(settings, 'Unassigned'))}</th></tr>`)
     }
     body.push(`<tr>${columns.map(column => `<td>${htmlSafe(formattedValue(row[column.key], column, options, settings))}</td>`).join('')}</tr>`)
   }
-  const branding = options.includeBranding ? `<div class="brand"><span class="mark">A</span><span>${htmlSafe(settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace')}</span></div>` : ''
+  const branding = options.includeBranding ? `<div class="brand"><span class="mark">A</span><span>${htmlSafe(localizedWorkspaceName)}</span></div>` : ''
   const template = options.template
   return `<!doctype html><html lang="${htmlSafe(locale)}" dir="${direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlSafe(title)}</title><style>
     :root{--accent:${accent};--ink:#1d2939;--muted:#667085;--line:#dfe3ea;--soft:#f6f7fb}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:10pt/1.45 Arial,Helvetica,sans-serif;background:#fff}.report{max-width:1400px;margin:28px auto;padding:0 28px 32px}.topline{height:5px;background:var(--accent);margin:-28px -28px 24px}.brand{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:9pt;font-weight:700;margin-bottom:10px}.mark{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:var(--accent);color:white;font-weight:800}.heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:1px solid var(--line);padding-bottom:16px}.heading h1{margin:0 0 5px;font-size:${template === 'compact' ? 18 : 24}pt;letter-spacing:-.03em}.heading p{margin:0;color:var(--muted);font-size:9pt}.meta{text-align:${direction === 'rtl' ? 'left' : 'right'};color:var(--muted);font-size:8pt;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(${metrics.length},minmax(0,1fr));gap:10px;margin:17px 0 20px}.summary div{border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:9px;padding:11px 13px;background:#fff}.summary small{display:block;color:var(--muted);font-size:8pt}.summary strong{display:block;margin-top:4px;font-size:15pt}.table-wrap{margin-top:18px;overflow:visible}table{width:100%;border-collapse:collapse;font-size:${template === 'compact' ? 8 : 9}pt;table-layout:auto}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid var(--line);padding:${template === 'compact' ? '6px 7px' : '8px 9px'};text-align:${direction === 'rtl' ? 'right' : 'left'};vertical-align:top;overflow-wrap:anywhere}thead th{background:var(--accent);color:#fff;font-weight:700}.group th{background:#f1f0ff;color:#494197;text-align:${direction === 'rtl' ? 'right' : 'left'};font-size:8pt}.data-note{margin:12px 0 0;color:var(--muted);font-size:8pt}.signature{display:grid;grid-template-columns:repeat(2,1fr);gap:36px;margin-top:28px;color:var(--muted);font-size:8pt}.signature span{border-top:1px solid var(--line);padding-top:6px}.footer{display:flex;justify-content:space-between;gap:15px;margin-top:22px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:7.5pt}.ledger table{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.compact .summary div{padding:7px 9px}@page{size:${options.pageSize} ${options.orientation};margin:${options.margin}mm}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.report{max-width:none;margin:0;padding:0}.topline{margin:0 0 18px}.heading{break-after:avoid}.summary{break-inside:avoid}.footer{break-inside:avoid}}
-    </style></head><body><main class="report ${template}"><div class="topline"></div>${branding}<header class="heading"><div><h1>${htmlSafe(title)}</h1><p>Prepared from current SQLite workspace fields · ${htmlSafe(meta.recordCount)} records</p></div><div class="meta">Generated<br>${htmlSafe(generatedAt)}</div></header>${summary}<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body.join('')}</tbody></table></div>${options.includeSignoff ? '<div class="signature"><span>Prepared by</span><span>Reviewed by</span></div>' : ''}<div class="footer"><span>${htmlSafe(meta.dataset)} · ${htmlSafe(meta.recordCount)} records · SQLite source</span>${options.includeBranding ? `<span>${htmlSafe(settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace')}</span>` : ''}</div></main></body></html>`
+    </style></head><body><main class="report ${template}"><div class="topline"></div>${branding}<header class="heading"><div><h1>${htmlSafe(title)}</h1><p>${htmlSafe(uiText(settings, 'Prepared from current SQLite workspace fields'))} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))}</p></div><div class="meta">${htmlSafe(uiText(settings, 'Generated'))}<br>${htmlSafe(generatedAt)}</div></header>${summary}<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body.join('')}</tbody></table></div>${options.includeSignoff ? `<div class="signature"><span>${htmlSafe(uiText(settings, 'Prepared by'))}</span><span>${htmlSafe(uiText(settings, 'Reviewed by'))}</span></div>` : ''}<div class="footer"><span>${htmlSafe(datasetLabel)} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))} · ${htmlSafe(uiText(settings, 'SQLite source'))}</span>${options.includeBranding ? `<span>${htmlSafe(localizedWorkspaceName)}</span>` : ''}</div></main></body></html>`
 }
 
 export function ExportMenu({ rows, columns, title, settings, dataset, query = {}, canExport = true, canPrint = true, exportScopes }) {
@@ -363,7 +368,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   }, [open, request])
 
   const options = { orientation, pageSize, margin, template, dateStyle, groupBy, sortBy, sortDirection, accent, fontSize, includeSummary, includeBranding, includeSignoff }
-  const previewColumns = prepared?.columns || []
+  const previewColumns = localizeExportColumns(dataset, prepared?.columns || [], settings)
   const previewRows = prepared?.rows || []
   const displayRows = orderRows(previewRows, options, previewColumns, settings)
   const metadata = prepared ? { ...prepared, recordCount: prepared.recordCount, dataset } : null
@@ -383,7 +388,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     setError('')
     try {
       const payload = await loadCurrentData()
-      const columnsForExport = payload.columns
+      const columnsForExport = localizeExportColumns(dataset, payload.columns, settings)
       const rowsForExport = orderRows(payload.rows, options, columnsForExport, settings)
       if (!columnsForExport.length) throw new Error('Select at least one database field to export.')
       await audit(selectedFormat, rowsForExport.length)
@@ -398,7 +403,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
       }
       if (selectedFormat === 'xlsx') downloadBlob(await makeXlsx(rowsForExport, columnsForExport, fileTitle, options, settings, payload), `${slug(fileTitle) || 'atlas-export'}.xlsx`)
       if (selectedFormat === 'json') {
-        const json = { metadata: { title: fileTitle, source: payload.source, dataset: payload.dataset, generatedAt: payload.generatedAt, recordCount: payload.recordCount, formatting: options }, columns: columnsForExport, rows: rowsForExport }
+        const json = { metadata: { title: fileTitle, source: payload.source, dataset: payload.dataset, generatedAt: payload.generatedAt, recordCount: payload.recordCount, formatting: options, language: settings?.localization?.defaultLanguage || settings?.language || 'en' }, columns: columnsForExport.map(({ translateValue, ...column }) => column), rows: rowsForExport }
         downloadBlob(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }), `${slug(fileTitle) || 'atlas-export'}.json`)
       }
       if (selectedFormat === 'pdf') await exportPdf(rowsForExport, columnsForExport, fileTitle, options, settings, payload)
@@ -412,11 +417,11 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     const printWindow = window.open('', '_blank', 'popup,width=1200,height=850')
     if (!printWindow) { setError('Allow pop-ups to open a separate, print-ready report.'); return }
     printWindow.document.open()
-    printWindow.document.write('<!doctype html><title>Preparing Atlas report…</title><body style="font:16px Arial;padding:40px">Preparing report from SQLite…</body>')
+    printWindow.document.write(`<!doctype html><title>${htmlSafe(uiText(settings, 'Preparing Atlas report…'))}</title><body style="font:16px Arial;padding:40px">${htmlSafe(uiText(settings, 'Preparing report from SQLite…'))}</body>`)
     printWindow.document.close()
     try {
       const payload = await loadCurrentData()
-      const columnsForPrint = payload.columns
+      const columnsForPrint = localizeExportColumns(dataset, payload.columns, settings)
       const rowsForPrint = orderRows(payload.rows, options, columnsForPrint, settings)
       if (!columnsForPrint.length) throw new Error('Select at least one database field to print.')
       await audit('print', rowsForPrint.length)
@@ -433,30 +438,30 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   }
 
   return <div className="export-wrap">
-    <button className="secondary-button" onClick={() => { setError(''); setOpen(!open) }}><Icon name="external" size={15}/> Export / print</button>
+    <button className="secondary-button" onClick={() => { setError(''); setOpen(!open) }}><Icon name="external" size={15}/> {uiText(settings, 'Export / print')}</button>
     {open && <div className="export-panel export-panel-studio">
-      <div className="advanced-filter-head"><div><strong>Atlas report studio</strong><small>Live fields are re-read from SQLite when you export.</small></div><button className="icon-button subtle" onClick={() => setOpen(false)} aria-label="Close report studio"><Icon name="close" size={14}/></button></div>
-      {hasExportScopes && <label className="tiny-label export-scope-label">Export scope<select value={scope} onChange={event => setScope(event.target.value)}><option value="selected" disabled={!(exportScopes?.selected || []).length}>Selected records ({(exportScopes?.selected || []).length.toLocaleString()})</option><option value="filtered">Filtered results ({(exportScopes?.filtered || []).length.toLocaleString()})</option><option value="all">Entire dataset{query?.projectId ? ' for this project' : ''}</option></select><small>{scope === 'selected' ? 'Only checked records will be queried from SQLite.' : scope === 'filtered' ? 'The current table filters determine the record IDs; values are re-read from SQLite.' : 'All records within the current dataset and project scope are queried from SQLite.'}</small></label>}
-      <label className="tiny-label">Report title<input value={fileTitle} maxLength={200} onChange={event => setFileTitle(event.target.value)}/></label>
-      {allowExport && <div className="column-checks export-field-list"><div className="export-field-heading"><span>Database fields</span><span>{selected.length} selected</span></div>{availableColumns.map(column => <label key={column.key}><input type="checkbox" checked={selected.includes(column.key)} onChange={() => changedSelected(column.key)}/>{column.label}</label>)}</div>}
+      <div className="advanced-filter-head"><div><strong>{uiText(settings, 'Atlas report studio')}</strong><small>{uiText(settings, 'Live fields are re-read from SQLite when you export.')}</small></div><button className="icon-button subtle" onClick={() => setOpen(false)} aria-label={uiText(settings, 'Close report studio')}><Icon name="close" size={14}/></button></div>
+      {hasExportScopes && <label className="tiny-label export-scope-label">{uiText(settings, 'Export scope')}<select value={scope} onChange={event => setScope(event.target.value)}><option value="selected" disabled={!(exportScopes?.selected || []).length}>{uiText(settings, 'Selected records')} ({new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format((exportScopes?.selected || []).length)})</option><option value="filtered">{uiText(settings, 'Filtered results')} ({new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format((exportScopes?.filtered || []).length)})</option><option value="all">{uiText(settings, 'Entire dataset')}{query?.projectId ? ` ${uiText(settings, 'for this project')}` : ''}</option></select><small>{uiText(settings, scope === 'selected' ? 'Only checked records will be queried from SQLite.' : scope === 'filtered' ? 'The current table filters determine the record IDs; values are re-read from SQLite.' : 'All records within the current dataset and project scope are queried from SQLite.')}</small></label>}
+      <label className="tiny-label">{uiText(settings, 'Report title')}<input value={fileTitle} maxLength={200} onChange={event => setFileTitle(event.target.value)}/></label>
+      {allowExport && <div className="column-checks export-field-list"><div className="export-field-heading"><span>{uiText(settings, 'Database fields')}</span><span>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(selected.length)} {uiText(settings, 'selected')}</span></div>{availableColumns.map(column => <label key={column.key}><input type="checkbox" checked={selected.includes(column.key)} onChange={() => changedSelected(column.key)}/>{column.label}</label>)}</div>}
       <div className="export-format-grid">
-        {allowExport && <label>File format<select value={selectedFormat} onChange={event => setFormat(event.target.value)}>{exportFormats.map(item => <option key={item} value={item}>{item === 'xlsx' ? 'Excel workbook' : item.toUpperCase()}</option>)}</select></label>}
-        <label>Document template<select value={template} onChange={event => setTemplate(event.target.value)}>{Object.entries(TEMPLATE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label>Page size<select value={pageSize} onChange={event => setPageSize(event.target.value)}><option value="a4">A4</option><option value="letter">Letter</option><option value="legal">Legal</option></select></label>
-        <label>Orientation<select value={orientation} onChange={event => setOrientation(event.target.value)}><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
-        <label>Page margins<select value={margin} onChange={event => setMargin(event.target.value)}><option value="9">Narrow</option><option value="14">Standard</option><option value="20">Wide</option></select></label>
-        <label>Date formatting<select value={dateStyle} onChange={event => setDateStyle(event.target.value)}>{DATE_STYLES.map(style => <option key={style} value={style}>{style === 'iso' ? 'ISO' : `${style[0].toUpperCase()}${style.slice(1)} · locale`}</option>)}</select></label>
-        <label>Group rows by<select value={groupBy} onChange={event => setGroupBy(event.target.value)}><option value="none">No grouping</option>{availableColumns.filter(column => selected.includes(column.key)).map(column => <option key={column.key} value={column.key}>{column.label}</option>)}</select></label>
-        <label>Sort by<select value={sortBy} onChange={event => setSortBy(event.target.value)}><option value="none">Source order</option>{availableColumns.filter(column => selected.includes(column.key)).map(column => <option key={column.key} value={column.key}>{column.label}</option>)}</select></label>
-        <label>Sort direction<select value={sortDirection} onChange={event => setSortDirection(event.target.value)}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-        <label>Brand accent<select value={accent} onChange={event => setAccent(event.target.value)}>{Object.keys(ACCENTS).map(color => <option key={color} value={color}>{color[0].toUpperCase()}{color.slice(1)}</option>)}</select></label>
-        {allowPrint && <label>Table text<select value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="7">Small</option><option value="8">Standard</option><option value="10">Large</option></select></label>}
+        {allowExport && <label>{uiText(settings, 'File format')}<select value={selectedFormat} onChange={event => setFormat(event.target.value)}>{exportFormats.map(item => <option key={item} value={item}>{item === 'xlsx' ? uiText(settings, 'Excel workbook') : item.toUpperCase()}</option>)}</select></label>}
+        <label>{uiText(settings, 'Document template')}<select value={template} onChange={event => setTemplate(event.target.value)}>{Object.entries(TEMPLATE_LABELS).map(([value, label]) => <option key={value} value={value}>{uiText(settings, label)}</option>)}</select></label>
+        <label>{uiText(settings, 'Page size')}<select value={pageSize} onChange={event => setPageSize(event.target.value)}><option value="a4">{uiText(settings, 'A4')}</option><option value="letter">{uiText(settings, 'Letter')}</option><option value="legal">{uiText(settings, 'Legal')}</option></select></label>
+        <label>{uiText(settings, 'Orientation')}<select value={orientation} onChange={event => setOrientation(event.target.value)}><option value="landscape">{uiText(settings, 'Landscape')}</option><option value="portrait">{uiText(settings, 'Portrait')}</option></select></label>
+        <label>{uiText(settings, 'Page margins')}<select value={margin} onChange={event => setMargin(event.target.value)}><option value="9">{uiText(settings, 'Narrow')}</option><option value="14">{uiText(settings, 'Standard')}</option><option value="20">{uiText(settings, 'Wide')}</option></select></label>
+        <label>{uiText(settings, 'Date formatting')}<select value={dateStyle} onChange={event => setDateStyle(event.target.value)}>{DATE_STYLES.map(style => <option key={style} value={style}>{style === 'iso' ? uiText(settings, 'ISO') : `${uiText(settings, style[0].toUpperCase() + style.slice(1))} · ${uiText(settings, 'locale')}`}</option>)}</select></label>
+        <label>{uiText(settings, 'Group rows by')}<select value={groupBy} onChange={event => setGroupBy(event.target.value)}><option value="none">{uiText(settings, 'No grouping')}</option>{availableColumns.filter(column => selected.includes(column.key)).map(column => <option key={column.key} value={column.key}>{column.label}</option>)}</select></label>
+        <label>{uiText(settings, 'Sort by')}<select value={sortBy} onChange={event => setSortBy(event.target.value)}><option value="none">{uiText(settings, 'Source order')}</option>{availableColumns.filter(column => selected.includes(column.key)).map(column => <option key={column.key} value={column.key}>{column.label}</option>)}</select></label>
+        <label>{uiText(settings, 'Sort direction')}<select value={sortDirection} onChange={event => setSortDirection(event.target.value)}><option value="asc">{uiText(settings, 'Ascending')}</option><option value="desc">{uiText(settings, 'Descending')}</option></select></label>
+        <label>{uiText(settings, 'Brand accent')}<select value={accent} onChange={event => setAccent(event.target.value)}>{Object.keys(ACCENTS).map(color => <option key={color} value={color}>{uiText(settings, color)}</option>)}</select></label>
+        {allowPrint && <label>{uiText(settings, 'Table text')}<select value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="7">{uiText(settings, 'Small')}</option><option value="8">{uiText(settings, 'Standard')}</option><option value="10">{uiText(settings, 'Large')}</option></select></label>}
       </div>
-      <div className="export-check-options"><label><input type="checkbox" checked={includeSummary} onChange={event => setIncludeSummary(event.target.checked)}/> Include summary metrics</label><label><input type="checkbox" checked={includeBranding} onChange={event => setIncludeBranding(event.target.checked)}/> Include workspace branding</label><label><input type="checkbox" checked={includeSignoff} onChange={event => setIncludeSignoff(event.target.checked)}/> Add review sign-off lines</label></div>
-      <div className="export-data-status"><span className={preparing ? 'is-loading' : prepared ? 'is-ready' : ''}/><div><strong>{preparing ? 'Reading database fields…' : prepared ? `${prepared.recordCount.toLocaleString()} records ready` : 'Preview awaiting database read'}</strong><small>{prepared ? `SQLite source · refreshed ${new Intl.DateTimeFormat(settings?.localization?.defaultLanguage || 'en', { timeStyle: 'short' }).format(new Date(prepared.generatedAt))}` : 'Rows are fetched from the database, not from the visible screen.'}</small></div><button type="button" className="text-button" disabled={preparing} onClick={() => { setOpen(false); requestAnimationFrame(() => setOpen(true)) }}>Refresh</button></div>
-      {prepared && <div className="export-preview"><div className="export-preview-heading"><strong>Data preview</strong><span>{previewColumns.length} fields · {previewRows.length} rows</span></div>{!displayRows.length ? <p>No matching database records.</p> : <div className="export-preview-scroll"><table><thead><tr>{previewColumns.slice(0, 5).map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{displayRows.slice(0, 3).map((row, index) => <tr key={index}>{previewColumns.slice(0, 5).map(column => <td key={column.key}>{formattedValue(row[column.key], column, options, settings)}</td>)}</tr>)}</tbody></table></div>}{includeSummary && <div className="export-preview-summary">{summaryMetrics(previewRows, previewColumns).slice(0, 3).map(metric => <span key={metric.label}>{metric.label}: <strong>{formattedValue(metric.value, { type: metric.type }, options, settings)}</strong></span>)}</div>}</div>}
+      <div className="export-check-options"><label><input type="checkbox" checked={includeSummary} onChange={event => setIncludeSummary(event.target.checked)}/> {uiText(settings, 'Include summary metrics')}</label><label><input type="checkbox" checked={includeBranding} onChange={event => setIncludeBranding(event.target.checked)}/> {uiText(settings, 'Include workspace branding')}</label><label><input type="checkbox" checked={includeSignoff} onChange={event => setIncludeSignoff(event.target.checked)}/> {uiText(settings, 'Add review sign-off lines')}</label></div>
+      <div className="export-data-status"><span className={preparing ? 'is-loading' : prepared ? 'is-ready' : ''}/><div><strong>{preparing ? uiText(settings, 'Reading database fields…') : prepared ? <><span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(prepared.recordCount)}</span> {uiText(settings, 'records ready')}</> : uiText(settings, 'Preview awaiting database read')}</strong><small>{prepared ? <>{uiText(settings, 'SQLite source')} · {uiText(settings, 'refreshed')} <span data-no-i18n>{new Intl.DateTimeFormat(settings?.localization?.defaultLanguage || 'en', { timeStyle: 'short' }).format(new Date(prepared.generatedAt))}</span></> : uiText(settings, 'Rows are fetched from the database, not from the visible screen.')}</small></div><button type="button" className="text-button" disabled={preparing} onClick={() => { setOpen(false); requestAnimationFrame(() => setOpen(true)) }}>{uiText(settings, 'Refresh')}</button></div>
+      {prepared && <div className="export-preview"><div className="export-preview-heading"><strong>{uiText(settings, 'Data preview')}</strong><span><span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewColumns.length)}</span> {uiText(settings, 'fields')} · <span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewRows.length)}</span> {uiText(settings, 'rows')}</span></div>{!displayRows.length ? <p>{uiText(settings, 'No matching database records.')}</p> : <div className="export-preview-scroll"><table><thead><tr>{previewColumns.slice(0, 5).map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{displayRows.slice(0, 3).map((row, index) => <tr key={index}>{previewColumns.slice(0, 5).map(column => <td key={column.key} data-no-i18n={column.translateValue || column.type === 'boolean' ? undefined : ''}>{formattedValue(row[column.key], column, options, settings)}</td>)}</tr>)}</tbody></table></div>}{includeSummary && <div className="export-preview-summary">{summaryMetrics(previewRows, previewColumns, settings).slice(0, 3).map(metric => <span key={metric.label}>{metric.label}: <strong>{formattedValue(metric.value, { type: metric.type }, options, settings)}</strong></span>)}</div>}</div>}
       {error && <div className="form-error"><Icon name="warning" size={14}/>{error}</div>}
-      <div className="export-actions">{allowExport && <button className="secondary-button" onClick={doExport} disabled={preparing || !selected.length}>Download {selectedFormat.toUpperCase()}</button>}{allowPrint && <button className="primary-button" onClick={print} disabled={preparing || !selected.length}>Open print-ready report</button>}</div>
+      <div className="export-actions">{allowExport && <button className="secondary-button" onClick={doExport} disabled={preparing || !selected.length}>{uiText(settings, 'Download')} {selectedFormat.toUpperCase()}</button>}{allowPrint && <button className="primary-button" onClick={print} disabled={preparing || !selected.length}>{uiText(settings, 'Open print-ready report')}</button>}</div>
     </div>}
   </div>
 }

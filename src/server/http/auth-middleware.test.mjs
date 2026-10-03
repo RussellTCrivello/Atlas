@@ -31,4 +31,25 @@ assert.equal(res.statusCode, 401)
 assert.equal(sessions.has('expired-session'), false)
 assert.equal(errors.length, 2)
 
-console.log('Expected signed-out /api/auth/me 401 behavior verified')
+let optionalContinued = false
+let optionalRequest = { cookies: {} }
+res = response()
+middleware.optionalUser(optionalRequest, res, () => { optionalContinued = true })
+assert.equal(res.statusCode, 200)
+assert.equal(optionalContinued, true)
+assert.equal(optionalRequest.user, null)
+
+optionalRequest = { cookies: { atlas_sid: 'valid-session' } }
+res = response()
+middleware.optionalUser(optionalRequest, res, () => { optionalContinued = true })
+assert.equal(res.statusCode, 200)
+assert.equal(optionalRequest.user, user)
+
+optionalRequest = { cookies: { atlas_sid: 'expired-session' } }
+res = response()
+middleware.optionalUser(optionalRequest, res, () => { optionalContinued = true })
+assert.equal(res.statusCode, 200)
+assert.equal(optionalRequest.user, null)
+assert.equal(sessions.has('expired-session'), false)
+
+console.log('Signed-out status probe returns 200 without changing protected /api/auth/me 401 behavior')

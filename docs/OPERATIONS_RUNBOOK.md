@@ -23,7 +23,7 @@
 4. Sign in with the created administrator account.
 5. Create teams, people, projects, tasks, and additional user accounts.
 
-Production setup creates no demo accounts and no sample data. Runtime persistence is SQLite at `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`). A legacy `atlas-store.json` is imported only if that SQLite database has no workspace snapshot; a successful import archives the original under `data/legacy/`.
+Production setup creates no demo accounts and no sample data. Server-side workspace persistence is SQLite at `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`). A legacy `atlas-store.json` is imported only if that SQLite database has no workspace snapshot; a successful import archives the original under `data/legacy/`. Browser-local offline caches/outbox and saved table views are device-specific and do not replace the SQLite database.
 
 ## Daily operation
 
@@ -36,6 +36,10 @@ Typical operational loop:
 5. Use Alerts to resolve risk/overdue/blocker items.
 6. Use Reports to export daily/weekly/monthly/quarterly/yearly delivery reports and activity reports.
 7. Use Settings for access control, workspace configuration, and database integrity checks.
+
+## Offline edits and synchronization
+
+The service worker keeps the static shell/assets available after an online visit. A separate IndexedDB layer caches selected API responses and queues supported edits for retry and conflict handling. Offline coverage is not universal: unsupported routes still require the local host. Check the top-bar sync indicator and **Changes on this device** panel before signing out or closing a shared browser profile. Keep the browser profile intact until pending edits are acknowledged; clearing site data or losing the device profile can remove unsynchronized edits. Saved table views are also browser-local and are not synchronized across devices.
 
 ## Administrator responsibilities
 
@@ -82,8 +86,6 @@ data/backups/atlas-db-<timestamp>-<reason>.sqlite
 ```
 
 Electron backups are under the app userData data directory. Verify that backups are included in the organization's off-device backup policy; no encryption-at-rest layer is provided by Atlas.
-
-Electron backups are under the app userData data directory.
 
 Recommended cadence:
 

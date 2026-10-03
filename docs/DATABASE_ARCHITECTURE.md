@@ -2,7 +2,7 @@
 
 ## Architecture summary
 
-Atlas uses an embedded relational SQLite database for **all runtime persistence**. The application is one Node.js process with an in-memory workspace view, but every persisted application change is committed to SQLite; JSON is only used for explicit import/export formats and a one-time legacy-store import.
+Atlas uses an embedded relational SQLite database as the authoritative **server-side persistence source** for workspace records, settings, audit/work history, and account preferences. The application is one Node.js process with an in-memory workspace view, but every persisted server-side application change is committed to SQLite; JSON is only used for explicit import/export formats and a one-time legacy-store import. Browser-local persistence is separate and non-authoritative: IndexedDB holds selected offline response caches and queued mutations, and saved table views remain in per-browser `localStorage`. These browser stores are not substitutes for the SQL database.
 
 | Concern | Implementation |
 | --- | --- |
@@ -29,6 +29,7 @@ Atlas does not connect to an external database service. Keep one application pro
 - `src/server/database/connection.js` — SQLite connection, durability/security pragmas, private directory setup.
 - `src/server/database/store-repository.js` — record conversion, snapshot reads/writes, backup, integrity, and counts.
 - `src/server/database/user-preferences-repository.js` — per-user SQL saved filters and preferred interface language.
+- `src/api/offline-sync.js` — browser-local IndexedDB response cache, session snapshot, queued supported mutations, retry metadata, and conflict-recovery state; it is not the authoritative workspace database.
 - `src/server/domain/store.js` — default/legacy normalization, generated seed data, integrity validation, and checksums.
 - `src/server/domain/` — settings, workspace mapping/report logic, security, and time services.
 - `src/server/routes/` — role-grouped API route modules, including validated saved-filter preferences.
@@ -91,7 +92,7 @@ Unique indexes enforce non-empty, case-insensitive team names, person/user email
 4. Load the singleton settings/metadata/counters and entity tables into the in-memory workspace snapshot.
 5. Normalize application-level defaults and compatibility fields, then write the normalized snapshot back to SQLite without incrementing the write count.
 
-After an authenticated user loads the workspace, Atlas checks the former browser keys `atlas-filter-projects`, `atlas-filter-tasks`, `atlas-filter-people`, `atlas-filter-activity`, and `atlas-filter-alerts`. Valid conditions are imported into that account's `user_preferences` row only when the SQL preference for that filter key does not already exist. The browser keys are removed only after the server confirms the SQL preferences were read or saved. This is a one-time compatibility import; all later filter and interface-language reads/writes use SQLite. The language preference is scoped to the authenticated account and does not change the workspace default. When the same browser is shared by multiple accounts during the upgrade, the first account that completes this import receives the legacy browser-wide filters; existing SQL values always take precedence.
+After an authenticated user loads the workspace, Atlas checks the former browser keys `atlas-filter-projects`, `atlas-filter-tasks`, `atlas-filter-people`, `atlas-filter-activity`, and `atlas-filter-alerts`. Valid conditions are imported into that account's `user_preferences` row only when the SQL preference for that filter key does not already exist. The browser keys are removed only after the server confirms the SQL preferences were read or saved. This is a one-time compatibility import; subsequent advanced-filter and interface-language reads/writes use SQLite. The language preference is scoped to the authenticated account and does not change the workspace default. When the same browser is shared by multiple accounts during the upgrade, the first account that completes this import receives the legacy browser-wide filters; existing SQL values always take precedence. Saved table views are a separate preference currently kept in `localStorage`, scoped by user ID and entity within that browser. They are not migrated to `user_preferences` and are not available automatically on another device.
 
 ### One-time legacy JSON import
 

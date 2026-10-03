@@ -19,6 +19,29 @@ export function createAuthMiddleware({ getStore, sessions, can, invalidateUserSe
     next()
   }
 
+  function optionalUser(req, res, next) {
+    const sid = req.cookies?.atlas_sid
+    const session = sid && sessions.get(sid)
+    if (!session || session.expiresAt <= Date.now()) {
+      if (sid) sessions.delete(sid)
+      req.user = null
+      return next()
+    }
+    const user = getStore()?.users?.find(candidate => candidate.id === session.userId)
+    if (!user) {
+      sessions.delete(sid)
+      req.user = null
+      return next()
+    }
+    if (user.active === false) {
+      invalidateUserSessions(user.id)
+      req.user = null
+      return next()
+    }
+    req.user = user
+    next()
+  }
+
   function requirePermission(permission, message = 'You do not have permission to complete this action') {
     return (req, res, next) => {
       if (!can(req.user, permission)) return sendError(res, 403, message)
@@ -36,5 +59,5 @@ export function createAuthMiddleware({ getStore, sessions, can, invalidateUserSe
     next()
   }
 
-  return { requireUser, requirePermission, requireManager, requireAdmin }
+  return { requireUser, optionalUser, requirePermission, requireManager, requireAdmin }
 }

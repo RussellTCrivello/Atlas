@@ -86,10 +86,11 @@ If a data directory contains `atlas-store.json` but no initialized SQLite worksp
 
 ## Operational boundaries
 
-- Runtime persistence is a local SQLite database at `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`). Atlas currently loads the whole workspace into each process and writes a snapshot transactionally, so run only one app process per data directory; separate instances could overwrite one another from stale in-memory state despite SQLite transaction locks.
-- `data/atlas-store.json` is a one-time legacy import source only when SQLite is uninitialized. It is archived under `data/legacy/` after a successful SQLite commit; JSON exports/settings files are not the runtime source of truth.
+- Server-side workspace persistence is a local SQLite database at `data/atlas.sqlite` (Electron: `<userData>/data/atlas.sqlite`). Atlas currently loads the whole workspace into each process and writes a snapshot transactionally, so run only one app process per data directory; separate instances could overwrite one another from stale in-memory state despite SQLite transaction locks.
+- `data/atlas-store.json` is a one-time legacy import source only when SQLite is uninitialized. It is archived under `data/legacy/` after a successful SQLite commit; JSON exports/settings files are not the server-side source of truth.
 - The built-in `node:sqlite` `DatabaseSync` API is synchronous and experimental/RC across the supported Node/Electron lines; large full-snapshot writes can block request handling.
-- The service worker caches the static app shell and versioned local assets only after an online visit. API data and writes are not cached or synchronized offline.
+- The service worker caches only the static app shell and versioned local assets after an online visit. Separately, the API client uses IndexedDB for per-user cached responses on `/api/bootstrap`, `/api/preferences`, `/api/profile`, `/api/reports/*`, and `/api/projects/{id}/tasks`, plus an outbox for supported settings/preferences/profile and task/project/people/team/milestone/activity/alert mutations. The outbox includes retry/idempotency and server-backed conflict handling; this is not offline support for every API route. IndexedDB data is browser/device-local and can be removed by browser cleanup or profile loss. Persistent-site-storage requests can be denied, so do not clear site data while edits are waiting to synchronize.
+- Saved table views remain browser/device-local in `localStorage`; unlike advanced filters and interface-language choices, they are not account preferences stored in SQLite or synchronized across devices.
 - Role permission arrays are enforced by the API. Module/field/action/export/reporting policy maps, workflow transitions/approvals/automation, and integration/webhook registry entries are currently configuration metadata unless a specific setting is described as active in the UI.
 - Users with `viewReports` can request all-person activity reports. Confirm that this workspace-wide reporting scope is appropriate for the data before inviting users.
 - Authentication uses local email/password accounts and in-memory sessions; MFA/SSO and external identity lifecycle are not included in this build.
@@ -160,7 +161,7 @@ Before a release:
 - [ ] Use Node `>=22.13.0` (or verify the bundled Electron Node runtime is compatible).
 - [ ] `npm ci` completes from the committed lockfile.
 - [ ] `npm audit --omit=dev` returns zero vulnerabilities.
-- [ ] Full `npm audit` returns zero vulnerabilities.
+- [ ] Review full `npm audit`; resolve or explicitly accept every development/packaging finding before release. As of 2026-10-02, this repository has eight high-severity Electron packaging-chain findings, so the full-audit gate is not currently clear.
 - [ ] `npm run build` succeeds.
 - [ ] `TEST_PORT=5193 node scripts/final-validation.mjs` passes in isolated `.audit-test-data/final-validation-data` and `.audit-test-data/legacy-json-import-data` directories; the script validates those paths before cleaning them and writes its result record under the primary validation directory.
 - [ ] On a fresh isolated data directory only, `npm run init:production` leaves a first-run production store; do not run it against an existing workspace.

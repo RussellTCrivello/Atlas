@@ -1,5 +1,5 @@
 export function registerSystemRoutes(app, services) {
-  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, persist, pruneWorkLedger, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
+  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, persist, pruneWorkLedger, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, optionalUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
 app.get('/api/health', (req, res) => res.json({ ok: true, name: 'Atlas Workspace', version: '1.0.0', mode: process.env.NODE_ENV || 'development', desktopReady: process.env.ATLAS_DESKTOP === 'true', time: new Date().toISOString() }))
 app.get('/api/runtime-config', requireUser, requireAdmin, (req, res) => {
   const databaseInfo = storeRepository.databaseInfo()
@@ -85,6 +85,11 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true })
 })
 app.get('/api/auth/me', requireUser, (req, res) => res.json({ user: publicUser(req.user), sessionExpiresAt: sessions.get(req.cookies?.atlas_sid)?.expiresAt || Date.now() }))
+app.get('/api/auth/session', optionalUser, (req, res) => {
+  if (!req.user) return res.json({ authenticated: false, user: null })
+  const sessionExpiresAt = sessions.get(req.cookies?.atlas_sid)?.expiresAt || Date.now()
+  res.json({ authenticated: true, user: publicUser(req.user), sessionExpiresAt })
+})
 app.get('/api/bootstrap', requireUser, (req, res) => {
   auditRead('bootstrap', req.user.id)
   res.json(bootstrapFor(req.user))

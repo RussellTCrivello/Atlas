@@ -164,13 +164,13 @@ export function CommandSearch({
           <span>{t(settings, `nav.${id}`, label)}</span>
         </button>)}</section>
         {projects.length > 0 && <section><h4>{t(settings, 'nav.projects', 'Projects')}</h4>{projects.map(project => <button type="button" key={project.numericId} onClick={() => go('projects', canEditProjects && actionVisible(settings, 'edit') ? () => openModal('project', project) : undefined)}>
-          <Icon name="projects" size={15}/><span>{project.name}</span><small>{project.code}</small>
+          <Icon name="projects" size={15}/><span data-no-i18n>{project.name}</span><small data-no-i18n>{project.code}</small>
         </button>)}</section>}
         {tasks.length > 0 && <section><h4>{t(settings, 'nav.tasks', 'Tasks')}</h4>{tasks.map(task => <button type="button" key={task.numericId} onClick={() => go('tasks', canEditTasks && actionVisible(settings, 'edit') ? () => openModal('task', task) : undefined)}>
-          <Icon name="tasks" size={15}/><span>{task.title}</span><small>{task.id}</small>
+          <Icon name="tasks" size={15}/><span data-no-i18n>{task.title}</span><small data-no-i18n>{task.id}</small>
         </button>)}</section>}
         {people.length > 0 && <section><h4>{t(settings, 'nav.people', 'People')}</h4>{people.map(person => <button type="button" key={person.id} onClick={() => go('people', canEditPeople && actionVisible(settings, 'edit') ? () => openModal('person', person) : undefined)}>
-          <Icon name="people" size={15}/><span>{person.name}</span><small>{person.team}</small>
+          <Icon name="people" size={15}/><span data-no-i18n>{person.name}</span><small data-no-i18n>{person.team}</small>
         </button>)}</section>}
       </div>
     </div>
