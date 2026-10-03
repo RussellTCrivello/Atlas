@@ -42,6 +42,7 @@ const service = createStoreService({
 
 const { productionStore, normalizeStore } = service
 const fresh = productionStore()
+assert.equal(fresh.settings.audit.retentionDays, 365, 'new workspaces use the 365-day audit policy')
 assert.equal(fresh.settings.workLedger.retentionMonths, 24, 'new workspaces use the 24-month work-ledger policy')
 
 const cutoff = new Date()
@@ -65,9 +66,13 @@ assert.deepEqual(normalizedFresh.workLogs.map(row => row.id), ['boundary', 'inva
 const legacy = structuredClone(fresh)
 legacy.meta.schemaVersion = '3.0.0'
 delete legacy.settings.workLedger
+legacy.settings.audit = { enabled: true }
 legacy.workLogs = [{ id: 'legacy-history', date: '2010-01-01', minutes: 35 }]
+legacy.auditLogs = [{ id: 'legacy-audit', action: 'settings.updated', createdAt: '2010-01-01T00:00:00.000Z' }]
 const normalizedLegacy = normalizeStore(legacy)
-assert.equal(normalizedLegacy.settings.workLedger.retentionMonths, 0, 'existing workspaces without an explicit retention policy remain indefinite')
+assert.equal(normalizedLegacy.settings.workLedger.retentionMonths, 0, 'existing workspaces without an explicit work-ledger policy remain indefinite')
+assert.equal(normalizedLegacy.settings.audit.retentionDays, 0, 'existing workspaces without an explicit audit policy remain indefinite')
 assert.deepEqual(normalizedLegacy.workLogs, [{ id: 'legacy-history', date: '2010-01-01', minutes: 35 }], 'legacy work history is not silently deleted')
+assert.deepEqual(normalizedLegacy.auditLogs, [{ id: 'legacy-audit', action: 'settings.updated', createdAt: '2010-01-01T00:00:00.000Z' }], 'legacy audit history is not silently deleted')
 
 console.log('Work-ledger retention defaults, cutoff cleanup, and legacy-preservation checks passed')

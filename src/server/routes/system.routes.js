@@ -1,5 +1,65 @@
 export function registerSystemRoutes(app, services) {
-  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, persist, pruneWorkLedger, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, optionalUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
+  const { store, getStore, setStore, root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData, rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword, configuredPasswordMinLength, settingsInputError, mergeDeep, mergeSettingsUpdate, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA, publicUser, newSession, sessionCookieOptions, auditLog, pruneAuditLogs, persist, pruneWorkLedger, can, storeRepository, listBackups, auditRead, storeChecksum, validateStoreState, requireUser, optionalUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword, invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor, bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path } = services
+  const requiredSettingsSections = ['workspace', 'interface', 'localization', 'modules', 'workflows', 'customFields', 'permissions', 'notifications', 'reports', 'exports', 'integrations', 'storage', 'security', 'audit', 'workLedger']
+  const schemaVersionParts = value => {
+    const normalized = typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : typeof value === 'string' ? value : ''
+    if (!/^\d+(?:\.\d+){0,2}$/.test(normalized)) return null
+    return normalized.split('.').map(Number).concat([0, 0]).slice(0, 3)
+  }
+  const compareSchemaVersions = (left, right) => {
+    const a = schemaVersionParts(left); const b = schemaVersionParts(right)
+    if (!a || !b) return null
+    for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1
+    return 0
+  }
+  function removedAssignedRoleError(nextSettings) {
+    const roles = nextSettings.permissions?.roles || {}
+    const removed = Object.keys(store.settings.permissions?.roles || {}).filter(role => !Object.hasOwn(roles, role))
+    if (!removed.length) return ''
+    const assignedUsers = store.users.filter(user => removed.includes(user.role))
+    return assignedUsers.length
+      ? `Reassign ${assignedUsers.length} user(s) before deleting role(s): ${removed.join(', ')}`
+      : ''
+  }
+  function workflowMigrationPlan(nextSettings) {
+    const previousStates = store.settings.workflows?.task?.states || []
+    const nextStates = nextSettings.workflows?.task?.states || []
+    const stateData = state => typeof state === 'string' ? { id: '', label: state, terminal: false } : state
+    const oldStates = previousStates.map(stateData).filter(state => state?.label)
+    const newStates = nextStates.map(stateData).filter(state => state?.label)
+    const nextById = new Map(newStates.filter(state => state.id).map(state => [String(state.id), state]))
+    const nextByLabel = new Map(newStates.map(state => [String(state.label).toLocaleLowerCase(), state]))
+    const oldByLabel = new Map(oldStates.map(state => [String(state.label).toLocaleLowerCase(), state]))
+    const usedLabels = new Set(store.tasks.map(task => String(task.status || '').toLocaleLowerCase()))
+    const mapped = new Map()
+    for (const oldState of oldStates) {
+      const nextState = (oldState.id && nextById.get(String(oldState.id))) || nextByLabel.get(String(oldState.label).toLocaleLowerCase())
+      if (!nextState && usedLabels.has(String(oldState.label).toLocaleLowerCase())) {
+        return { error: `Cannot remove workflow state “${oldState.label}” while tasks still use it. Move those tasks to another state first.`, updates: [] }
+      }
+      if (nextState) mapped.set(String(oldState.label).toLocaleLowerCase(), { oldState, nextState })
+    }
+    const updates = []
+    for (const task of store.tasks) {
+      const mapping = mapped.get(String(task.status || '').toLocaleLowerCase())
+      if (!mapping) continue
+      const { oldState, nextState } = mapping
+      const statusChanged = oldState.label !== nextState.label
+      const terminalChanged = Boolean(oldState.terminal) !== Boolean(nextState.terminal)
+      if (statusChanged || terminalChanged) updates.push({ task, oldState, nextState })
+    }
+    return { error: '', updates }
+  }
+  function applyWorkflowMigration(plan) {
+    for (const { task, oldState, nextState } of plan.updates) {
+      if (oldState.label !== nextState.label) task.status = nextState.label
+      if (Boolean(oldState.terminal) !== Boolean(nextState.terminal)) {
+        if (nextState.terminal) task.completedAt = task.completedAt || todayLA()
+        else delete task.completedAt
+      }
+    }
+    return plan.updates.length
+  }
 app.get('/api/health', (req, res) => res.json({ ok: true, name: 'Atlas Workspace', version: '1.0.0', mode: process.env.NODE_ENV || 'development', desktopReady: process.env.ATLAS_DESKTOP === 'true', time: new Date().toISOString() }))
 app.get('/api/runtime-config', requireUser, requireAdmin, (req, res) => {
   const databaseInfo = storeRepository.databaseInfo()
@@ -130,19 +190,45 @@ app.get('/api/settings/export', requireUser, requireAdmin, (req, res) => {
   auditRead('settings-export', req.user.id)
   auditLog('export.settings', req.user.id, { format: 'json' })
   persist({ reason: 'settings-export' })
-  res.json({ exportedAt: new Date().toISOString(), schemaVersion: STORE_SCHEMA_VERSION, settings: store.settings })
+  res.json({ format: 'atlas-settings', exportedAt: new Date().toISOString(), schemaVersion: STORE_SCHEMA_VERSION, settings: store.settings })
 })
 app.post('/api/settings/import', requireUser, requireAdmin, (req, res) => {
   if (store.settings.storage.importExportEnabled === false) return sendError(res, 403, 'Configuration import is disabled by workspace policy')
-  const imported = req.body.settings || req.body
-  const error = settingsInputError(imported)
-  if (error) return sendError(res, 400, error)
+  const request = isPlainObject(req.body) ? req.body : {}
+  const hasSettingsEnvelope = Object.hasOwn(request, 'settings')
+  const imported = hasSettingsEnvelope
+    ? request.settings
+    : Object.fromEntries(Object.entries(request).filter(([key]) => !['mode', 'format', 'schemaVersion', 'exportedAt'].includes(key)))
+  if (request.mode !== undefined && !['merge', 'replace'].includes(request.mode)) return sendError(res, 400, 'Settings import mode must be merge or replace')
+  if (request.format !== undefined && request.format !== 'atlas-settings') return sendError(res, 400, 'Unsupported settings package format')
+  const importedSchemaVersion = request.schemaVersion === undefined ? null : compareSchemaVersions(request.schemaVersion, STORE_SCHEMA_VERSION)
+  if (request.schemaVersion !== undefined && importedSchemaVersion === null) return sendError(res, 400, 'Settings package schema version is invalid')
+  if (importedSchemaVersion > 0) return sendError(res, 400, 'Settings package was created by a newer Atlas schema')
+  if (request.format === 'atlas-settings' && (!hasSettingsEnvelope || request.schemaVersion === undefined)) return sendError(res, 400, 'Versioned Atlas settings packages must include settings and a schema version')
+  const mode = request.mode || (hasSettingsEnvelope && request.schemaVersion !== undefined ? 'replace' : 'merge')
+  if (mode === 'replace' && request.schemaVersion === undefined && !requiredSettingsSections.every(key => Object.hasOwn(imported || {}, key))) return sendError(res, 400, 'Replace mode requires a complete settings object or a versioned Atlas settings package')
+  const inputError = settingsInputError(imported)
+  if (inputError) return sendError(res, 400, inputError)
   const existingWorkLedgerRetention = store.settings.workLedger?.retentionMonths ?? 0
-  store.settings = normalizeSettings(imported)
-  if (!isPlainObject(imported.workLedger) || !Object.hasOwn(imported.workLedger, 'retentionMonths')) store.settings.workLedger.retentionMonths = existingWorkLedgerRetention
+  const existingAuditRetention = store.settings.audit?.retentionDays ?? 0
+  const rawCandidate = mode === 'replace' ? imported : mergeDeep(store.settings, imported)
+  const nextSettings = normalizeSettings(rawCandidate)
+  if (!isPlainObject(imported.workLedger) || !Object.hasOwn(imported.workLedger, 'retentionMonths')) nextSettings.workLedger.retentionMonths = existingWorkLedgerRetention
+  if (!isPlainObject(imported.audit) || !Object.hasOwn(imported.audit, 'retentionDays')) nextSettings.audit.retentionDays = existingAuditRetention
+  const candidateError = settingsInputError(nextSettings)
+  if (candidateError) return sendError(res, 400, candidateError)
+  const roleError = removedAssignedRoleError(nextSettings)
+  if (roleError) return sendError(res, 409, roleError)
+  const workflowPlan = workflowMigrationPlan(nextSettings)
+  if (workflowPlan.error) return sendError(res, 409, workflowPlan.error)
+  store.settings = nextSettings
+  const migratedTaskCount = applyWorkflowMigration(workflowPlan)
   pruneWorkLedger(store)
-  auditLog('settings.imported', req.user.id, { keys: Object.keys(imported) })
+  pruneAuditLogs(store)
+  auditLog('settings.imported', req.user.id, { mode, keys: Object.keys(imported), migratedTaskCount })
   persist({ reason: 'settings-import' })
+  storeRepository.backupRetention = configuredBackupRetention()
+  storeRepository.pruneBackups()
   res.json(store.settings)
 })
 function translationCatalogPayload(language = null) {
@@ -261,12 +347,29 @@ app.post('/api/system/backup', requireUser, requireAdmin, (req, res) => {
   res.json({ ok: Boolean(backup), backup: backup && path.basename(backup) })
 })
 app.put('/api/settings', requireUser, requireAdmin, (req, res) => {
-  const error = settingsInputError(req.body)
-  if (error) return sendError(res, 400, error)
-  store.settings = normalizeSettings(mergeDeep(store.settings, req.body))
+  const inputError = settingsInputError(req.body)
+  if (inputError) return sendError(res, 400, inputError)
+  const isFullSnapshot = requiredSettingsSections.every(key => Object.hasOwn(req.body, key))
+  const existingAuditRetention = store.settings.audit?.retentionDays ?? 0
+  const existingWorkLedgerRetention = store.settings.workLedger?.retentionMonths ?? 0
+  const rawCandidate = isFullSnapshot ? mergeSettingsUpdate(store.settings, req.body) : mergeDeep(store.settings, req.body)
+  const nextSettings = normalizeSettings(rawCandidate)
+  if (!isPlainObject(req.body.audit) || !Object.hasOwn(req.body.audit, 'retentionDays')) nextSettings.audit.retentionDays = existingAuditRetention
+  if (!isPlainObject(req.body.workLedger) || !Object.hasOwn(req.body.workLedger, 'retentionMonths')) nextSettings.workLedger.retentionMonths = existingWorkLedgerRetention
+  const candidateError = settingsInputError(nextSettings)
+  if (candidateError) return sendError(res, 400, candidateError)
+  const roleError = removedAssignedRoleError(nextSettings)
+  if (roleError) return sendError(res, 409, roleError)
+  const workflowPlan = workflowMigrationPlan(nextSettings)
+  if (workflowPlan.error) return sendError(res, 409, workflowPlan.error)
+  store.settings = nextSettings
+  const migratedTaskCount = applyWorkflowMigration(workflowPlan)
   pruneWorkLedger(store)
-  auditLog('settings.updated', req.user.id, { branches: Object.keys(req.body) })
+  pruneAuditLogs(store)
+  auditLog('settings.updated', req.user.id, { branches: Object.keys(req.body), migratedTaskCount })
   persist({ reason: 'settings' })
+  storeRepository.backupRetention = configuredBackupRetention()
+  storeRepository.pruneBackups()
   res.json(store.settings)
 })
 app.delete('/api/setup/seed', requireUser, requireAdmin, (req, res) => {

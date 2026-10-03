@@ -106,8 +106,9 @@ app.patch('/api/tasks/:id/status', requireUser, requirePermission('writeTasks'),
   } else return sendError(res, 400, 'A valid status or advance flag is required')
   if (nextStatus === previousStatus) return res.json(taskPublic(task, todayLA()))
   task.status = nextStatus
-  const terminal = terminalTaskStates().includes(task.status) || task.status === 'Done'
-  task.completedAt = terminal ? (previousStatus && (terminalTaskStates().includes(previousStatus) || previousStatus === 'Done') ? (task.completedAt || todayLA()) : todayLA()) : undefined
+  const terminalStates = terminalTaskStates()
+  const terminal = terminalStates.includes(task.status)
+  task.completedAt = terminal ? (previousStatus && terminalStates.includes(previousStatus) ? (task.completedAt || todayLA()) : todayLA()) : undefined
   logWorkEvent({ personId: req.user.personId, actorUserId: req.user.id, taskId: task.id, projectId: task.projectId, action: terminal ? 'Completed task' : 'Moved task', statusFrom: previousStatus, statusTo: task.status, summary: task.title, minutes: 0 })
   auditLog('task.status.changed', req.user.id, { taskId: task.id, from: previousStatus, to: task.status })
   persist({ reason: 'task-status' })

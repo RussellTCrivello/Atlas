@@ -15,7 +15,7 @@ import { EntityFormModal } from './components/forms/EntityFormModal.jsx'
 import { actionVisible } from './lib/advanced-filters.js'
 import { clearLegacyFilterPreferences, mergeLegacyFilterPreferences, readLegacyFilterPreferences } from './lib/legacy-filter-preferences.js'
 import { textDirection } from './lib/localization.js'
-import { enabledPages, hasPermission, mergeDeep, userLanguageOptions } from './lib/workspace.js'
+import { enabledPages, hasPermission, mergeSettingsWithDefaults, userLanguageOptions } from './lib/workspace.js'
 import { defaultSettings, emptyData } from './config/workspace-defaults.js'
 import { useUiLocalization } from './i18n/runtime.js'
 import './styles.css'
@@ -37,6 +37,20 @@ async function runLimited(items, limit, worker, onProgress) {
     }
   }))
   return results
+}
+
+
+function normalizeHexColor(value) {
+  if (typeof value !== 'string') return ''
+  const color = value.trim()
+  if (/^#[\da-f]{3}$/i.test(color)) return `#${[...color.slice(1)].map(char => char + char).join('')}`
+  return /^#[\da-f]{6}$/i.test(color) ? color : ''
+}
+function mixHexColor(source, target, ratio) {
+  const from = source.slice(1).match(/.{2}/g)?.map(value => parseInt(value, 16)) || [109, 93, 252]
+  const to = target.slice(1).match(/.{2}/g)?.map(value => parseInt(value, 16)) || [255, 255, 255]
+  const hex = from.map((value, index) => Math.round(value * (1 - ratio) + to[index] * ratio).toString(16).padStart(2, '0'))
+  return `#${hex.join('')}`
 }
 
 function App() {
@@ -62,7 +76,7 @@ function App() {
   const [languagePreview, setLanguagePreview] = useState('')
   const defaultPageApplied = useRef(false)
   const settings = useMemo(() => {
-    const next = mergeDeep(defaultSettings, data.settings || {})
+    const next = mergeSettingsWithDefaults(defaultSettings, data.settings || {})
     const savedLanguage = userPreferences.language
     const availableLanguages = userLanguageOptions(next)
     const personalLanguage = next.localization?.userLanguagePreference !== false && availableLanguages.some(language => language.code === savedLanguage) ? savedLanguage : ''
@@ -273,16 +287,35 @@ function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [canCreateTasks, notify])
   useEffect(() => {
+    const root = document.documentElement
+    const body = document.body
     const accentName = settings.interface?.colors?.accent || settings.accentColor || 'purple'
-    const accent = { purple: ['#6d5dfc', '#5144dd', '#f0eeff'], blue: ['#3b82f6', '#2563c7', '#ebf3ff'], green: ['#28a778', '#20835e', '#e9f8f2'], orange: ['#f2994a', '#c87825', '#fff4e9'] }[accentName] || ['#6d5dfc', '#5144dd', '#f0eeff']
+    const accent = { purple: '#6d5dfc', blue: '#3b82f6', green: '#28a778', orange: '#f2994a' }[accentName] || '#6d5dfc'
+    const primary = normalizeHexColor(settings.interface?.colors?.primary || settings.workspace?.branding?.primaryColor) || accent
     const lang = settings.localization?.defaultLanguage || settings.language || 'en'
-    document.documentElement.lang = lang
-    document.documentElement.dir = textDirection(settings)
-    document.body.dir = textDirection(settings)
-    document.documentElement.dataset.theme = settings.theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : settings.theme || settings.interface?.theme || 'light'
-    document.documentElement.style.setProperty('--purple', accent[0]); document.documentElement.style.setProperty('--purple-deep', accent[1]); document.documentElement.style.setProperty('--purple-pale', accent[2])
-    document.body.dataset.density = settings.density || settings.interface?.density || 'comfortable'; document.body.dataset.sidebar = settings.sidebarMode || settings.interface?.sidebarBehavior || 'expanded'; document.body.dataset.motion = settings.showAnimations === false || settings.interface?.accessibility?.reducedMotion ? 'off' : 'on'
-    document.body.dataset.contrast = settings.interface?.accessibility?.highContrast ? 'high' : 'normal'
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    const applyTheme = () => {
+      const configuredTheme = settings.interface?.theme || settings.theme || 'light'
+      root.dataset.theme = configuredTheme === 'system' ? (media?.matches ? 'dark' : 'light') : configuredTheme
+    }
+    root.lang = lang
+    root.dir = textDirection(settings)
+    body.dir = textDirection(settings)
+    applyTheme()
+    root.style.setProperty('--purple', primary)
+    root.style.setProperty('--purple-deep', mixHexColor(primary, '#000000', 0.18))
+    root.style.setProperty('--purple-pale', mixHexColor(primary, '#ffffff', 0.91))
+    const scale = Math.max(75, Math.min(200, Number(settings.interface?.typography?.scale || settings.interface?.accessibility?.scalableText || 100)))
+    root.style.setProperty('--workspace-ui-scale', String(scale / 100))
+    const family = settings.interface?.typography?.family || 'Atlas Sans'
+    root.style.setProperty('--workspace-font-family', family === 'Atlas Sans' ? "'Atlas Sans', system-ui, sans-serif" : family)
+    body.dataset.density = settings.interface?.density || settings.density || 'comfortable'
+    body.dataset.spacing = settings.interface?.spacing || 'comfortable'
+    body.dataset.sidebar = settings.interface?.sidebarBehavior || settings.sidebarMode || 'expanded'
+    body.dataset.motion = settings.interface?.animations === false || settings.showAnimations === false || settings.interface?.accessibility?.reducedMotion ? 'off' : 'on'
+    body.dataset.contrast = settings.interface?.accessibility?.highContrast ? 'high' : 'normal'
+    media?.addEventListener?.('change', applyTheme)
+    return () => media?.removeEventListener?.('change', applyTheme)
   }, [settings])
   const login = async (email, password) => { const result = await api.post('/api/auth/login', { email, password }); setUser(result.user) }
   const logout = async () => {
@@ -526,13 +559,29 @@ function App() {
     if (result?.offlineQueued) notify({ title: 'Edit saved offline', body: 'It will synchronize when the local host is reachable.', tone: 'warning' })
     return result
   }
+  const refreshSettingsSurfaces = async () => {
+    await loadData()
+    if (!isAdministrator) return
+    const [systemResult, runtimeResult] = await Promise.allSettled([api.get('/api/system'), api.get('/api/runtime-config')])
+    if (systemResult.status === 'fulfilled') setSystem(systemResult.value)
+    if (runtimeResult.status === 'fulfilled') setRuntime(runtimeResult.value)
+  }
+  const applyImportedSettings = values => {
+    const next = mergeSettingsWithDefaults(defaultSettings, values || {})
+    defaultPageApplied.current = true
+    setData(current => ({ ...current, settings: next }))
+    setLanguagePreview('')
+    void refreshSettingsSurfaces()
+  }
   const updateSettings = async values => {
     const response = await api.put('/api/settings', values)
-    const next = response?.offlineQueued ? mergeDeep(data.settings || {}, values) : response
-    setData(current => ({ ...current, settings: response?.offlineQueued ? mergeDeep(current.settings || {}, values) : response }))
+    const offlineQueued = Boolean(response?.offlineQueued)
+    const next = mergeSettingsWithDefaults(defaultSettings, offlineQueued ? values : response)
+    defaultPageApplied.current = true
+    setData(current => ({ ...current, settings: next }))
     setLanguagePreview('')
-    if (next.enabledPages && !next.enabledPages.includes(page)) setPage('overview')
-    return next
+    if (!offlineQueued) await refreshSettingsSurfaces()
+    return { settings: next, offlineQueued }
   }
   const removeDemo = async () => { if (!window.confirm('Remove all sample rows while preserving live data?')) return; await api.delete('/api/setup/seed'); await loadData(); api.get('/api/system').then(setSystem).catch(() => {}) }
   const toggleTheme = async () => { const theme = settings.theme === 'dark' ? 'light' : 'dark'; const next = { ...settings, theme, interface: { ...(settings.interface || {}), theme } }; if (isAdministrator) await updateSettings(next); else setData(current => ({ ...current, settings: next })) }
@@ -587,7 +636,7 @@ function App() {
           {page === 'alerts' && <Alerts data={data} refresh={loadData} openModal={openModal} canManage={canManageAlerts} canManageTasks={canManageTasks} userPersonId={user.personId} canResolve={canWriteTasks || canManageAlerts} canExport={canExport} userId={user.id} deleteRecord={deleteEntity} bulkEditRecords={bulkEditRecords} bulkDeleteRecords={bulkDeleteRecords} importRecords={(rows, report) => importRecords('alert', rows, report)} inlineEditRecord={(record, field, value) => inlineEditRecord('alert', record, field, value)} notify={notify}/>}
           {page === 'profile' && <ProfilePage user={user} person={profilePerson} settings={settings} onSave={saveProfile} isAdministrator={isAdministrator} onManageUsers={() => navigateTo('users')}/>}
           {page === 'users' && isAdministrator && <UserManagementPage data={data} user={user} openModal={openModal} onDelete={deleteEntity} settings={settings} onOpenSettings={() => navigateTo('settings')}/>}
-          {page === 'settings' && isAdministrator && <SettingsPage data={data} user={user} updateSettings={updateSettings} onRemoveDemo={removeDemo} runtime={runtime} system={system} displayMode={displayMode} openModal={openModal} onPreviewLanguage={setLanguagePreview} onOpenUsers={() => navigateTo('users')}/>}
+          {page === 'settings' && isAdministrator && <SettingsPage data={data} user={user} updateSettings={updateSettings} onSettingsImported={applyImportedSettings} onRemoveDemo={removeDemo} runtime={runtime} system={system} displayMode={displayMode} openModal={openModal} onPreviewLanguage={setLanguagePreview} onOpenUsers={() => navigateTo('users')}/>}
         </div>
       </main>
       <CommandSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} setPage={navigateTo} openModal={openModal} settings={settings} canEditTasks={canManageTasks} canEditProjects={canManageProjects} canEditPeople={canManagePeople} isAdministrator={isAdministrator}/>

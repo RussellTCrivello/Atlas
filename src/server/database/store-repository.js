@@ -297,6 +297,7 @@ export class SqliteStoreRepository {
 
   pruneSyncConflicts(retentionDays = 365) {
     const requestedDays = Number(retentionDays)
+    if (Number.isFinite(requestedDays) && requestedDays === 0) return 0
     const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(3650, Math.floor(requestedDays))) : 365
     const cutoff = new Date(Date.now() - days * 86400000).toISOString()
     return this.db.prepare("DELETE FROM sync_conflicts WHERE status <> 'open' AND resolved_at IS NOT NULL AND resolved_at < ?").run(cutoff).changes

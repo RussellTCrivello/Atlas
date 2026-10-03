@@ -44,10 +44,10 @@ function safeDateLabel(value) {
 function isDone(task, settings = {}) {
   const states = settings?.workflows?.task?.states || []
   const terminal = states.filter(state => state?.terminal).map(state => state.label || state.name)
-  return task?.status === 'Done' || terminal.includes(task?.status)
+  return terminal.includes(task?.status)
 }
-function statusTone(task, today) {
-  if (isDone(task)) return 'done'
+function statusTone(task, today, settings = {}) {
+  if (isDone(task, settings)) return 'done'
   if (task?.dueDate === today) return 'today'
   if (task?.dueDate && today && task.dueDate < today) return 'overdue'
   return 'soon'
@@ -464,7 +464,7 @@ function taskDisplay(row, bootstrap) {
     numericId: row.id, id: `${project.code || 'TASK'}-${String(row.id).padStart(3, '0')}`, title: row.title || '',
     projectId: row.projectId, project: project.name || 'Workspace', assigneeId: row.assigneeId || '',
     assignee: person.name || 'Unassigned', assigneeColor: person.color || 'purple', priority: row.priority || 'Medium',
-    dueDate: row.dueDate || '', due: safeDateLabel(row.dueDate), dueTone: statusTone(row, bootstrap.today),
+    dueDate: row.dueDate || '', due: safeDateLabel(row.dueDate), dueTone: statusTone(row, bootstrap.today, bootstrap.settings),
     status: row.status || 'To do', type: row.type || 'Development', blocked: Boolean(row.blocked),
     createdAt: row.createdAt || '', completedAt: row.completedAt || '', customFields: clone(row.customFields || {})
   }
@@ -477,7 +477,7 @@ function updateDerivedTaskFields(task, bootstrap) {
   task.assignee = person.name || 'Unassigned'
   task.assigneeColor = person.color || 'purple'
   task.due = safeDateLabel(task.dueDate)
-  task.dueTone = statusTone(task, bootstrap.today)
+  task.dueTone = statusTone(task, bootstrap.today, bootstrap.settings)
 }
 function updateProjectMetrics(bootstrap) {
   for (const project of bootstrap.projects || []) {

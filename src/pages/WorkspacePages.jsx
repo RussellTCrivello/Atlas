@@ -67,9 +67,11 @@ function taskGridTemplate(columns) {
   return ['28px', ...(columns || []).map(column => widths[column.key] || 'minmax(70px,1fr)'), '28px'].join(' ')
 }
 function TaskRow({ task, compact, onAdvance, onEdit, visibleColumns, settings }) {
+  const terminalStatuses = (settings?.workflows?.task?.states || []).filter(state => state?.terminal).map(state => state.label || state.name)
+  const isTerminal = terminalStatuses.includes(task.status)
   const status = <StatusPill tone={slug(task.status)}>{task.status}</StatusPill>
   const dueText = localizedTaskDue(settings, task.due, task.dueDate)
-  if (compact) return <div className="task-row task-row-compact"><button disabled={!onAdvance} className={`task-check task-${slug(task.status)}`} onClick={() => onAdvance?.(task)} aria-label={`${uiText(settings, 'Advance')} ${task.title}`}><Icon name={task.status === 'Done' ? 'check' : 'bolt'} size={13}/></button><div className="task-row-main"><strong data-no-i18n>{task.title}</strong><div><span className="task-project" data-no-i18n>{task.project}</span><span className="task-id" data-no-i18n>{task.id}</span></div></div>{status}<span className={`task-due due-${task.dueTone}`} data-no-i18n>{dueText}</span></div>
+  if (compact) return <div className="task-row task-row-compact"><button disabled={!onAdvance} className={`task-check task-${slug(task.status)}`} onClick={() => onAdvance?.(task)} aria-label={`${uiText(settings, 'Advance')} ${task.title}`}><Icon name={isTerminal ? 'check' : 'bolt'} size={13}/></button><div className="task-row-main"><strong data-no-i18n>{task.title}</strong><div><span className="task-project" data-no-i18n>{task.project}</span><span className="task-id" data-no-i18n>{task.id}</span></div></div>{status}<span className={`task-due due-${task.dueTone}`} data-no-i18n>{dueText}</span></div>
   const columns = visibleColumns?.length ? visibleColumns : [{ key: 'title' }, { key: 'project' }, { key: 'status' }, { key: 'priority' }, { key: 'assignee' }, { key: 'due' }, { key: 'id' }]
   const cells = {
     id: <span className="task-id" data-no-i18n>{task.id}</span>,
@@ -80,7 +82,7 @@ function TaskRow({ task, compact, onAdvance, onEdit, visibleColumns, settings })
     assignee: <span className="task-assignee"><Avatar name={task.assignee} color={task.assigneeColor} small/><span data-no-i18n>{task.assignee}</span></span>,
     due: <span className={`task-due due-${task.dueTone}`} data-no-i18n>{dueText}</span>
   }
-  return <div className="task-row" style={{ gridTemplateColumns: taskGridTemplate(columns) }}><button disabled={!onAdvance} className={`task-check task-${slug(task.status)}`} onClick={() => onAdvance?.(task)} aria-label={`${uiText(settings, 'Advance')} ${task.title}`}><Icon name={task.status === 'Done' ? 'check' : 'bolt'} size={13}/></button>{columns.map(column => <span className={`task-row-cell task-cell-${column.key}`} key={column.key}>{cells[column.key] || ''}</span>)}{onEdit && <button className="icon-button row-more" onClick={() => onEdit(task)} aria-label={`${uiText(settings, 'Edit')} ${task.title}`}><Icon name="more" size={16}/></button>}</div>
+  return <div className="task-row" style={{ gridTemplateColumns: taskGridTemplate(columns) }}><button disabled={!onAdvance} className={`task-check task-${slug(task.status)}`} onClick={() => onAdvance?.(task)} aria-label={`${uiText(settings, 'Advance')} ${task.title}`}><Icon name={isTerminal ? 'check' : 'bolt'} size={13}/></button>{columns.map(column => <span className={`task-row-cell task-cell-${column.key}`} key={column.key}>{cells[column.key] || ''}</span>)}{onEdit && <button className="icon-button row-more" onClick={() => onEdit(task)} aria-label={`${uiText(settings, 'Edit')} ${task.title}`}><Icon name="more" size={16}/></button>}</div>
 }
 function Projects({ data, openModal, canManage, canManageTasks = false, canExport = true, setPage, userId = '', deleteRecord, bulkEditRecords, bulkDeleteRecords, importRecords, importMilestones, inlineEditRecord, inlineEditMilestone, notify }) {
   const columns = configuredColumns(data.settings, 'projects', [

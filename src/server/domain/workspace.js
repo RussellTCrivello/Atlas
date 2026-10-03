@@ -413,8 +413,8 @@ function bucketLabel(period, dateValue) {
 function isCompletionEvent(row) {
   if (!row.taskNumericId) return false
   const terminal = terminalTaskStates()
-  const wasDone = terminal.includes(row.statusFrom) || row.statusFrom === 'Done'
-  const isNowDone = terminal.includes(row.statusTo) || row.statusTo === 'Done'
+  const wasDone = terminal.includes(row.statusFrom)
+  const isNowDone = terminal.includes(row.statusTo)
   if (isNowDone && !wasDone) return true
   return !row.statusFrom && /^(created and completed|completed task)$/i.test(row.action || '')
 }

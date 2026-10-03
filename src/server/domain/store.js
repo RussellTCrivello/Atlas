@@ -209,8 +209,10 @@ function ensureCollection(storeObject, key) {
 function normalizeStore(next = {}) {
   if (!isPlainObject(next)) next = productionStore()
   const legacyRetentionWasExplicit = isPlainObject(next.settings?.workLedger) && Object.hasOwn(next.settings.workLedger, 'retentionMonths')
+  const legacyAuditRetentionWasExplicit = isPlainObject(next.settings?.audit) && Object.hasOwn(next.settings.audit, 'retentionDays')
   next.settings = normalizeSettings(next.settings || {})
   if (!legacyRetentionWasExplicit) next.settings.workLedger.retentionMonths = 0
+  if (!legacyAuditRetentionWasExplicit) next.settings.audit.retentionDays = 0
   const existingMeta = isPlainObject(next.meta) ? next.meta : {}
   next.meta = newStoreMeta({
     ...existingMeta,

@@ -50,7 +50,7 @@ const timeService = createTimeService({ getStore: () => store, environmentTimezo
 const { todayLA, timeLA } = timeService
 
 const settingsService = createSettingsService({ ROLE_PERMISSIONS, boundedInteger, isPlainObject, isValidTimezone, id, env: process.env, DATABASE_MODEL, STORE_SCHEMA_VERSION, I18N_MISSING_LIMIT, DEFAULT_BACKUP_RETENTION, MIN_PASSWORD_LENGTH, cookieSecure, allowDemoData })
-const { DEFAULT_NAVIGATION, DEFAULT_WORKFLOW_STATES, DEFAULT_TRANSLATIONS, ROLE_DESCRIPTIONS, roleRegistryDefaults, defaultSettings, mergeDeep, withLegacySettings, normalizeSettings, settingsInputError, slugifyState } = settingsService
+const { DEFAULT_NAVIGATION, DEFAULT_WORKFLOW_STATES, DEFAULT_TRANSLATIONS, ROLE_DESCRIPTIONS, roleRegistryDefaults, defaultSettings, mergeDeep, mergeSettingsUpdate, withLegacySettings, normalizeSettings, settingsInputError, slugifyState } = settingsService
 const workflowService = createWorkflowService({ getStore: () => store, defaultTaskStates: DEFAULT_WORKFLOW_STATES })
 const { taskWorkflowDefinitions, taskWorkflowStates, terminalTaskStates, isDone } = workflowService
 
@@ -168,6 +168,14 @@ function persist(options = {}) {
     throw error
   }
 }
+function pruneAuditLogs(target = store, now = Date.now()) {
+  const retentionDays = Number(target?.settings?.audit?.retentionDays)
+  if (!Number.isInteger(retentionDays) || retentionDays <= 0 || !Array.isArray(target?.auditLogs)) return 0
+  const cutoff = now - retentionDays * 86400000
+  const before = target.auditLogs.length
+  target.auditLogs = target.auditLogs.filter(event => !event.createdAt || Date.parse(event.createdAt) >= cutoff)
+  return before - target.auditLogs.length
+}
 function auditLog(action, actorId = '', detail = {}) {
   const audit = store?.settings?.audit || {}
   if (audit.enabled === false) return
@@ -176,9 +184,7 @@ function auditLog(action, actorId = '', detail = {}) {
   if (!action.startsWith('auth.') && !action.startsWith('read.') && !action.startsWith('export.') && audit.trackWrites === false) return
   store.auditLogs = store.auditLogs || []
   store.auditLogs.push({ id: id('audit'), action, actorId, detail, createdAt: new Date().toISOString(), source: 'api' })
-  const retentionDays = boundedInteger(audit.retentionDays, 365, 1, 3650)
-  const cutoff = Date.now() - retentionDays * 86400000
-  store.auditLogs = store.auditLogs.filter(event => !event.createdAt || Date.parse(event.createdAt) >= cutoff)
+  pruneAuditLogs(store)
 }
 function auditRead(action, userId) {
   if (store?.settings?.audit?.enabled === false || store?.settings?.audit?.trackReads !== true) return
@@ -258,8 +264,8 @@ const routeServices = {
   store: storeView, getStore: () => store, setStore: (nextStore) => { store = nextStore },
   root, databaseFile, DATABASE_MODEL, STORE_SCHEMA_VERSION, DESIGN_SYSTEM_VERSION, configuredBackupRetention, allowDemoData,
   rateLimitMiddleware, setupRateLimits, loginRateLimits, i18nRateLimits, sendError, normalizeEmail, isValidEmail, validatePassword,
-  configuredPasswordMinLength, settingsInputError, mergeDeep, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA,
-  publicUser, newSession, sessionCookieOptions, auditLog, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum, createDatabaseExportContext,
+  configuredPasswordMinLength, settingsInputError, mergeDeep, mergeSettingsUpdate, defaultSettings, normalizeSettings, hashPassword, todayLA, timeLA,
+  publicUser, newSession, sessionCookieOptions, auditLog, pruneAuditLogs, persist, can, storeRepository, userPreferencesRepository, listBackups, auditRead, storeChecksum, createDatabaseExportContext,
   validateStoreState, requireUser, optionalUser, requireAdmin, requirePermission, createBackup, roleRank, publicAccessUser, verifyPassword,
   invalidateUserSessions, sessions, normalizeUserSecrets, projectById, validText, MAX_PASSWORD_LENGTH, activityReportFor, reportFor,
   bootstrapFor, settingsForUser, demoStore, id, MAX_I18N_KEY_LENGTH, I18N_MISSING_LIMIT, isPlainObject, path,

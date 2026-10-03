@@ -12,7 +12,7 @@ export function createWorkflowService({ getStore, defaultTaskStates }) {
     return taskWorkflowDefinitions().filter(state => state.terminal).map(state => state.label || state.name || String(state)).filter(Boolean)
   }
 
-  function isDone(task) { return terminalTaskStates().includes(task?.status) || task?.status === 'Done' }
+  function isDone(task) { return terminalTaskStates().includes(task?.status) }
 
   return { taskWorkflowDefinitions, taskWorkflowStates, terminalTaskStates, isDone }
 }

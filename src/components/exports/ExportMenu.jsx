@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client.js'
 import { Icon } from '../Icon.jsx'
-import { textDirection } from '../../lib/localization.js'
+import { formatLocalizedDate, textDirection } from '../../lib/localization.js'
 import { slug } from '../../lib/strings.js'
 import { EXPORT_DATASET_LABELS, exportText as uiText, localizeExportColumns, localizeExportValue } from '../../i18n/export-catalog.js'
 
@@ -14,6 +14,38 @@ function customFieldType(type) {
   if (type === 'date' || type === 'datetime') return 'date'
   if (type === 'checkbox') return 'boolean'
   return 'text'
+}
+function outputSettings(settings) {
+  if (settings?.reports?.localizedOutput !== false && settings?.exports?.respectLanguage !== false) return settings
+  return { ...settings, language: 'en', localization: { ...(settings?.localization || {}), defaultLanguage: 'en', fallbackLanguage: 'en' } }
+}
+function exportDirection(settings) { return settings?.exports?.respectDirection === false ? 'ltr' : textDirection(settings) }
+function safeLogoSource(settings) {
+  const value = String(settings?.workspace?.branding?.reportLogo || settings?.workspace?.logo || '').trim()
+  if (!value || value.length > 2_000_000) return ''
+  if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/i.test(value)) return value
+  if (!value.startsWith('/') || value.startsWith('//') || /[\\\\\u0000-\u001f?#]/.test(value)) return ''
+  let decodedPath
+  try { decodedPath = decodeURIComponent(value) } catch { return '' }
+  if (decodedPath.startsWith('//') || decodedPath.split('/').includes('..') || !/\.(?:png|jpe?g|webp|gif)$/i.test(decodedPath)) return ''
+  return value
+}
+async function imageDataUrl(source) {
+  if (!source) return ''
+  if (source.startsWith('data:image/')) {
+    if (!/^data:image\/(?:png|jpeg);base64,/i.test(source)) throw new Error('PDF report logos must be PNG or JPEG images')
+    return source
+  }
+  const response = await fetch(source, { credentials: 'same-origin' })
+  if (!response.ok) throw new Error('Configured local report logo could not be loaded')
+  const blob = await response.blob()
+  if (!['image/png', 'image/jpeg'].includes(blob.type) || blob.size > 2_000_000) throw new Error('PDF report logos must be local PNG or JPEG files under 2 MB')
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('Configured local report logo could not be read'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 function xmlSafe(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;') }
@@ -40,17 +72,20 @@ function formattedValue(value, column, options, settings) {
     if (options.dateStyle === 'iso') return String(value)
     const date = asIsoDate(value)
     if (!date) return String(value)
+    if (options.dateStyle === 'medium') return formatLocalizedDate(value, settings)
     try { return new Intl.DateTimeFormat(locale, { dateStyle: options.dateStyle, timeZone: /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? 'UTC' : settings?.workspace?.defaultTimezone || 'UTC' }).format(date) } catch { return String(value) }
   }
   if (column.type === 'percent') {
     const number = Number(value)
     if (!Number.isFinite(number)) return String(value)
-    try { return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(number / 100) } catch { return `${number}%` }
+    const numberingSystem = settings?.localization?.numberFormats?.[locale] || settings?.workspace?.regionalFormats?.number
+    try { return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1, ...(numberingSystem ? { numberingSystem } : {}) }).format(number / 100) } catch { return `${number}%` }
   }
   if (column.type === 'number') {
     const number = Number(value)
     if (!Number.isFinite(number)) return String(value)
-    try { return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(number) } catch { return String(number) }
+    const numberingSystem = settings?.localization?.numberFormats?.[locale] || settings?.workspace?.regionalFormats?.number
+    try { return new Intl.NumberFormat(locale, { maximumFractionDigits: 2, ...(numberingSystem ? { numberingSystem } : {}) }).format(number) } catch { return String(number) }
   }
   if (column.translateValue && !(Array.isArray(value) || (value && typeof value === 'object'))) return localizeExportValue(value, column, settings)
   if (Array.isArray(value) || (value && typeof value === 'object')) return JSON.stringify(value)
@@ -110,7 +145,7 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
   }
   const textCell = (value, col, row, style) => `<c r="${col}${row}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlSafe(value)}</t></is></c>`
   const lastColumn = columnName(Math.max(0, columns.length - 1))
-  const direction = textDirection(settings) === 'rtl' ? ' rightToLeft="1"' : ''
+  const direction = exportDirection(settings) === 'rtl' ? ' rightToLeft="1"' : ''
   const locale = settings?.localization?.defaultLanguage || 'en'
   const generatedAt = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.generatedAt))
   const workspaceName = settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace'
@@ -153,6 +188,8 @@ async function makeXlsx(rows, columns, title, options, settings, meta) {
     const reviewedCell = columns.length > 1 ? textCell(uiText(settings, 'Reviewed by: ______________________________'), lastColumn, rowIndex, 8) : ''
     rowXml.push(`<row r="${rowIndex}" ht="24" customHeight="1">${preparedCell}${reviewedCell}</row>`)
   }
+  const footerText = String(settings?.reports?.branding?.footerText || '').trim()
+  if (footerText) { rowIndex += 1; addBanner(footerText, 6, 20) }
   const widths = columns.map((column, index) => {
     const contentWidth = Math.max(column.label.length, ...rows.slice(0, 80).map(record => String(formattedValue(record[column.key], column, options, settings)).length), 8)
     return `<col min="${index + 1}" max="${index + 1}" width="${Math.min(44, contentWidth + 2)}" customWidth="1"/>`
@@ -186,7 +223,7 @@ function groupTableRows(rows, columns, options, settings) {
 async function exportPdf(rows, columns, title, options, settings, meta) {
   const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
   const autoTable = autoTableModule.default || autoTableModule.autoTable
-  const direction = textDirection(settings)
+  const direction = exportDirection(settings)
   const doc = new jsPDF({ orientation: options.orientation, format: options.pageSize, unit: 'mm' })
   const accentHex = (ACCENTS[options.accent] || ACCENTS.atlas).slice(1)
   const accentRgb = [0, 2, 4].map(index => parseInt(accentHex.slice(index, index + 2), 16))
@@ -194,6 +231,11 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const align = direction === 'rtl' ? 'right' : 'left'
   const x = direction === 'rtl' ? pageWidth - margin : margin
+  const footerText = String(settings?.reports?.branding?.footerText || '').trim().slice(0, 500)
+  let logoDataUrl = ''
+  if (options.includeBranding && settings?.reports?.branding?.includeLogo !== false) {
+    try { logoDataUrl = await imageDataUrl(safeLogoSource(settings)) } catch {}
+  }
   let pdfFont = 'helvetica'
   try {
     for (const [weight, style] of [['Regular', 'normal'], ['Bold', 'bold']]) {
@@ -211,9 +253,27 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
   if (direction === 'rtl' && doc.setR2L) doc.setR2L(true)
   const workspaceName = settings?.workspace?.name || settings?.workspaceName || 'Atlas Workspace'
   const generation = new Intl.DateTimeFormat(settings?.localization?.defaultLanguage || 'en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.generatedAt))
+  const drawPageFooter = () => {
+    const page = doc.internal.getCurrentPageInfo().pageNumber
+    const count = doc.internal.getNumberOfPages()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    doc.setFontSize(7); doc.setTextColor(125, 131, 143)
+    if (footerText) doc.text(footerText, pageWidth / 2, pageHeight - 5, { align: 'center', maxWidth: pageWidth - margin * 2 })
+    doc.text(`${page} / ${count}`, direction === 'rtl' ? margin : pageWidth - margin, pageHeight - 5, { align: direction === 'rtl' ? 'left' : 'right' })
+  }
   doc.setFillColor(...accentRgb); doc.rect(0, 0, pageWidth, 4, 'F')
   doc.setTextColor(27, 35, 50); doc.setFontSize(options.template === 'compact' ? 15 : 19); doc.text(title, x, 15, { align })
-  if (options.includeBranding) { doc.setTextColor(...accentRgb); doc.setFontSize(8); doc.text(workspaceName, x, 21, { align }) }
+  if (options.includeBranding) {
+    doc.setTextColor(...accentRgb); doc.setFontSize(8)
+    if (logoDataUrl) {
+      try {
+        const imageType = logoDataUrl.toLowerCase().startsWith('data:image/png') ? 'PNG' : 'JPEG'
+        const logoX = direction === 'rtl' ? pageWidth - margin - 18 : margin
+        doc.addImage(logoDataUrl, imageType, logoX, 17, 16, 8, 'ATLAS_REPORT_LOGO', 'FAST')
+        doc.text(workspaceName, direction === 'rtl' ? x - 22 : x + 22, 21, { align })
+      } catch { doc.text(workspaceName, x, 21, { align }) }
+    } else doc.text(workspaceName, x, 21, { align })
+  }
   doc.setTextColor(111, 119, 136); doc.setFontSize(8); doc.text(`${meta.recordCount} ${uiText(settings, 'database records')} · ${uiText(settings, 'Generated')} ${generation}`, x, options.includeBranding ? 26 : 22, { align })
   if (options.includeSummary) {
     let y = options.includeBranding ? 33 : 29
@@ -232,12 +292,7 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
       styles: { fontSize: Number(options.fontSize), font: pdfFont, cellPadding: options.template === 'compact' ? 1.8 : 2.6, overflow: 'linebreak', halign: align },
       headStyles: { fillColor: accentRgb, textColor: [255, 255, 255], fontStyle: 'bold', halign: align },
       alternateRowStyles: { fillColor: [249, 250, 252] },
-      didDrawPage: () => {
-        const page = doc.internal.getCurrentPageInfo().pageNumber
-        const count = doc.internal.getNumberOfPages()
-        doc.setFontSize(7); doc.setTextColor(125, 131, 143)
-        doc.text(`${page} / ${count}`, direction === 'rtl' ? margin : pageWidth - margin, doc.internal.pageSize.getHeight() - 5, { align: direction === 'rtl' ? 'left' : 'right' })
-      }
+      didDrawPage: drawPageFooter
     })
   } else {
     autoTable(doc, {
@@ -245,7 +300,8 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
       margin: { top: margin, right: margin, bottom: margin + 5, left: margin },
       styles: { fontSize: Number(options.fontSize), font: pdfFont, cellPadding: options.template === 'compact' ? 1.8 : 2.6, overflow: 'linebreak', halign: align },
       headStyles: { fillColor: accentRgb, textColor: [255, 255, 255], fontStyle: 'bold', halign: align },
-      alternateRowStyles: { fillColor: [249, 250, 252] }
+      alternateRowStyles: { fillColor: [249, 250, 252] },
+      didDrawPage: drawPageFooter
     })
   }
   if (options.includeSignoff) {
@@ -263,7 +319,7 @@ async function exportPdf(rows, columns, title, options, settings, meta) {
   doc.save(`${slug(title) || 'atlas-export'}.pdf`)
 }
 function printHtml(rows, columns, title, options, settings, meta) {
-  const direction = textDirection(settings)
+  const direction = exportDirection(settings)
   const accent = ACCENTS[options.accent] || ACCENTS.atlas
   const locale = settings?.localization?.defaultLanguage || 'en'
   const generatedAt = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.generatedAt))
@@ -284,11 +340,13 @@ function printHtml(rows, columns, title, options, settings, meta) {
     }
     body.push(`<tr>${columns.map(column => `<td>${htmlSafe(formattedValue(row[column.key], column, options, settings))}</td>`).join('')}</tr>`)
   }
-  const branding = options.includeBranding ? `<div class="brand"><span class="mark">A</span><span>${htmlSafe(localizedWorkspaceName)}</span></div>` : ''
+  const logoSource = options.includeBranding && settings?.reports?.branding?.includeLogo !== false ? safeLogoSource(settings) : ''
+  const branding = options.includeBranding ? `<div class="brand">${logoSource ? `<img class="report-logo" src="${htmlSafe(logoSource)}" alt="">` : '<span class="mark">A</span>'}<span>${htmlSafe(localizedWorkspaceName)}</span></div>` : ''
+  const reportFooter = String(settings?.reports?.branding?.footerText || '').trim()
   const template = options.template
   return `<!doctype html><html lang="${htmlSafe(locale)}" dir="${direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlSafe(title)}</title><style>
-    :root{--accent:${accent};--ink:#1d2939;--muted:#667085;--line:#dfe3ea;--soft:#f6f7fb}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:10pt/1.45 Arial,Helvetica,sans-serif;background:#fff}.report{max-width:1400px;margin:28px auto;padding:0 28px 32px}.topline{height:5px;background:var(--accent);margin:-28px -28px 24px}.brand{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:9pt;font-weight:700;margin-bottom:10px}.mark{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:var(--accent);color:white;font-weight:800}.heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:1px solid var(--line);padding-bottom:16px}.heading h1{margin:0 0 5px;font-size:${template === 'compact' ? 18 : 24}pt;letter-spacing:-.03em}.heading p{margin:0;color:var(--muted);font-size:9pt}.meta{text-align:${direction === 'rtl' ? 'left' : 'right'};color:var(--muted);font-size:8pt;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(${metrics.length},minmax(0,1fr));gap:10px;margin:17px 0 20px}.summary div{border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:9px;padding:11px 13px;background:#fff}.summary small{display:block;color:var(--muted);font-size:8pt}.summary strong{display:block;margin-top:4px;font-size:15pt}.table-wrap{margin-top:18px;overflow:visible}table{width:100%;border-collapse:collapse;font-size:${template === 'compact' ? 8 : 9}pt;table-layout:auto}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid var(--line);padding:${template === 'compact' ? '6px 7px' : '8px 9px'};text-align:${direction === 'rtl' ? 'right' : 'left'};vertical-align:top;overflow-wrap:anywhere}thead th{background:var(--accent);color:#fff;font-weight:700}.group th{background:#f1f0ff;color:#494197;text-align:${direction === 'rtl' ? 'right' : 'left'};font-size:8pt}.data-note{margin:12px 0 0;color:var(--muted);font-size:8pt}.signature{display:grid;grid-template-columns:repeat(2,1fr);gap:36px;margin-top:28px;color:var(--muted);font-size:8pt}.signature span{border-top:1px solid var(--line);padding-top:6px}.footer{display:flex;justify-content:space-between;gap:15px;margin-top:22px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:7.5pt}.ledger table{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.compact .summary div{padding:7px 9px}@page{size:${options.pageSize} ${options.orientation};margin:${options.margin}mm}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.report{max-width:none;margin:0;padding:0}.topline{margin:0 0 18px}.heading{break-after:avoid}.summary{break-inside:avoid}.footer{break-inside:avoid}}
-    </style></head><body><main class="report ${template}"><div class="topline"></div>${branding}<header class="heading"><div><h1>${htmlSafe(title)}</h1><p>${htmlSafe(uiText(settings, 'Prepared from current SQLite workspace fields'))} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))}</p></div><div class="meta">${htmlSafe(uiText(settings, 'Generated'))}<br>${htmlSafe(generatedAt)}</div></header>${summary}<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body.join('')}</tbody></table></div>${options.includeSignoff ? `<div class="signature"><span>${htmlSafe(uiText(settings, 'Prepared by'))}</span><span>${htmlSafe(uiText(settings, 'Reviewed by'))}</span></div>` : ''}<div class="footer"><span>${htmlSafe(datasetLabel)} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))} · ${htmlSafe(uiText(settings, 'SQLite source'))}</span>${options.includeBranding ? `<span>${htmlSafe(localizedWorkspaceName)}</span>` : ''}</div></main></body></html>`
+    :root{--accent:${accent};--ink:#1d2939;--muted:#667085;--line:#dfe3ea;--soft:#f6f7fb}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:10pt/1.45 Arial,Helvetica,sans-serif;background:#fff}.report{max-width:1400px;margin:28px auto;padding:0 28px 32px}.topline{height:5px;background:var(--accent);margin:-28px -28px 24px}.brand{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:9pt;font-weight:700;margin-bottom:10px}.report-logo{display:block;max-width:120px;max-height:32px;object-fit:contain}.mark{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:var(--accent);color:white;font-weight:800}.heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:1px solid var(--line);padding-bottom:16px}.heading h1{margin:0 0 5px;font-size:${template === 'compact' ? 18 : 24}pt;letter-spacing:-.03em}.heading p{margin:0;color:var(--muted);font-size:9pt}.meta{text-align:${direction === 'rtl' ? 'left' : 'right'};color:var(--muted);font-size:8pt;white-space:nowrap}.summary{display:grid;grid-template-columns:repeat(${metrics.length},minmax(0,1fr));gap:10px;margin:17px 0 20px}.summary div{border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:9px;padding:11px 13px;background:#fff}.summary small{display:block;color:var(--muted);font-size:8pt}.summary strong{display:block;margin-top:4px;font-size:15pt}.table-wrap{margin-top:18px;overflow:visible}table{width:100%;border-collapse:collapse;font-size:${template === 'compact' ? 8 : 9}pt;table-layout:auto}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid var(--line);padding:${template === 'compact' ? '6px 7px' : '8px 9px'};text-align:${direction === 'rtl' ? 'right' : 'left'};vertical-align:top;overflow-wrap:anywhere}thead th{background:var(--accent);color:#fff;font-weight:700}.group th{background:#f1f0ff;color:#494197;text-align:${direction === 'rtl' ? 'right' : 'left'};font-size:8pt}.data-note{margin:12px 0 0;color:var(--muted);font-size:8pt}.signature{display:grid;grid-template-columns:repeat(2,1fr);gap:36px;margin-top:28px;color:var(--muted);font-size:8pt}.signature span{border-top:1px solid var(--line);padding-top:6px}.footer{display:flex;justify-content:space-between;gap:15px;margin-top:22px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:7.5pt}.footer-note{white-space:pre-wrap;overflow-wrap:anywhere;text-align:center}.ledger table{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.compact .summary div{padding:7px 9px}@page{size:${options.pageSize} ${options.orientation};margin:${options.margin}mm}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.report{max-width:none;margin:0;padding:0}.topline{margin:0 0 18px}.heading{break-after:avoid}.summary{break-inside:avoid}.footer{break-inside:avoid}}
+    </style></head><body><main class="report ${template}"><div class="topline"></div>${branding}<header class="heading"><div><h1>${htmlSafe(title)}</h1><p>${htmlSafe(uiText(settings, 'Prepared from current SQLite workspace fields'))} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))}</p></div><div class="meta">${htmlSafe(uiText(settings, 'Generated'))}<br>${htmlSafe(generatedAt)}</div></header>${summary}<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body.join('')}</tbody></table></div>${options.includeSignoff ? `<div class="signature"><span>${htmlSafe(uiText(settings, 'Prepared by'))}</span><span>${htmlSafe(uiText(settings, 'Reviewed by'))}</span></div>` : ''}<div class="footer"><span>${htmlSafe(datasetLabel)} · ${htmlSafe(meta.recordCount)} ${htmlSafe(uiText(settings, 'records'))} · ${htmlSafe(uiText(settings, 'SQLite source'))}</span>${reportFooter ? `<span class="footer-note">${htmlSafe(reportFooter)}</span>` : ''}${options.includeBranding ? `<span>${htmlSafe(localizedWorkspaceName)}</span>` : ''}</div></main></body></html>`
 }
 
 export function ExportMenu({ rows, columns, title, settings, dataset, query = {}, canExport = true, canPrint = true, exportScopes }) {
@@ -297,6 +355,11 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   const exportFormats = ['pdf', 'xlsx', 'csv', 'json'].filter(item => configuredFormats.includes(item))
   const allowExport = canExport && actionVisibility.export !== false && exportFormats.length > 0
   const allowPrint = canPrint && actionVisibility.print !== false && configuredFormats.includes('print')
+  const configuredTemplates = (Array.isArray(settings?.reports?.templates) ? settings.reports.templates : Object.keys(TEMPLATE_LABELS)).filter(templateId => Object.hasOwn(TEMPLATE_LABELS, templateId))
+  const availableTemplates = configuredTemplates.length ? [...new Set(configuredTemplates)] : ['executive']
+  const configuredDefaultTemplate = settings?.reports?.defaultTemplate || settings?.printTemplate || 'executive'
+  const defaultTemplate = availableTemplates.includes(configuredDefaultTemplate) ? configuredDefaultTemplate : availableTemplates[0]
+  const templateKey = availableTemplates.join('|')
   const hasExportScopes = Boolean(exportScopes)
   const [scope, setScope] = useState('filtered')
   const scopeRows = exportScopes?.[scope] || (Array.isArray(rows) ? rows : [])
@@ -318,7 +381,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   const [orientation, setOrientation] = useState(settings?.exports?.pdf?.orientation === 'portrait' ? 'portrait' : 'landscape')
   const [pageSize, setPageSize] = useState('a4')
   const [margin, setMargin] = useState(({ narrow: '9', standard: '14', wide: '20' })[settings?.exports?.pdf?.margins] || '14')
-  const [template, setTemplate] = useState(['executive', 'ledger', 'compact'].includes(settings?.printTemplate) ? settings.printTemplate : 'executive')
+  const [template, setTemplate] = useState(defaultTemplate)
   const [dateStyle, setDateStyle] = useState('medium')
   const [groupBy, setGroupBy] = useState('none')
   const [sortBy, setSortBy] = useState('none')
@@ -344,6 +407,9 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     setIncludeBranding(settings?.exports?.includeBranding !== false)
   }, [settings?.exports?.pdf?.orientation, settings?.exports?.pdf?.margins, settings?.exports?.includeBranding])
   useEffect(() => {
+    setTemplate(current => availableTemplates.includes(current) ? current : defaultTemplate)
+  }, [templateKey, defaultTemplate])
+  useEffect(() => {
     if (groupBy !== 'none' && !selected.includes(groupBy)) setGroupBy('none')
     if (sortBy !== 'none' && !selected.includes(sortBy)) setSortBy('none')
   }, [selected, groupBy, sortBy])
@@ -368,9 +434,10 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
   }, [open, request])
 
   const options = { orientation, pageSize, margin, template, dateStyle, groupBy, sortBy, sortDirection, accent, fontSize, includeSummary, includeBranding, includeSignoff }
-  const previewColumns = localizeExportColumns(dataset, prepared?.columns || [], settings)
+  const reportSettings = outputSettings(settings)
+  const previewColumns = localizeExportColumns(dataset, prepared?.columns || [], reportSettings)
   const previewRows = prepared?.rows || []
-  const displayRows = orderRows(previewRows, options, previewColumns, settings)
+  const displayRows = orderRows(previewRows, options, previewColumns, reportSettings)
   const metadata = prepared ? { ...prepared, recordCount: prepared.recordCount, dataset } : null
   const changedSelected = key => setSelected(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key])
   if (!allowExport && !allowPrint) return null
@@ -388,8 +455,8 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     setError('')
     try {
       const payload = await loadCurrentData()
-      const columnsForExport = localizeExportColumns(dataset, payload.columns, settings)
-      const rowsForExport = orderRows(payload.rows, options, columnsForExport, settings)
+      const columnsForExport = localizeExportColumns(dataset, payload.columns, reportSettings)
+      const rowsForExport = orderRows(payload.rows, options, columnsForExport, reportSettings)
       if (!columnsForExport.length) throw new Error('Select at least one database field to export.')
       await audit(selectedFormat, rowsForExport.length)
       if (selectedFormat === 'csv') {
@@ -401,12 +468,12 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
         const text = [columnsForExport.map(column => csvCell(column.label, { type: 'text' })).join(','), ...rowsForExport.map(row => columnsForExport.map(column => csvCell(row[column.key], column)).join(','))].join('\r\n')
         downloadBlob(new Blob(['\ufeff', text], { type: 'text/csv;charset=utf-8' }), `${slug(fileTitle) || 'atlas-export'}.csv`)
       }
-      if (selectedFormat === 'xlsx') downloadBlob(await makeXlsx(rowsForExport, columnsForExport, fileTitle, options, settings, payload), `${slug(fileTitle) || 'atlas-export'}.xlsx`)
+      if (selectedFormat === 'xlsx') downloadBlob(await makeXlsx(rowsForExport, columnsForExport, fileTitle, options, reportSettings, payload), `${slug(fileTitle) || 'atlas-export'}.xlsx`)
       if (selectedFormat === 'json') {
-        const json = { metadata: { title: fileTitle, source: payload.source, dataset: payload.dataset, generatedAt: payload.generatedAt, recordCount: payload.recordCount, formatting: options, language: settings?.localization?.defaultLanguage || settings?.language || 'en' }, columns: columnsForExport.map(({ translateValue, ...column }) => column), rows: rowsForExport }
+        const json = { metadata: { title: fileTitle, source: payload.source, dataset: payload.dataset, generatedAt: payload.generatedAt, recordCount: payload.recordCount, formatting: options, language: reportSettings?.localization?.defaultLanguage || reportSettings?.language || 'en' }, columns: columnsForExport.map(({ translateValue, ...column }) => column), rows: rowsForExport }
         downloadBlob(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }), `${slug(fileTitle) || 'atlas-export'}.json`)
       }
-      if (selectedFormat === 'pdf') await exportPdf(rowsForExport, columnsForExport, fileTitle, options, settings, payload)
+      if (selectedFormat === 'pdf') await exportPdf(rowsForExport, columnsForExport, fileTitle, options, reportSettings, payload)
       setOpen(false)
     } catch (exportError) {
       setError(exportError.message || 'Export failed.')
@@ -421,12 +488,12 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
     printWindow.document.close()
     try {
       const payload = await loadCurrentData()
-      const columnsForPrint = localizeExportColumns(dataset, payload.columns, settings)
-      const rowsForPrint = orderRows(payload.rows, options, columnsForPrint, settings)
+      const columnsForPrint = localizeExportColumns(dataset, payload.columns, reportSettings)
+      const rowsForPrint = orderRows(payload.rows, options, columnsForPrint, reportSettings)
       if (!columnsForPrint.length) throw new Error('Select at least one database field to print.')
       await audit('print', rowsForPrint.length)
       printWindow.document.open()
-      printWindow.document.write(printHtml(rowsForPrint, columnsForPrint, fileTitle, options, settings, payload))
+      printWindow.document.write(printHtml(rowsForPrint, columnsForPrint, fileTitle, options, reportSettings, payload))
       printWindow.document.close()
       printWindow.focus()
       setTimeout(() => { try { printWindow.print() } catch {} }, 450)
@@ -446,7 +513,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
       {allowExport && <div className="column-checks export-field-list"><div className="export-field-heading"><span>{uiText(settings, 'Database fields')}</span><span>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(selected.length)} {uiText(settings, 'selected')}</span></div>{availableColumns.map(column => <label key={column.key}><input type="checkbox" checked={selected.includes(column.key)} onChange={() => changedSelected(column.key)}/>{column.label}</label>)}</div>}
       <div className="export-format-grid">
         {allowExport && <label>{uiText(settings, 'File format')}<select value={selectedFormat} onChange={event => setFormat(event.target.value)}>{exportFormats.map(item => <option key={item} value={item}>{item === 'xlsx' ? uiText(settings, 'Excel workbook') : item.toUpperCase()}</option>)}</select></label>}
-        <label>{uiText(settings, 'Document template')}<select value={template} onChange={event => setTemplate(event.target.value)}>{Object.entries(TEMPLATE_LABELS).map(([value, label]) => <option key={value} value={value}>{uiText(settings, label)}</option>)}</select></label>
+        <label>{uiText(settings, 'Document template')}<select value={template} onChange={event => setTemplate(event.target.value)}>{availableTemplates.map(value => <option key={value} value={value}>{uiText(settings, TEMPLATE_LABELS[value])}</option>)}</select></label>
         <label>{uiText(settings, 'Page size')}<select value={pageSize} onChange={event => setPageSize(event.target.value)}><option value="a4">{uiText(settings, 'A4')}</option><option value="letter">{uiText(settings, 'Letter')}</option><option value="legal">{uiText(settings, 'Legal')}</option></select></label>
         <label>{uiText(settings, 'Orientation')}<select value={orientation} onChange={event => setOrientation(event.target.value)}><option value="landscape">{uiText(settings, 'Landscape')}</option><option value="portrait">{uiText(settings, 'Portrait')}</option></select></label>
         <label>{uiText(settings, 'Page margins')}<select value={margin} onChange={event => setMargin(event.target.value)}><option value="9">{uiText(settings, 'Narrow')}</option><option value="14">{uiText(settings, 'Standard')}</option><option value="20">{uiText(settings, 'Wide')}</option></select></label>
@@ -459,7 +526,7 @@ export function ExportMenu({ rows, columns, title, settings, dataset, query = {}
       </div>
       <div className="export-check-options"><label><input type="checkbox" checked={includeSummary} onChange={event => setIncludeSummary(event.target.checked)}/> {uiText(settings, 'Include summary metrics')}</label><label><input type="checkbox" checked={includeBranding} onChange={event => setIncludeBranding(event.target.checked)}/> {uiText(settings, 'Include workspace branding')}</label><label><input type="checkbox" checked={includeSignoff} onChange={event => setIncludeSignoff(event.target.checked)}/> {uiText(settings, 'Add review sign-off lines')}</label></div>
       <div className="export-data-status"><span className={preparing ? 'is-loading' : prepared ? 'is-ready' : ''}/><div><strong>{preparing ? uiText(settings, 'Reading database fields…') : prepared ? <><span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(prepared.recordCount)}</span> {uiText(settings, 'records ready')}</> : uiText(settings, 'Preview awaiting database read')}</strong><small>{prepared ? <>{uiText(settings, 'SQLite source')} · {uiText(settings, 'refreshed')} <span data-no-i18n>{new Intl.DateTimeFormat(settings?.localization?.defaultLanguage || 'en', { timeStyle: 'short' }).format(new Date(prepared.generatedAt))}</span></> : uiText(settings, 'Rows are fetched from the database, not from the visible screen.')}</small></div><button type="button" className="text-button" disabled={preparing} onClick={() => { setOpen(false); requestAnimationFrame(() => setOpen(true)) }}>{uiText(settings, 'Refresh')}</button></div>
-      {prepared && <div className="export-preview"><div className="export-preview-heading"><strong>{uiText(settings, 'Data preview')}</strong><span><span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewColumns.length)}</span> {uiText(settings, 'fields')} · <span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewRows.length)}</span> {uiText(settings, 'rows')}</span></div>{!displayRows.length ? <p>{uiText(settings, 'No matching database records.')}</p> : <div className="export-preview-scroll"><table><thead><tr>{previewColumns.slice(0, 5).map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{displayRows.slice(0, 3).map((row, index) => <tr key={index}>{previewColumns.slice(0, 5).map(column => <td key={column.key} data-no-i18n={column.translateValue || column.type === 'boolean' ? undefined : ''}>{formattedValue(row[column.key], column, options, settings)}</td>)}</tr>)}</tbody></table></div>}{includeSummary && <div className="export-preview-summary">{summaryMetrics(previewRows, previewColumns, settings).slice(0, 3).map(metric => <span key={metric.label}>{metric.label}: <strong>{formattedValue(metric.value, { type: metric.type }, options, settings)}</strong></span>)}</div>}</div>}
+      {prepared && <div className="export-preview"><div className="export-preview-heading"><strong>{uiText(settings, 'Data preview')}</strong><span><span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewColumns.length)}</span> {uiText(settings, 'fields')} · <span data-no-i18n>{new Intl.NumberFormat(settings?.localization?.defaultLanguage || settings?.language || 'en').format(previewRows.length)}</span> {uiText(settings, 'rows')}</span></div>{!displayRows.length ? <p>{uiText(settings, 'No matching database records.')}</p> : <div className="export-preview-scroll"><table><thead><tr>{previewColumns.slice(0, 5).map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{displayRows.slice(0, 3).map((row, index) => <tr key={index}>{previewColumns.slice(0, 5).map(column => <td key={column.key} data-no-i18n={column.translateValue || column.type === 'boolean' ? undefined : ''}>{formattedValue(row[column.key], column, options, reportSettings)}</td>)}</tr>)}</tbody></table></div>}{includeSummary && <div className="export-preview-summary">{summaryMetrics(previewRows, previewColumns, reportSettings).slice(0, 3).map(metric => <span key={metric.label}>{metric.label}: <strong>{formattedValue(metric.value, { type: metric.type }, options, reportSettings)}</strong></span>)}</div>}</div>}
       {error && <div className="form-error"><Icon name="warning" size={14}/>{error}</div>}
       <div className="export-actions">{allowExport && <button className="secondary-button" onClick={doExport} disabled={preparing || !selected.length}>{uiText(settings, 'Download')} {selectedFormat.toUpperCase()}</button>}{allowPrint && <button className="primary-button" onClick={print} disabled={preparing || !selected.length}>{uiText(settings, 'Open print-ready report')}</button>}</div>
     </div>}

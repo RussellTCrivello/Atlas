@@ -17,5 +17,10 @@ assert.notEqual(formatLocalizedDate(date, settings('fa')), date)
 assert.notEqual(formatLocalizedDate(date, settings('he')), date)
 const timestamp = '2026-03-14T00:30:00Z'
 assert.equal(formatLocalizedDate(timestamp, { ...settings('en'), workspace: { defaultTimezone: 'America/Los_Angeles' } }), new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeZone: 'America/Los_Angeles' }).format(new Date(timestamp)), 'timestamps use the configured workspace timezone')
+const customPatternSettings = { ...settings('en'), workspace: { defaultTimezone: 'UTC', regionalFormats: { date: 'dd/MM/yyyy', number: 'latn' } } }
+assert.equal(formatLocalizedDate(date, customPatternSettings), '08/03/2026', 'regional date patterns are applied to database date fields')
+const languagePatternSettings = { ...settings('fa'), localization: { ...settings('fa').localization, dateFormats: { fa: 'yyyy/MM/dd' } } }
+assert.match(formatLocalizedDate(date, languagePatternSettings), /^\p{Number}{4}\/\p{Number}{1,2}\/\p{Number}{1,2}$/u, 'per-language date format maps are applied')
+assert.equal(formatLocalizedDate(date, { ...customPatternSettings, localization: { defaultLanguage: 'en' } }, { dateStyle: 'short' }), new Intl.DateTimeFormat('en', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)), 'explicit formatter options continue to take precedence')
 
 console.log('Localized date formatting and RTL direction checks passed')
