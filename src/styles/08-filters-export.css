@@ -55,7 +55,7 @@
   min-width: 0;
   height: 29px;
   padding: 0 7px;
-  color: #687285;
+  color: #616b7c;
   border: 1px solid var(--line);
   border-radius: 5px;
   outline: none;
@@ -78,7 +78,7 @@
 }
 .filter-hint {
   margin: 12px 0 2px;
-  color: #a1a8b6;
+  color: #606a7c;
   font-size: 9px;
 }
 .filter-chips {
@@ -89,7 +89,7 @@
   margin: 0 0 12px;
 }
 .filter-chips > span {
-  color: #97a0b3;
+  color: #606c84;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -116,7 +116,7 @@
   display: grid;
   gap: 4px;
   margin-top: 8px;
-  color: #8c95a5;
+  color: #626c7d;
   font-size: 8px;
 }
 .tiny-label input {
@@ -139,7 +139,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #677184;
+  color: #636c7e;
   font-size: 9px;
 }
 .print-options {
@@ -151,7 +151,7 @@
 .print-options label {
   display: grid;
   gap: 4px;
-  color: #8c95a5;
+  color: #626c7d;
   font-size: 8px;
 }
 .print-options select,

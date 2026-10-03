@@ -220,15 +220,17 @@ test('exports produce real files in every format, and spreadsheets cannot be mad
   expect(text).not.toMatch(/(^|,|\n)"=HYPERLINK/)
   expect(text.split('\r\n').filter(Boolean).length).toBe(1 + 9) // header + every task
 
-  const json = await download('json')
-  expect(JSON.parse(json.bytes.toString('utf8'))).toHaveLength(9)
+  const json = JSON.parse((await download('json')).bytes.toString('utf8'))
+  expect(json.document.title).toBe('Atlas tasks')
+  expect(json.sections[0].rows).toHaveLength(9)
+  expect(json.sections[0].columns.find((column: any) => column.key === 'dueDate').source).toBe('tasks.due_date') // names its database field
 
   const xlsx = await download('xlsx')
   expect(xlsx.bytes.subarray(0, 2).toString()).toBe('PK') // a zip container
 
   const pdf = await download('pdf') // the real jsPDF, with the fonts served by the real server
   expect(pdf.bytes.subarray(0, 5).toString()).toBe('%PDF-')
-  expect(pdf.bytes.length).toBeGreaterThan(50_000) // the embedded Unicode font made it into the file
+  expect(pdf.bytes.length).toBeGreaterThan(50_000) // the embedded Unicode font made it into the file (built on the server)
   problems.expectNone()
 })
 

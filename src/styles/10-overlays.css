@@ -34,7 +34,7 @@
 }
 .modal-head p {
   margin: 6px 0 0;
-  color: #929aab;
+  color: #626b7f;
   font-size: 10px;
 }
 .form-fields {
@@ -89,7 +89,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #b15f28;
+  color: #a05624;
   border: 1px solid #f5dfc5;
   border-radius: 6px;
   background: #fff8ef;
@@ -166,7 +166,7 @@
 }
 .command-sections h4 {
   margin: 0 0 6px 6px;
-  color: #98a1b3;
+  color: #5f6a81;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.6px;

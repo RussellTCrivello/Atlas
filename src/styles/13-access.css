@@ -19,11 +19,11 @@
   background: #e8f1ff;
 }
 .role-developer {
-  color: #20835e;
+  color: #1d7755;
   background: #e8f8f1;
 }
 .role-viewer {
-  color: #b76b20;
+  color: #9d5c1b;
   background: #fff2df;
 }
 .permission-notice {
@@ -48,7 +48,7 @@
   border: 1px solid #ead7b9;
   border-radius: 999px;
   background: #fff8ec;
-  color: #9a651c;
+  color: #915f1a;
   font-size: 10px;
   font-weight: 900;
 }
@@ -132,7 +132,7 @@
   margin-bottom: 30px;
 }
 .setup-preview .eyebrow {
-  color: #b7b4db;
+  color: #6861b3;
 }
 .setup-preview h1 {
   margin: 12px 0;
@@ -155,7 +155,7 @@
 .setup-steps span {
   padding: 8px 10px;
   border-radius: 999px;
-  color: #aaa8cb;
+  color: #6562a1;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   font-size: 10px;
@@ -286,7 +286,7 @@
   padding: 11px 13px;
 }
 .access-table-head {
-  color: #98a1b3;
+  color: #5f6a81;
   background: #fbfcfe;
   font-size: 9px;
   font-weight: 900;

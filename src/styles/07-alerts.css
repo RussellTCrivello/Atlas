@@ -10,13 +10,13 @@
   background: #fff8ee;
 }
 .alert-count strong {
-  color: #c87922;
+  color: #985c1a;
   font-family: 'Atlas Display';
   font-size: 27px;
 }
 .alert-count span {
   margin-top: 3px;
-  color: #b58c60;
+  color: #85633e;
   font-size: 9px;
 }
 .alert-list {
@@ -45,19 +45,19 @@
   border-radius: 9px;
 }
 .alert-red {
-  color: var(--red);
+  color: var(--red-text);
   background: var(--red-pale);
 }
 .alert-orange {
-  color: var(--orange);
+  color: var(--orange-text);
   background: var(--orange-pale);
 }
 .alert-yellow {
-  color: var(--yellow);
+  color: var(--yellow-text);
   background: var(--yellow-pale);
 }
 .alert-blue {
-  color: var(--blue);
+  color: var(--blue-text);
   background: var(--blue-pale);
 }
 .alert-content {
@@ -76,13 +76,13 @@
 }
 .alert-title-row span {
   margin-left: auto;
-  color: #a3aab8;
+  color: #626b7f;
   font-size: 9px;
   white-space: nowrap;
 }
 .alert-content p {
   margin: 6px 0 9px;
-  color: #818a9c;
+  color: #626b7d;
   font-size: 10px;
   line-height: 1.5;
 }
@@ -90,7 +90,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #9ca4b2;
+  color: #616b7d;
   font-size: 9px;
 }
 .resolve-button {
@@ -99,7 +99,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #25835f;
+  color: #227756;
   border: 1px solid #cceee0;
   border-radius: 6px;
   background: #f2fcf8;
@@ -120,7 +120,7 @@
   height: 42px;
   display: grid;
   place-items: center;
-  color: var(--green);
+  color: var(--green-text);
   border-radius: 50%;
   background: var(--green-pale);
 }
@@ -131,6 +131,6 @@
 }
 .empty-state p {
   margin: 0;
-  color: #9ba3b1;
+  color: #606a7b;
   font-size: 10px;
 }

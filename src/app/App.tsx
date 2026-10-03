@@ -12,7 +12,7 @@ import {
 } from '../lib/settings'
 import { useUiLocalization, setMissingKeyReporting, tr, uiLanguage } from '../lib/i18n'
 import { api, ApiError, errorMessage, UNAUTHENTICATED_EVENT, PASSWORD_CHANGE_EVENT } from '../lib/api'
-import { emptyData } from '../data/empty-data'
+import { emptyData } from '../state/empty-data'
 import { PAGE_IDS, pageFromHash, projectIdFromHash, taskFromHash } from './routes'
 import { EmptyState, LoadingScreen, ToastHost } from '../ui/primitives'
 import { ErrorBoundary, LoadErrorScreen } from './ErrorBoundary'

@@ -21,7 +21,7 @@
   font-size: 18px;
 }
 .people-stats span {
-  color: #939baa;
+  color: #616a7b;
   font-size: 9px;
 }
 .team-strip {
@@ -36,7 +36,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #687285;
+  color: #616b7c;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--paper);
@@ -82,7 +82,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--green);
+  color: var(--green-text);
   font-size: 9px;
   font-weight: 800;
 }
@@ -94,7 +94,7 @@
   background: var(--green);
 }
 .online-status.attention {
-  color: var(--orange);
+  color: var(--orange-text);
 }
 .online-status.attention i {
   background: var(--orange);
@@ -109,7 +109,7 @@
 }
 .person-name p {
   margin: 4px 0 0;
-  color: #8992a3;
+  color: #626b7e;
   font-size: 10px;
 }
 .person-focus {
@@ -121,7 +121,7 @@
 .person-focus span,
 .capacity span {
   display: block;
-  color: #9ca4b3;
+  color: #616b7e;
   font-size: 8px;
   text-transform: uppercase;
   letter-spacing: 0.65px;
@@ -139,7 +139,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  color: #7c8697;
+  color: #616a7a;
   font-size: 10px;
 }
 .capacity {

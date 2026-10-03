@@ -49,10 +49,10 @@
   color: var(--muted);
 }
 .config-status.ok {
-  color: var(--green);
+  color: var(--green-text);
 }
 .config-status.warning {
-  color: var(--orange);
+  color: var(--orange-text);
 }
 .config-stat-grid {
   grid-column: 1 / -1;

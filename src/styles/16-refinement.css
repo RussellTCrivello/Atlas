@@ -224,6 +224,9 @@
   background: var(--purple-pale);
   color: var(--purple-deep);
 }
+.settings-nav-rail button.active span {
+  color: #4f4a9e;
+}
 .settings-nav-rail strong {
   font-size: 12px;
 }

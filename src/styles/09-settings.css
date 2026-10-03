@@ -54,7 +54,7 @@
 .settings-fields label {
   display: grid;
   gap: 6px;
-  color: #687285;
+  color: #616b7c;
   font-size: 10px;
   font-weight: 800;
 }
@@ -74,7 +74,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  color: #7a8194;
+  color: #646a7c;
   border-radius: 7px;
   background: #f7f6ff;
   font-size: 10px;
@@ -95,7 +95,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #697386;
+  color: #626c7d;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--paper);
@@ -128,7 +128,7 @@
   text-transform: capitalize;
 }
 .danger-button {
-  color: #b26725;
+  color: #9d5b21;
   border-color: #f2d4b3;
   background: #fffaf4;
 }

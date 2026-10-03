@@ -1,6 +1,6 @@
 /* Page headers, stat cards, the overview and the daily pulse. */
 .avatar-teal {
-  background: #56a9ac;
+  background: #0f766e;
 }
 .page-content {
   animation: appear 0.22s ease both;
@@ -51,7 +51,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #8e97a9;
+  color: #616b7f;
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
@@ -109,15 +109,15 @@
   background: var(--purple-pale);
 }
 .stat-blue {
-  color: var(--blue);
+  color: var(--blue-text);
   background: var(--blue-pale);
 }
 .stat-orange {
-  color: var(--orange);
+  color: var(--orange-text);
   background: var(--orange-pale);
 }
 .stat-green {
-  color: var(--green);
+  color: var(--green-text);
   background: var(--green-pale);
 }
 .stat-kicker {
@@ -142,11 +142,11 @@
   align-items: center;
   gap: 7px;
   margin-top: 7px;
-  color: #99a0af;
+  color: #616a7c;
   font-size: 10px;
 }
 .delta {
-  color: var(--green);
+  color: var(--green-text);
   font-weight: 800;
 }
 .section-head {
@@ -179,7 +179,7 @@
   align-items: center;
   gap: 7px;
   padding: 7px 9px;
-  color: #687184;
+  color: #616a7b;
   font-size: 10px;
   font-weight: 700;
   border: 1px solid var(--line);
@@ -246,19 +246,19 @@
 }
 .activity-copy p {
   margin: 4px 0 0;
-  color: #8992a3;
+  color: #626b7e;
   font-size: 10px;
 }
 .activity-time {
   align-self: center;
-  color: #9da5b4;
+  color: #616c7f;
   font-size: 9px;
   text-transform: uppercase;
   font-weight: 800;
 }
 .empty-mini {
   margin-top: 32px;
-  color: #a2a9b8;
+  color: #616a7f;
   text-align: center;
   font-size: 11px;
 }

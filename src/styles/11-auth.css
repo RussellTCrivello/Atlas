@@ -63,7 +63,7 @@
   max-width: 390px;
 }
 .login-quote .eyebrow {
-  color: #aaa8cb;
+  color: #6562a1;
 }
 .login-quote h1 {
   margin: 18px 0;
@@ -73,20 +73,20 @@
   letter-spacing: -3px;
 }
 .login-quote h1 em {
-  color: #a9a1ff;
+  color: #5a4aff;
   font-style: normal;
 }
 .login-quote p {
   max-width: 330px;
   margin: 0;
-  color: #a9accd;
+  color: #5f64a2;
   font-size: 13px;
   line-height: 1.7;
 }
 .login-art-footer {
   display: flex;
   justify-content: space-between;
-  color: #777aa4;
+  color: #636694;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -152,14 +152,14 @@
   padding: 12px;
   display: grid;
   gap: 4px;
-  color: #939bab;
+  color: #616a7c;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfe;
   font-size: 9px;
 }
 .demo-accounts strong {
-  color: #687285;
+  color: #616b7c;
   font-size: 10px;
 }
 .setup-shell {

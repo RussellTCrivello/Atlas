@@ -41,6 +41,12 @@
   --red-pale: #fff0f0;
   --yellow: #d79a18;
   --yellow-pale: #fff8e7;
+  /* Text versions of the semantic colours: the fills above are for backgrounds and bars, these meet 4.5:1 as text on white and on the tints. */
+  --red-text: #b4232a;
+  --orange-text: #a35703;
+  --green-text: #17724f;
+  --yellow-text: #8a5a00;
+  --blue-text: #1e56b8;
   --shadow: 0 1px 2px rgba(31, 41, 62, 0.02), 0 8px 26px rgba(38, 43, 72, 0.055);
 }
 * {

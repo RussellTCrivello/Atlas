@@ -47,15 +47,15 @@
   background: #eae8ff;
 }
 .symbol-orange {
-  color: #c97926;
+  color: #9a5d1d;
   background: #fff0dc;
 }
 .symbol-green {
-  color: #298361;
+  color: #257758;
   background: #e2f5ed;
 }
 .symbol-blue {
-  color: #3678cd;
+  color: #2f6cbb;
   background: #e4effe;
 }
 .project-health-main {
@@ -110,7 +110,7 @@
   gap: 3px;
 }
 .project-deadline span {
-  color: #a0a7b5;
+  color: #626b7e;
   font-size: 9px;
 }
 .project-deadline strong {
@@ -129,15 +129,15 @@
 .on-track,
 .done,
 .resolved {
-  color: #25835f;
+  color: #227756;
   background: #e9f8f2;
 }
 .at-risk {
-  color: #b66c1c;
+  color: #9b5c18;
   background: #fff2df;
 }
 .to-do {
-  color: #747e90;
+  color: #616a7a;
   background: #f0f2f6;
 }
 .in-progress {
@@ -145,11 +145,11 @@
   background: #eeecff;
 }
 .review {
-  color: #b05d9e;
+  color: #9d4c8b;
   background: #fbedfa;
 }
 .testing {
-  color: #3d7ebd;
+  color: #366fa6;
   background: #e9f4ff;
 }
 .task-row {
@@ -199,11 +199,11 @@
 }
 .task-project,
 .task-id {
-  color: #9ca4b3;
+  color: #616b7e;
   font-size: 9px;
 }
 .task-project {
-  color: #6d72a4;
+  color: #61669c;
   font-weight: 700;
 }
 .task-row-compact .status-pill {
@@ -214,23 +214,23 @@
   font-weight: 800;
 }
 .priority-high {
-  color: var(--red);
+  color: var(--red-text);
 }
 .priority-medium {
-  color: var(--orange);
+  color: var(--orange-text);
 }
 .priority-low {
-  color: #8f98a8;
+  color: #626c7e;
 }
 .task-due {
   min-width: 56px;
-  color: #828b9b;
+  color: #616a79;
   font-size: 9px;
   text-align: right;
 }
 .due-today,
 .due-overdue {
-  color: var(--red);
+  color: var(--red-text);
   font-weight: 800;
 }
 .toolbar,
@@ -253,7 +253,7 @@
   padding: 0 10px;
   border: 0;
   border-radius: 6px;
-  color: #8a93a4;
+  color: #606a7c;
   background: transparent;
   font-size: 11px;
   font-weight: 700;
@@ -266,7 +266,7 @@
 .filter-tabs button span {
   margin-left: 6px;
   padding: 2px 5px;
-  color: #9da4b2;
+  color: #626b7d;
   background: #f1f3f7;
   border-radius: 10px;
   font-size: 9px;
@@ -309,7 +309,7 @@
 }
 .project-card-code {
   margin-top: 15px;
-  color: #a0a8b7;
+  color: #616c80;
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.3px;
@@ -323,7 +323,7 @@
   height: 32px;
   overflow: hidden;
   margin: 0 0 17px;
-  color: #8a93a5;
+  color: #606a7d;
   font-size: 10px;
   line-height: 1.55;
 }
@@ -334,13 +334,13 @@
   margin-bottom: 9px;
 }
 .project-card-meta > span:last-child {
-  color: #778194;
+  color: #616a7c;
   font-size: 9px;
   font-weight: 700;
 }
 .project-card-bottom {
   margin-top: 15px;
-  color: #8992a2;
+  color: #626c7c;
   font-size: 9px;
 }
 .avatar-stack {
@@ -389,7 +389,7 @@
 }
 .date-warning {
   background: var(--orange-pale);
-  color: #b97228;
+  color: #975d21;
 }
 .milestone-copy {
   min-width: 0;
@@ -424,7 +424,7 @@
   gap: 6px;
   border: 0;
   border-radius: 5px;
-  color: #818a9b;
+  color: #636b7c;
   background: transparent;
   font-size: 10px;
   font-weight: 800;
@@ -445,7 +445,7 @@
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--paper);
-  color: #a4abb8;
+  color: #616a7c;
 }
 .work-search input {
   min-width: 0;
@@ -459,7 +459,7 @@
 .work-toolbar select {
   height: 35px;
   padding: 0 10px;
-  color: #687285;
+  color: #616b7c;
   border: 1px solid var(--line);
   border-radius: 7px;
   outline: none;
@@ -516,7 +516,7 @@
 .column-count {
   min-width: 16px;
   padding: 2px 4px;
-  color: #8790a1;
+  color: #636c7e;
   background: #e5e8ef;
   border-radius: 8px;
   text-align: center;
@@ -576,7 +576,7 @@
   align-items: center;
   gap: 6px;
   overflow: hidden;
-  color: #818a9a;
+  color: #636b7b;
   font-size: 9px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -590,7 +590,7 @@
 .board-card-bottom {
   justify-content: space-between;
   margin-top: 14px;
-  color: #8e97a7;
+  color: #616b7d;
   font-size: 9px;
 }
 .add-column-task {
@@ -601,7 +601,7 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  color: #9aa2b1;
+  color: #626c7e;
   border: 1px dashed #d2d7e1;
   border-radius: 6px;
   background: transparent;
@@ -635,7 +635,7 @@
 }
 .workflow-note p {
   margin: 3px 0 0;
-  color: #8580b7;
+  color: #6963a6;
   font-size: 10px;
 }
 .task-table-panel {
@@ -649,7 +649,7 @@
 }
 .table-head {
   padding: 13px 0 11px 29px;
-  color: #9aa2b2;
+  color: #616b80;
   border-bottom: 1px solid var(--line);
   text-transform: uppercase;
   letter-spacing: 0.7px;
@@ -662,7 +662,7 @@
   gap: 4px;
   border: 0;
   background: transparent;
-  color: #98a1b3;
+  color: #5f6a81;
   font-size: 10px;
   padding: 0;
 }
