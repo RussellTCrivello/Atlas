@@ -8,12 +8,18 @@ import { alertPublic, workLogPublic } from '../presenters/activity'
 import { type ProjectPublic, projectPublic } from '../presenters/projects'
 import type { ReferenceIndex } from '../presenters/reference-index'
 import type { TaskFilter, TaskSort } from '../repositories/tasks'
-import { HttpError, conflict, notFound } from '../util'
+import { HttpError, conflict, id as newId, notFound } from '../util'
+import type { ProjectBulkInput } from '../validation/records'
 import type { ProjectCreateInput, ProjectUpdateInput } from '../validation/schemas'
 import type { AuditService } from './audit'
 import type { BackupService } from './backups'
+import { type BatchResult, runBatch } from './batch'
 import { type ServiceContext, numericId } from './context'
 import type { TaskService } from './tasks'
+
+/** A copy of a project can bring its tasks along, up to this many (more would be a long transaction for a rare need). */
+export const MAX_COPIED_TASKS = 2000
+const QUIET = { audit: false }
 
 export class ProjectService {
   constructor(
@@ -98,7 +104,7 @@ export class ProjectService {
     })
   }
 
-  update(rawId: unknown, body: ProjectUpdateInput, who: AuditContext) {
+  update(rawId: unknown, body: ProjectUpdateInput, who: AuditContext, options: { audit?: boolean } = {}) {
     return this.ctx.transaction(() => {
       const { repos } = this.ctx
       const current = this.find(rawId)
@@ -107,13 +113,13 @@ export class ProjectService {
       if (body.teamId) this.ctx.requireTeam(body.teamId)
       if (body.ownerId) this.ctx.requirePerson(body.ownerId, 'owner')
       repos.projects.update(current.id, body)
-      this.audit.record('project.updated', who, { projectId: current.id })
+      if (options.audit !== false) this.audit.record('project.updated', who, { projectId: current.id })
       return this.respond(repos.projects.byId(current.id)!)
     })
   }
 
-  delete(rawId: unknown, cascade: boolean, who: AuditContext) {
-    const project = this.find(rawId)
+  /** What deleting a project would take with it. Refuses unless the person agreed to that (`cascade`). */
+  private checkDependents(project: Project, cascade: boolean) {
     const removed = this.ctx.repos.projects.dependents(project.id)
     const { tasks, milestones, alerts } = removed
     if ((tasks || milestones || alerts) && !cascade)
@@ -123,19 +129,157 @@ export class ProjectService {
         'HAS_DEPENDENTS',
         removed
       )
-    // A snapshot first (outside the transaction: SQLite cannot VACUUM inside one); if it cannot be made, nothing is deleted.
-    if (tasks || milestones) this.backups.snapshot('pre-delete-project')
-    this.ctx.transaction(() => {
-      this.ctx.repos.projects.delete(project.id)
+    return removed
+  }
+
+  /** The deletion itself, inside the caller's transaction (the caller made the safety snapshot). */
+  private remove(
+    project: Project,
+    removed: ReturnType<ProjectService['checkDependents']>,
+    who: AuditContext,
+    options: { audit?: boolean } = {}
+  ) {
+    this.ctx.repos.projects.delete(project.id)
+    if (options.audit !== false)
       this.audit.record('project.deleted', who, {
         projectId: project.id,
         name: project.name,
-        tasks,
-        milestones,
-        alerts
+        tasks: removed.tasks,
+        milestones: removed.milestones,
+        alerts: removed.alerts
       })
-    })
+  }
+
+  delete(rawId: unknown, cascade: boolean, who: AuditContext) {
+    const project = this.find(rawId)
+    const removed = this.checkDependents(project, cascade)
+    // A snapshot first (outside the transaction: SQLite cannot VACUUM inside one); if it cannot be made, nothing is deleted.
+    if (removed.tasks || removed.milestones) this.backups.snapshot('pre-delete-project')
+    this.ctx.transaction(() => this.remove(project, removed, who))
     return { ok: true, removed }
+  }
+
+  /**
+   * Change or delete several projects at once. Each project is its own unit of work: one that cannot be changed (it still
+   * has tasks and the person did not agree to delete them, it no longer exists) is reported and the rest go ahead.
+   */
+  bulk(input: ProjectBulkInput, who: AuditContext): BatchResult {
+    const { repos } = this.ctx
+    const ids = input.ids.map(Number).filter(Number.isInteger)
+    const label = (id: number) => {
+      const project = repos.projects.byId(id)
+      return project ? `${project.code} · ${project.name}` : `Project ${id}`
+    }
+    let work: (id: number) => void
+    switch (input.action) {
+      case 'status':
+        work = id => void this.update(id, { status: input.status }, who, QUIET)
+        break
+      case 'owner':
+        work = id => void this.update(id, { ownerId: input.ownerId }, who, QUIET)
+        break
+      case 'team':
+        work = id => void this.update(id, { teamId: input.teamId }, who, QUIET)
+        break
+      case 'delete': {
+        const cascade = Boolean(input.cascade)
+        // One safety snapshot for the whole batch, before anything is touched (it cannot be taken inside the transaction).
+        const loaded = ids.filter(id => {
+          const found = repos.projects.dependents(id)
+          return cascade && (found.tasks || found.milestones)
+        })
+        if (loaded.length) this.backups.snapshot('pre-delete-projects')
+        work = id => {
+          const project = this.find(id)
+          this.remove(project, this.checkDependents(project, cascade), who, QUIET)
+        }
+        break
+      }
+    }
+    const { action, ids: _ids, ...params } = input as Record<string, unknown>
+    void _ids
+    return runBatch(this.ctx, ids, label, work, outcome =>
+      this.audit.record(`project.bulk.${String(action)}`, who, {
+        requested: outcome.requested,
+        succeeded: outcome.succeeded,
+        failed: outcome.failed.length,
+        sample: ids.slice(0, 20),
+        ...params
+      })
+    )
+  }
+
+  /** A copy of a project: same plan and settings, its milestones back to "Upcoming", and optionally its tasks (at the first status). */
+  duplicate(user: User, rawId: unknown, body: { withTasks?: boolean }, who: AuditContext) {
+    return this.ctx.transaction(() => {
+      const { repos } = this.ctx
+      const source = this.find(rawId)
+      const withTasks = Boolean(body.withTasks)
+      const taskCount = repos.tasks.count({ projectId: source.id })
+      if (withTasks && taskCount > MAX_COPIED_TASKS)
+        throw new HttpError(
+          409,
+          `This project has ${taskCount.toLocaleString('en')} tasks; at most ${MAX_COPIED_TASKS.toLocaleString('en')} can be copied at once. Duplicate it without its tasks.`,
+          'TOO_MANY_TO_COPY',
+          { tasks: taskCount, limit: MAX_COPIED_TASKS }
+        )
+      const today = todayIn(this.ctx.settings)
+      const copyId = repos.projects.insert({
+        name: `Copy of ${source.name}`.slice(0, 120),
+        code: uniqueProjectCode(source.name, repos.projects.codes()),
+        description: source.description,
+        teamId: source.teamId,
+        ownerId: source.ownerId,
+        color: source.color,
+        status: source.status,
+        deadline: source.deadline,
+        createdAt: today,
+        customFields: source.customFields || {},
+        sample: false
+      })
+      const milestones = repos.milestones.forProject(source.id)
+      for (const milestone of milestones)
+        repos.milestones.insert({
+          id: newId('milestone'),
+          name: milestone.name,
+          projectId: copyId,
+          dueDate: milestone.dueDate,
+          status: 'Upcoming',
+          customFields: milestone.customFields || {},
+          sample: false
+        })
+      let copied = 0
+      if (withTasks) {
+        const rows = repos.tasks.list({ projectId: source.id }, { key: 'key', dir: 'asc' }, { limit: MAX_COPIED_TASKS })
+        const tags = repos.tags.forTasks(rows.map(row => row.id))
+        for (const row of rows) {
+          this.tasks.insertTask(
+            user,
+            {
+              title: row.title,
+              projectId: copyId,
+              assigneeId: row.assigneeId,
+              priority: row.priority as 'High' | 'Medium' | 'Low',
+              dueDate: row.dueDate,
+              type: row.type as 'Development',
+              blocked: false,
+              customFields: row.customFields || {},
+              tags: (tags.get(row.id) || []).map(tag => tag.name)
+            },
+            who,
+            QUIET
+          )
+          copied++
+        }
+      }
+      this.audit.record('project.duplicated', who, {
+        from: source.id,
+        to: copyId,
+        milestones: milestones.length,
+        tasks: copied
+      })
+      return this.respond(repos.projects.byId(copyId)!)
+    })
   }
 
   // ---- the project page ----------------------------------------------------------------------------------------------
@@ -191,7 +335,7 @@ export class ProjectService {
   }
 
   /** One page of the project's tasks (the page a click on a project opens). */
-  tasksOf(rawId: unknown, filter: TaskFilter, sort: TaskSort, page: { limit: number; offset: number }) {
+  tasksOf(rawId: unknown, filter: TaskFilter, sort: TaskSort | TaskSort[], page: { limit: number; offset: number }) {
     const project = this.find(rawId)
     return { projectId: project.id, ...this.tasks.list({ ...filter, projectId: project.id }, sort, page) }
   }

@@ -3,10 +3,14 @@ import type { AuditContext } from '../domain/audit-chain'
 import { id } from '../util'
 import type { Person, Team } from '../domain/types'
 import { personPublic, teamPublic } from '../presenters/people'
+import type { PeopleBulkInput } from '../validation/records'
 import type { PersonCreateInput, PersonUpdateInput, TeamCreateInput, TeamUpdateInput } from '../validation/schemas'
 import { badRequest, notFound } from '../util'
 import type { AuditService } from './audit'
+import { type BatchResult, runBatch } from './batch'
 import type { ServiceContext } from './context'
+
+const QUIET = { audit: false }
 
 export class PeopleService {
   constructor(
@@ -50,18 +54,18 @@ export class PeopleService {
     })
   }
 
-  updatePerson(rawId: string, body: PersonUpdateInput, who: AuditContext) {
+  updatePerson(rawId: string, body: PersonUpdateInput, who: AuditContext, options: { audit?: boolean } = {}) {
     return this.ctx.transaction(() => {
       const { repos } = this.ctx
       const current = this.findPerson(rawId)
       if (body.teamId) this.ctx.requireTeam(body.teamId)
       repos.people.update(current.id, body)
-      this.audit.record('person.updated', who, { personId: current.id })
+      if (options.audit !== false) this.audit.record('person.updated', who, { personId: current.id })
       return personPublic(this.ctx.reference(), repos.people.byId(current.id)!)
     })
   }
 
-  deletePerson(rawId: string, who: AuditContext) {
+  deletePerson(rawId: string, who: AuditContext, options: { audit?: boolean } = {}) {
     return this.ctx.transaction(() => {
       const { repos } = this.ctx
       const person = this.findPerson(rawId)
@@ -70,12 +74,50 @@ export class PeopleService {
       // Their tasks become unassigned and their projects ownerless through the foreign keys; the counts go in the audit trail.
       const impact = repos.people.deletionImpact(person.id)
       repos.people.delete(person.id)
-      this.audit.record('person.deleted', who, {
-        personId: person.id,
-        unassignedTasks: impact.tasks,
-        projectsWithoutOwner: impact.projects
-      })
+      if (options.audit !== false)
+        this.audit.record('person.deleted', who, {
+          personId: person.id,
+          unassignedTasks: impact.tasks,
+          projectsWithoutOwner: impact.projects
+        })
       return { ok: true, unassignedTasks: impact.tasks, projectsWithoutOwner: impact.projects }
+    })
+  }
+
+  /** Move several people to a team, or delete them. One who cannot be changed (they have a sign-in account) is reported; the rest go ahead. */
+  bulk(input: PeopleBulkInput, who: AuditContext): BatchResult {
+    const { repos } = this.ctx
+    const label = (id: string) => repos.people.byId(id)?.name || `Person ${id}`
+    const ids = input.ids.map(String)
+    const work =
+      input.action === 'team'
+        ? (id: string) => void this.updatePerson(id, { teamId: input.teamId }, who, QUIET)
+        : (id: string) => void this.deletePerson(id, who, QUIET)
+    return runBatch(this.ctx, ids, label, work, outcome =>
+      this.audit.record(`person.bulk.${input.action}`, who, {
+        requested: outcome.requested,
+        succeeded: outcome.succeeded,
+        failed: outcome.failed.length,
+        sample: ids.slice(0, 20),
+        teamId: input.action === 'team' ? input.teamId : undefined
+      })
+    )
+  }
+
+  /** A copy of a person to start from: same team, role and capacity, no email address (an address belongs to one person). */
+  duplicatePerson(rawId: string, who: AuditContext) {
+    return this.ctx.transaction(() => {
+      const source = this.findPerson(rawId)
+      const copy: Person = {
+        ...source,
+        id: id('person'),
+        name: `Copy of ${source.name}`.slice(0, 120),
+        email: '',
+        sample: false
+      }
+      this.ctx.repos.people.insert(copy)
+      this.audit.record('person.duplicated', who, { from: source.id, to: copy.id })
+      return personPublic(this.ctx.reference(), copy)
     })
   }
 

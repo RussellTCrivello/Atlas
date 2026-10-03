@@ -5,9 +5,7 @@ import {
   type Database,
   type Row,
   type SqlValue,
-  ftsQuery,
   isOne,
-  likeEscape,
   marks,
   nullable,
   orEmpty,
@@ -15,6 +13,10 @@ import {
   stringifyFields,
   updatePlan
 } from './base'
+import { type TaskFilter, type TaskSort, orderBy, taskWhere } from './task-query'
+
+export { TASK_FIELDS, taskWhere } from './task-query'
+export type { TaskFilter, TaskSort, TaskSortKey } from './task-query'
 
 const COLUMNS = {
   key: 'key',
@@ -63,106 +65,6 @@ const toTaskRow = (row: Row): TaskRow => ({
   projectCode: orEmpty(row.project_code),
   assigneeName: orEmpty(row.assignee_name)
 })
-
-export interface TaskFilter {
-  projectId?: number
-  assigneeId?: string
-  /** `true` = only tasks nobody is assigned to. */
-  unassigned?: boolean
-  status?: string[]
-  priority?: string[]
-  type?: string[]
-  blocked?: boolean
-  /** Text search over title and key (full-text index, prefix match). */
-  q?: string
-  dueFrom?: string
-  dueTo?: string
-  noDueDate?: boolean
-  /** Terminal workflow labels plus the day to compare with: `open` and `overdue` need them. */
-  terminal?: string[]
-  today?: string
-  open?: boolean
-  done?: boolean
-  overdue?: boolean
-}
-
-export type TaskSortKey = 'due' | 'title' | 'status' | 'priority' | 'assignee' | 'created' | 'key' | 'project'
-export interface TaskSort {
-  key: TaskSortKey
-  dir: 'asc' | 'desc'
-}
-
-const PRIORITY_RANK = "CASE t.priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END"
-const SORT_SQL: Record<TaskSortKey, (dir: string) => string> = {
-  due: dir => `(t.due_date IS NULL), t.due_date ${dir}, t.id ${dir}`,
-  title: dir => `t.title COLLATE NOCASE ${dir}, t.id`,
-  status: dir => `t.status COLLATE NOCASE ${dir}, t.id`,
-  priority: dir => `${PRIORITY_RANK} ${dir}, t.id`,
-  assignee: dir => `(t.assignee_name IS NULL), t.assignee_name COLLATE NOCASE ${dir}, t.id`,
-  created: dir => `t.created_at ${dir}, t.id ${dir}`,
-  key: dir => `t.id ${dir}`,
-  project: dir => `t.project_name COLLATE NOCASE ${dir}, t.id`
-}
-
-/** Build the WHERE clause. Column names are fixed here; every value is bound as a parameter. */
-export function taskWhere(filter: TaskFilter): { sql: string; params: SqlValue[] } {
-  const clauses: string[] = []
-  const params: SqlValue[] = []
-  const terminal = filter.terminal || []
-  if (filter.projectId !== undefined) {
-    clauses.push('t.project_id = ?')
-    params.push(filter.projectId)
-  }
-  if (filter.assigneeId) {
-    clauses.push('t.assignee_id = ?')
-    params.push(filter.assigneeId)
-  }
-  if (filter.unassigned) clauses.push('t.assignee_id IS NULL')
-  for (const [column, values] of [
-    ['status', filter.status],
-    ['priority', filter.priority],
-    ['type', filter.type]
-  ] as const) {
-    if (values?.length) {
-      clauses.push(`t.${column} IN (${marks(values.length)})`)
-      params.push(...values)
-    }
-  }
-  if (filter.blocked !== undefined) clauses.push(filter.blocked ? 't.blocked = 1' : 't.blocked = 0')
-  if (filter.dueFrom) {
-    clauses.push('t.due_date >= ?')
-    params.push(filter.dueFrom)
-  }
-  if (filter.dueTo) {
-    clauses.push('t.due_date <= ?')
-    params.push(filter.dueTo)
-  }
-  if (filter.noDueDate) clauses.push('t.due_date IS NULL')
-  if (filter.open) {
-    clauses.push(`t.status NOT IN (${marks(terminal.length)})`)
-    params.push(...terminal)
-  }
-  if (filter.done) {
-    clauses.push(`t.status IN (${marks(terminal.length)})`)
-    params.push(...terminal)
-  }
-  if (filter.overdue && filter.today) {
-    clauses.push(`t.status NOT IN (${marks(terminal.length)}) AND t.due_date IS NOT NULL AND t.due_date < ?`)
-    params.push(...terminal, filter.today)
-  }
-  const text = filter.q?.trim()
-  if (text) {
-    const fts = text.length >= 2 ? ftsQuery(text) : null
-    if (fts) {
-      clauses.push('t.id IN (SELECT rowid FROM task_search WHERE task_search MATCH ?)')
-      params.push(fts)
-    } else {
-      clauses.push("(t.title LIKE ? ESCAPE '\\' OR t.key LIKE ? ESCAPE '\\')")
-      params.push(`%${likeEscape(text)}%`, `%${likeEscape(text)}%`)
-    }
-  }
-  return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params }
-}
 
 export interface TaskCounts {
   total: number
@@ -252,13 +154,12 @@ export class TaskRepository {
   // ---- queries -------------------------------------------------------------------------------------------------------
   list(
     filter: TaskFilter,
-    sort: TaskSort = { key: 'due', dir: 'asc' },
+    sort: TaskSort | TaskSort[] = { key: 'due', dir: 'asc' },
     page: { limit: number; offset?: number } = { limit: 50 }
   ): TaskRow[] {
     const { sql, params } = taskWhere(filter)
-    const order = SORT_SQL[sort.key](sort.dir === 'desc' ? 'DESC' : 'ASC')
     return this.db
-      .all(`SELECT t.* FROM v_task_rows t ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`, [
+      .all(`SELECT t.* FROM v_task_rows t ${sql} ORDER BY ${orderBy([sort].flat())} LIMIT ? OFFSET ?`, [
         ...params,
         page.limit,
         page.offset ?? 0
@@ -266,11 +167,30 @@ export class TaskRepository {
       .map(toTaskRow)
   }
 
-  /** Stream every matching row (exports): rows are produced one by one instead of being held in memory twice. */
-  *iterate(filter: TaskFilter, sort: TaskSort = { key: 'due', dir: 'asc' }): Generator<Row> {
+  /** Lower-cased titles of one project's tasks: the import uses them to recognise rows that already exist. */
+  titlesOf(projectId: number): Set<string> {
+    return new Set(
+      this.db
+        .all<{ title: string }>('SELECT lower(title) AS title FROM tasks WHERE project_id = ?', [projectId])
+        .map(row => row.title)
+    )
+  }
+
+  /** The ids of every task matching a filter, in display order, up to `limit` ("select all matching" works from this). */
+  idsOf(filter: TaskFilter, sort: TaskSort | TaskSort[], limit: number): number[] {
     const { sql, params } = taskWhere(filter)
-    const order = SORT_SQL[sort.key](sort.dir === 'desc' ? 'DESC' : 'ASC')
-    yield* this.db.iterate(`SELECT t.* FROM v_task_rows t ${sql} ORDER BY ${order}`, params)
+    return this.db
+      .all<{ id: number }>(`SELECT t.id FROM v_task_rows t ${sql} ORDER BY ${orderBy([sort].flat())} LIMIT ?`, [
+        ...params,
+        limit
+      ])
+      .map(row => Number(row.id))
+  }
+
+  /** Stream every matching row (exports): rows are produced one by one instead of being held in memory twice. */
+  *iterate(filter: TaskFilter, sort: TaskSort | TaskSort[] = { key: 'due', dir: 'asc' }): Generator<Row> {
+    const { sql, params } = taskWhere(filter)
+    yield* this.db.iterate(`SELECT t.* FROM v_task_rows t ${sql} ORDER BY ${orderBy([sort].flat())}`, params)
   }
 
   count(filter: TaskFilter): number {

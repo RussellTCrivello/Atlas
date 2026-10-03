@@ -138,6 +138,11 @@ export class ExportService {
         permission: missing
       })
 
+    // A selection must never be quietly widened: a dataset that cannot honour one refuses it.
+    if (request.ids && !dataset.selectable)
+      throw badRequest(
+        `"${dataset.title}" is not made of individual records, so a selection of rows cannot be exported from it`
+      )
     const { language, direction } = this.languageFor(request.language)
     const label = translator(settings, language)
     const ref = this.ctx.reference()

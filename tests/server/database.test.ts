@@ -469,8 +469,11 @@ describe('opening the database', () => {
 })
 
 describe('schema migrations', () => {
+  // The migrations under test are injected after the last real one, so these tests stay valid as the schema grows.
+  const shipped = MIGRATIONS.at(-1)!.version
+  const next = shipped + 1
   const second: Migration = {
-    version: 2,
+    version: next,
     name: 'add a note column to teams',
     sql: 'ALTER TABLE teams ADD COLUMN note TEXT'
   }
@@ -484,8 +487,8 @@ describe('schema migrations', () => {
     first.release?.()
     const upgraded = openDatabase(cfg(dir), { migrations: history })
     try {
-      assert.deepEqual(upgraded.migrated, [2])
-      assert.equal(upgraded.db.pragma('user_version'), 2)
+      assert.deepEqual(upgraded.migrated, [next])
+      assert.equal(upgraded.db.pragma('user_version'), next)
       assert.equal(
         upgraded.db.get("SELECT note FROM teams WHERE id = 'keep'")?.note,
         null,
@@ -494,7 +497,7 @@ describe('schema migrations', () => {
       const backup = listBackupsIn(dir).find(b => b.reason === 'pre-migration')
       assert.ok(backup, 'a pre-migration snapshot exists')
       const snapshot = new Database(backup!.path, { readOnly: true })
-      assert.equal(snapshot.pragma('user_version'), 1, 'and it holds the schema from before the migration')
+      assert.equal(snapshot.pragma('user_version'), shipped, 'and it holds the schema from before the migration')
       assert.throws(() => snapshot.get('SELECT note FROM teams'), /no such column/)
       snapshot.close()
     } finally {
@@ -514,13 +517,13 @@ describe('schema migrations', () => {
     const dir = mkdir()
     openDatabase(cfg(dir)).db.close()
     const broken: Migration = {
-      version: 2,
+      version: next,
       name: 'half works',
       sql: 'ALTER TABLE teams ADD COLUMN ok TEXT; ALTER TABLE nowhere ADD COLUMN nope TEXT'
     }
     assert.throws(() => openDatabase(cfg(dir), { migrations: [...MIGRATIONS, broken] }))
     const db = new Database(path.join(dir, 'atlas.db'), { readOnly: true })
-    assert.equal(db.pragma('user_version'), 1)
+    assert.equal(db.pragma('user_version'), shipped)
     assert.ok(
       !db.all('PRAGMA table_info(teams)').some(column => column.name === 'ok'),
       'the first statement was rolled back with the second'

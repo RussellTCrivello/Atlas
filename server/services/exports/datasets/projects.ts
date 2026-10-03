@@ -1,5 +1,4 @@
 // Projects and their milestones, from v_project_rows / v_milestone_rows plus the task counts SQL computes per project.
-import { applyAdvancedFilters, sortRows } from '../../../../shared/filters'
 import type { TableSection, Tone } from '../../../export/model'
 import { projectHealth, projectProgress } from '../../../presenters/projects'
 import {
@@ -9,20 +8,16 @@ import {
   customFieldColumns,
   customValue,
   describeConditions,
+  settle,
   tones
 } from '../kit'
-
-const settle = (dc: DatasetContext, rows: Record<string, any>[]) => {
-  let out = applyAdvancedFilters(rows, dc.request.filters ?? [])
-  if (dc.request.sort) out = sortRows(out, dc.request.sort)
-  return out
-}
 
 export const projectsDataset: DatasetDefinition = {
   id: 'projects',
   title: 'Projects',
   description: 'Projects with their health, progress and task counts.',
   permissions: [],
+  selectable: true,
   columns: ({ ctx, label }) => [
     col('name', label('Project'), 'text', 'projects.name', { width: 28 }),
     col('code', label('Code'), 'text', 'projects.code', { width: 9 }),
@@ -49,6 +44,7 @@ export const projectsDataset: DatasetDefinition = {
     const rows = ctx.repos.exports.projects().map(r => {
       const s = stats.get(Number(r.id))
       const row: Record<string, string | number | boolean | null> = {
+        _id: Number(r.id),
         name: r.name,
         code: r.code,
         team: r.team_name ?? label('Workspace'),
@@ -88,6 +84,7 @@ export const milestonesDataset: DatasetDefinition = {
   title: 'Milestones',
   description: 'Milestones across all projects, soonest first.',
   permissions: [],
+  selectable: true,
   columns: ({ label }) => [
     col('name', label('Milestone'), 'text', 'milestones.name', { width: 32 }),
     col('project', label('Project'), 'text', 'projects.name', { width: 24 }),
@@ -102,6 +99,7 @@ export const milestonesDataset: DatasetDefinition = {
     const rows = ctx.repos.exports
       .milestones(Number.isInteger(projectId) && projectId > 0 ? projectId : undefined)
       .map(r => ({
+        _id: r.id,
         name: r.name,
         project: r.project_name,
         projectCode: r.project_code,

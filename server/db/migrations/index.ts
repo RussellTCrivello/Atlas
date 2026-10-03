@@ -2,6 +2,7 @@
 // applied, and a database whose recorded checksum differs from the code is refused (see migrator.ts). A change to the
 // schema is a new file with the next version number.
 import { initialSchema } from './001-initial-schema'
+import { recordsSchema } from './002-records'
 
 export interface Migration {
   version: number
@@ -9,7 +10,7 @@ export interface Migration {
   sql: string
 }
 
-export const MIGRATIONS: readonly Migration[] = [initialSchema]
+export const MIGRATIONS: readonly Migration[] = [initialSchema, recordsSchema]
 
 /** The schema version this build writes and understands. */
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version

@@ -1,19 +1,13 @@
 // Alerts and daily updates.
-import { applyAdvancedFilters, sortRows } from '../../../../shared/filters'
 import { addDays } from '../../../util'
-import { type DatasetContext, type DatasetDefinition, col, describeConditions } from '../kit'
-
-const settle = (dc: DatasetContext, rows: Record<string, any>[]) => {
-  let out = applyAdvancedFilters(rows, dc.request.filters ?? [])
-  if (dc.request.sort) out = sortRows(out, dc.request.sort)
-  return out
-}
+import { type DatasetDefinition, col, describeConditions, settle } from '../kit'
 
 export const alertsDataset: DatasetDefinition = {
   id: 'alerts',
   title: 'Alerts',
   description: 'Open and resolved alerts with the project and task they are about.',
   permissions: [],
+  selectable: true,
   columns: ({ label }) => [
     col('title', label('Alert'), 'text', 'alerts.title', { width: 30 }),
     col('type', label('Type'), 'status', 'alerts.type', { width: 11 }),
@@ -28,6 +22,7 @@ export const alertsDataset: DatasetDefinition = {
     const rows = dc.ctx.repos.exports
       .alerts(Number.isInteger(projectId) && projectId > 0 ? projectId : undefined)
       .map(r => ({
+        _id: r.id,
         title: r.title,
         type: r.type,
         project: r.project_name ?? dc.label('Workspace'),
@@ -75,6 +70,7 @@ export const activityDataset: DatasetDefinition = {
   title: 'Daily updates',
   description: 'What people posted: yesterday, today, blockers and what is next.',
   permissions: [],
+  selectable: true,
   columns: ({ label }) => [
     col('person', label('Person'), 'text', 'people.name', { width: 20 }),
     col('date', label('Date'), 'date', 'activities.date', { width: 13 }),
@@ -90,6 +86,7 @@ export const activityDataset: DatasetDefinition = {
     const rows = dc.ctx.repos.exports
       .activities()
       .map(r => ({
+        _id: r.id,
         person: r.person_name ?? dc.label('Unknown'),
         date: r.date,
         time: r.time,

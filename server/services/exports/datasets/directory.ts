@@ -1,26 +1,21 @@
 // The people directory and the sign-in accounts. Accounts are read from v_user_rows, which has no password column, so a
 // secret cannot end up in an export however the request is phrased.
-import { applyAdvancedFilters, sortRows } from '../../../../shared/filters'
 import {
   type DatasetContext,
   type DatasetDefinition,
   col,
   customFieldColumns,
   customValue,
-  describeConditions
+  describeConditions,
+  settle
 } from '../kit'
-
-const settle = (dc: DatasetContext, rows: Record<string, any>[]) => {
-  let out = applyAdvancedFilters(rows, dc.request.filters ?? [])
-  if (dc.request.sort) out = sortRows(out, dc.request.sort)
-  return out
-}
 
 export const peopleDataset: DatasetDefinition = {
   id: 'people',
   title: 'People',
   description: 'The team directory with planned capacity and workload.',
   permissions: [],
+  selectable: true,
   columns: ({ ctx, label }) => [
     col('name', label('Name'), 'text', 'people.name', { width: 24 }),
     col('email', label('Email'), 'text', 'people.email', { width: 28 }),
@@ -42,6 +37,7 @@ export const peopleDataset: DatasetDefinition = {
     const open = ctx.repos.exports.openTasksByPerson(terminal)
     const rows = ctx.repos.exports.people().map(r => {
       const row: Record<string, string | number | boolean | null> = {
+        _id: r.id,
         name: r.name,
         email: r.email,
         role: r.job_title,
@@ -84,6 +80,7 @@ export const usersDataset: DatasetDefinition = {
   title: 'Users',
   description: 'Sign-in accounts: roles and activity, never credentials.',
   permissions: ['manageUsers'],
+  selectable: true,
   columns: ({ label }) => [
     col('name', label('Name'), 'text', 'users.name', { width: 24 }),
     col('email', label('Email'), 'text', 'users.email', { width: 28 }),
@@ -95,6 +92,7 @@ export const usersDataset: DatasetDefinition = {
   ],
   run(dc) {
     const rows = dc.ctx.repos.exports.users().map(r => ({
+      _id: r.id,
       name: r.name,
       email: r.email,
       role: r.role,

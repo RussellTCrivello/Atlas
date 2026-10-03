@@ -1,6 +1,5 @@
 // Tasks, read from the v_task_rows view (names joined by SQL), filtered and sorted in SQL where the database can do it and by
 // the shared condition engine for the "advanced filter" the screen offers.
-import { applyAdvancedFilters, sortRows } from '../../../../shared/filters'
 import type { TableSection } from '../../../export/model'
 import { dueLabel } from '../../../presenters/tasks'
 import type { TaskFilter } from '../../../repositories/tasks'
@@ -11,6 +10,7 @@ import {
   customFieldColumns,
   customValue,
   describeConditions,
+  settle,
   tones
 } from '../kit'
 
@@ -41,6 +41,7 @@ export function taskColumns(dc: Pick<DatasetContext, 'ctx' | 'label'>) {
     col('createdAt', label('Created'), 'date', 'tasks.created_at', { defaultVisible: false, width: 13 }),
     col('completedAt', label('Completed'), 'date', 'tasks.completed_at', { defaultVisible: false, width: 13 }),
     col('createdBy', label('Created by'), 'text', 'people.name', { defaultVisible: false, width: 18 }),
+    col('tags', label('Tags'), 'text', 'tags.name', { defaultVisible: false, width: 22 }),
     ...customFieldColumns(dc.ctx.settings, 'tasks', label)
   ]
 }
@@ -48,6 +49,7 @@ export function taskColumns(dc: Pick<DatasetContext, 'ctx' | 'label'>) {
 /** The database filter a request describes. Also used by the project report. */
 export function taskFilterFor(dc: DatasetContext, extra: Partial<TaskFilter> = {}): TaskFilter {
   const filter: TaskFilter = { terminal: dc.terminal, today: dc.ref.today, q: dc.request.q, ...extra }
+  if (dc.request.ids) filter.ids = dc.request.ids.map(Number).filter(Number.isInteger)
   const project = Number(dc.scope('projectId'))
   if (Number.isInteger(project) && project > 0) filter.projectId = project
   const assignee = dc.scope('assignee')
@@ -79,6 +81,7 @@ export function taskTable(
     const done = terminal.includes(r.status)
     const overdue = !done && Boolean(r.due_date) && r.due_date < ref.today
     const row: Record<string, string | number | boolean | null> = {
+      _id: Number(r.id),
       id: r.key,
       title: r.title,
       project: r.project_name,
@@ -103,6 +106,7 @@ export function taskTable(
       createdAt: r.created_at,
       completedAt: r.completed_at ?? '',
       createdBy: r.created_by_name ?? '',
+      tags: r.tags ?? '',
       _done: done,
       _overdue: overdue
     }
@@ -110,8 +114,7 @@ export function taskTable(
       if (column.key.startsWith('customFields.')) row[column.key] = customValue(r.custom_fields, column.key.slice(13))
     rows.push(row)
   }
-  let out = applyAdvancedFilters(rows, dc.request.filters ?? [])
-  if (dc.request.sort) out = sortRows(out, dc.request.sort)
+  const out = settle(dc, rows)
   const rowTones: Record<string, Record<string, ReturnType<typeof tones.status>>> = {}
   out.forEach((row, index) => {
     const tone = {
@@ -137,6 +140,7 @@ export const tasksDataset: DatasetDefinition = {
   title: 'Tasks',
   description: 'Every task that matches your filters, straight from the database.',
   permissions: [],
+  selectable: true,
   columns: dc => taskColumns(dc),
   run(dc) {
     const section = taskTable(dc)

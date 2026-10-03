@@ -29,7 +29,13 @@ export function dueLabel(ref: Pick<ReferenceIndex, 'today' | 'settings'>, task: 
   return formatDate(ref.settings, task.dueDate)
 }
 
-export function taskPublic(ref: ReferenceIndex, task: Task) {
+export interface TaskTag {
+  id: string
+  name: string
+  color: string
+}
+
+export function taskPublic(ref: ReferenceIndex, task: Task, tags: TaskTag[] = []) {
   const project = ref.projects.get(String(task.projectId))
   const person = ref.people.get(task.assigneeId)
   return {
@@ -53,7 +59,8 @@ export function taskPublic(ref: ReferenceIndex, task: Task) {
     createdAt: task.createdAt,
     createdBy: task.createdBy || '',
     completedAt: task.completedAt || '',
-    customFields: task.customFields || {}
+    customFields: task.customFields || {},
+    tags
   }
 }
 export type TaskPublic = ReturnType<typeof taskPublic>

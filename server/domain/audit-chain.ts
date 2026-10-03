@@ -31,7 +31,7 @@ export function digest(entry: Omit<AuditEntry, 'hash'>): string {
 }
 
 /** Routine data changes: skipped when the administrator turned "track writes" off. */
-const WRITE_ACTIONS = /^(task|project|person|team|milestone|activity|alert|i18n|demo-data)\./
+const WRITE_ACTIONS = /^(task|project|person|team|milestone|activity|alert|tag|view|i18n|demo-data)\./
 
 /** Should this action be written to the audit trail under the workspace's audit settings? */
 export function shouldRecord(settings: any, action: string): boolean {

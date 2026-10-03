@@ -41,6 +41,14 @@ export class AlertRepository {
       .all('SELECT * FROM alerts WHERE project_id = ? ORDER BY resolved, created_at DESC, rowid DESC', [projectId])
       .map(toAlert)
   }
+  /** Alerts that point at a task (a deleted task's alerts lose the pointer; restoring it puts the pointer back). */
+  idsForTask(taskId: number): string[] {
+    return this.db.all<{ id: string }>('SELECT id FROM alerts WHERE task_id = ?', [taskId]).map(row => row.id)
+  }
+  relinkTask(alertIds: string[], taskId: number) {
+    for (const id of alertIds)
+      this.db.run('UPDATE alerts SET task_id = ? WHERE id = ? AND task_id IS NULL', [taskId, id])
+  }
   openCount(): number {
     return Number(this.db.scalar('SELECT count(*) FROM alerts WHERE resolved = 0'))
   }

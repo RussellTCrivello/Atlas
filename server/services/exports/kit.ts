@@ -1,7 +1,14 @@
 // What every dataset needs: the request, the person asking, today's date, a translator for labels, and a few helpers to
 // describe columns and filters. Datasets stay short because this file does the repeated work.
 import { UI_I18N_SOURCES, buildTranslationCatalog, uiPhraseKey } from '../../../shared/i18n/catalog'
-import { type Condition, VALUELESS_OPERATORS, FIELD_OPERATORS, isActive } from '../../../shared/filters'
+import {
+  type Condition,
+  FIELD_OPERATORS,
+  VALUELESS_OPERATORS,
+  applyAdvancedFilters,
+  isActive,
+  sortRows
+} from '../../../shared/filters'
 import type { Column, ColumnType, DocumentWords, Section, Tone } from '../../export/model'
 import type { User } from '../../domain/types'
 import type { ReferenceIndex } from '../../presenters/reference-index'
@@ -42,6 +49,8 @@ export interface DatasetDefinition {
   description: string
   /** Permissions needed in addition to `exportData`. */
   permissions: string[]
+  /** Made of individual records that carry a hidden `_id` per row, so a selection of them can be exported (`request.ids`). */
+  selectable?: boolean
   /** All columns the dataset can produce (the person picks among them). */
   columns(dc: Pick<DatasetContext, 'ctx' | 'label'>): Column[]
   run(dc: DatasetContext): DatasetResult
@@ -136,4 +145,19 @@ export const tones = {
     priority === 'High' ? 'bad' : priority === 'Medium' ? 'warn' : priority === 'Low' ? 'muted' : undefined,
   health: (health: string): Tone | undefined =>
     health === 'At risk' ? 'bad' : health === 'Completed' ? 'good' : health === 'On track' ? 'good' : undefined
+}
+
+/**
+ * The step every record dataset ends with: keep only the selected records (when a selection was sent), then apply the
+ * advanced filter and the sort. Rows carry their identity in a hidden `_id`, which is never one of the columns.
+ */
+export function settle<Row extends Record<string, any>>(dc: DatasetContext, rows: Row[]): Row[] {
+  let out = rows
+  if (dc.request.ids) {
+    const wanted = new Set(dc.request.ids.map(String))
+    out = out.filter(row => wanted.has(String(row._id)))
+  }
+  out = applyAdvancedFilters(out, dc.request.filters ?? [])
+  if (dc.request.sort) out = sortRows(out, dc.request.sort)
+  return out
 }

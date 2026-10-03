@@ -31,23 +31,23 @@ export function parse<S extends z.ZodType>(schema: S, input: unknown): z.output<
   throw new HttpError(400, `Invalid request. ${summary}`, 'VALIDATION_FAILED', issues)
 }
 
-const text = (max: number) => z.string().trim().max(max)
-const required = (max: number) => z.string().trim().min(1, 'is required').max(max)
-const id = z.string().trim().max(100)
-const color = z.enum(COLORS)
-const isoDate = z.iso.date()
+export const text = (max: number) => z.string().trim().max(max)
+export const required = (max: number) => z.string().trim().min(1, 'is required').max(max)
+export const id = z.string().trim().max(100)
+export const color = z.enum(COLORS)
+export const isoDate = z.iso.date()
 /** An ISO date, or an empty string meaning "no date". */
-const optionalDate = z.union([z.literal(''), isoDate])
+export const optionalDate = z.union([z.literal(''), isoDate])
 const emailAddress = z
   .string()
   .trim()
   .max(254)
   .refine(value => z.email().safeParse(value).success, 'must be a valid email address')
-const numericId = z.union([
+export const numericId = z.union([
   z.number().int().positive(),
   z.string().regex(/^\d+$/, 'must be a number').transform(Number)
 ])
-const optionalNumericId = z.union([z.literal(''), z.null(), numericId])
+export const optionalNumericId = z.union([z.literal(''), z.null(), numericId])
 
 export const customFields = z
   .record(
@@ -105,7 +105,9 @@ const taskShape = {
   status: text(40),
   type: z.enum(TASK_TYPES),
   blocked: z.boolean(),
-  customFields
+  customFields,
+  /** Tag names; tags that do not exist yet are created. */
+  tags: z.array(z.string().trim().min(1).max(40)).max(20)
 }
 export const taskCreateSchema = z.object({ ...taskShape, title: required(300), projectId: numericId }).partial({
   assigneeId: true,
@@ -114,7 +116,8 @@ export const taskCreateSchema = z.object({ ...taskShape, title: required(300), p
   status: true,
   type: true,
   blocked: true,
-  customFields: true
+  customFields: true,
+  tags: true
 })
 export const taskUpdateSchema = z.object(taskShape).partial()
 export const taskStatusSchema = z.object({ status: text(40).optional(), advance: z.boolean().optional() })

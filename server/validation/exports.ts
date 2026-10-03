@@ -43,6 +43,12 @@ export const exportRequestSchema = z.object({
   margin: z.number().min(5).max(30).optional(),
   template: z.enum(['executive', 'standard', 'compact']).optional(),
   groupBy: key.optional(),
+  /** Only these records (the ones selected on screen). Only datasets made of individual records accept it. */
+  ids: z
+    .array(z.union([z.number().int().positive(), z.string().trim().min(1).max(100)]))
+    .min(1)
+    .max(10_000)
+    .optional(),
   /** Return the row count and a small sample instead of a file. */
   preview: z.boolean().optional()
 })

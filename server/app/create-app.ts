@@ -5,6 +5,7 @@ import express from 'express'
 import { registerAccountRoutes, registerPublicAuthRoutes } from '../http/routes/auth'
 import { authenticate } from '../http/authenticate'
 import { apiNotFound, hostGuard, originGuard, requestId, securityHeaders } from '../http/middleware'
+import { registerBulkRoutes } from '../http/routes/bulk'
 import { registerExportRoutes } from '../http/routes/exports'
 import { registerLocalizationRoutes } from '../http/routes/localization'
 import { registerPeopleRoutes } from '../http/routes/people'
@@ -14,6 +15,8 @@ import { registerPublicRoutes } from '../http/routes/public'
 import { registerReportRoutes } from '../http/routes/reports'
 import { registerSettingsRoutes } from '../http/routes/settings'
 import { registerSystemRoutes } from '../http/routes/system'
+import { registerTagAndViewRoutes } from '../http/routes/tags'
+import { IMPORT_PATH, registerTaskBatchRoutes } from '../http/routes/task-batches'
 import { registerTaskRoutes } from '../http/routes/tasks'
 import { registerUserRoutes } from '../http/routes/users'
 import { registerWorkspaceRoutes } from '../http/routes/workspace'
@@ -29,7 +32,9 @@ export function createApp(app: Container) {
   http.use(securityHeaders(config))
   http.use(compression())
   http.use(cookieParser())
-  http.use(express.json({ limit: '1mb' }))
+  const json = express.json({ limit: '1mb' })
+  // A CSV import carries a whole file: it has its own, larger parser, mounted after sign-in (see routes/task-batches.ts).
+  http.use((req, res, next) => (req.path === IMPORT_PATH ? next() : json(req, res, next)))
   http.use(originGuard())
 
   // ---- public ----
@@ -40,7 +45,10 @@ export function createApp(app: Container) {
   http.use('/api', authenticate(app))
   registerAccountRoutes(http, app)
   registerWorkspaceRoutes(http, app)
+  registerTaskBatchRoutes(http, app) // before registerTaskRoutes: /api/tasks/bulk must not be read as /api/tasks/:id
   registerTaskRoutes(http, app)
+  registerTagAndViewRoutes(http, app)
+  registerBulkRoutes(http, app)
   registerProjectRoutes(http, app)
   registerPeopleRoutes(http, app)
   registerPlanningRoutes(http, app)

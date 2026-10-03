@@ -10,6 +10,7 @@ import { personPublic } from '../presenters/people'
 import { settingsForClient } from '../presenters/settings-view'
 import { type TaskPublic, taskPublic } from '../presenters/tasks'
 import { publicAccessUser, publicUser } from '../presenters/users'
+import type { TaskRow } from '../repositories/tasks'
 import { addDays } from '../util'
 import type { ServiceContext } from './context'
 import type { PeopleService } from './people'
@@ -41,10 +42,11 @@ export class BootstrapService {
     const terminal = workflowStates(settings).filter(label => isDone(settings, { status: label }))
 
     const projects = this.projects.list(ref)
-    const tasks = repos.tasks
-      .workingSet(terminal, config.bootstrapTaskLimit)
-      .map(row => taskPublic(ref, row))
-      .sort(byDueDate)
+    const present = (rows: TaskRow[]) => {
+      const tags = repos.tags.forTasks(rows.map(row => row.id))
+      return rows.map(row => taskPublic(ref, row, tags.get(row.id) || []))
+    }
+    const tasks = present(repos.tasks.workingSet(terminal, config.bootstrapTaskLimit)).sort(byDueDate)
     const counts = repos.tasks.counts(terminal, ref.today)
     const activity = repos.activities
       .recent(ACTIVITY_LIMIT)
@@ -68,7 +70,7 @@ export class BootstrapService {
     const mine = mineFilter
       ? {
           count: repos.tasks.count(mineFilter),
-          first: repos.tasks.list(mineFilter, { key: 'due', dir: 'asc' }, { limit: 6 }).map(row => taskPublic(ref, row))
+          first: present(repos.tasks.list(mineFilter, { key: 'due', dir: 'asc' }, { limit: 6 }))
         }
       : { count: 0, first: [] }
 
@@ -76,9 +78,7 @@ export class BootstrapService {
       ref,
       counts,
       mine,
-      blockedOpen: repos.tasks
-        .list({ ...scope, blocked: true }, { key: 'due', dir: 'asc' }, { limit: 3 })
-        .map(row => taskPublic(ref, row)),
+      blockedOpen: present(repos.tasks.list({ ...scope, blocked: true }, { key: 'due', dir: 'asc' }, { limit: 3 })),
       projects,
       openAlerts: repos.alerts.openCount(),
       todayEntries: repos.activities.onDate(ref.today),

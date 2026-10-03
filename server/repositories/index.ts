@@ -15,6 +15,9 @@ import { SessionRepository } from './sessions'
 import { SettingsRepository } from './settings'
 import { SnapshotRepository } from './snapshot'
 import { SystemRepository } from './system'
+import { TagRepository } from './tags'
+import { TrashRepository } from './trash'
+import { ViewRepository } from './views'
 import { TaskRepository } from './tasks'
 import { UserRepository } from './users'
 
@@ -38,7 +41,10 @@ export function createRepositories(db: Database, defaults: { defaultTimezone: st
     reports: new ReportRepository(db),
     search: new SearchRepository(db),
     system: new SystemRepository(db),
-    exports: new ExportRepository(db)
+    exports: new ExportRepository(db),
+    tags: new TagRepository(db),
+    trash: new TrashRepository(db),
+    views: new ViewRepository(db)
   }
 }
 export type Repositories = ReturnType<typeof createRepositories>

@@ -21,8 +21,12 @@ import { SearchService } from '../services/search'
 import { SessionService } from '../services/sessions'
 import { SettingsService } from '../services/settings'
 import { SystemService } from '../services/system'
+import { TagService } from '../services/tags'
+import { TaskBulkService } from '../services/task-bulk'
+import { TaskImportService } from '../services/task-import'
 import { TaskService } from '../services/tasks'
 import { UserService } from '../services/users'
+import { ViewService } from '../services/views'
 
 export function createContainer(config: AtlasConfig, db: Database) {
   const repos: Repositories = createRepositories(db, config)
@@ -49,6 +53,10 @@ export function createContainer(config: AtlasConfig, db: Database) {
     backups,
     throttle,
     tasks,
+    taskBulk: new TaskBulkService(ctx, audit, tasks),
+    taskImport: new TaskImportService(ctx, audit, tasks),
+    tags: new TagService(ctx, audit),
+    views: new ViewService(ctx, audit),
     projects,
     people,
     reports,

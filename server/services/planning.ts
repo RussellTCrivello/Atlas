@@ -13,9 +13,13 @@ import type {
   MilestoneUpdateInput
 } from '../validation/schemas'
 import { badRequest, forbidden, id, notFound } from '../util'
+import type { AlertBulkInput, MilestoneBulkInput } from '../validation/records'
 import type { AuditService } from './audit'
+import { type BatchResult, runBatch } from './batch'
 import type { ServiceContext } from './context'
 import { numericId } from './context'
+
+const QUIET = { audit: false }
 
 const normalizeMilestoneStatus = (status?: string) => (status === 'Completed' ? 'Complete' : status)
 
@@ -44,7 +48,7 @@ export class PlanningService {
     })
   }
 
-  updateMilestone(rawId: string, body: MilestoneUpdateInput, who: AuditContext) {
+  updateMilestone(rawId: string, body: MilestoneUpdateInput, who: AuditContext, options: { audit?: boolean } = {}) {
     return this.ctx.transaction(() => {
       const { repos } = this.ctx
       const current = repos.milestones.byId(rawId)
@@ -55,17 +59,53 @@ export class PlanningService {
         projectId: body.projectId === undefined ? undefined : Number(body.projectId),
         status: normalizeMilestoneStatus(body.status)
       })
-      this.audit.record('milestone.updated', who, { milestoneId: current.id })
+      if (options.audit !== false) this.audit.record('milestone.updated', who, { milestoneId: current.id })
       return repos.milestones.byId(current.id)!
     })
   }
 
-  deleteMilestone(rawId: string, who: AuditContext) {
+  deleteMilestone(rawId: string, who: AuditContext, options: { audit?: boolean } = {}) {
     this.ctx.transaction(() => {
       const current = this.ctx.repos.milestones.byId(rawId)
       if (!current) throw notFound('Milestone not found')
       this.ctx.repos.milestones.delete(current.id)
-      this.audit.record('milestone.deleted', who, { milestoneId: current.id })
+      if (options.audit !== false) this.audit.record('milestone.deleted', who, { milestoneId: current.id })
+    })
+  }
+
+  /** Change the status of, or delete, several milestones at once; one that cannot be changed is reported, the rest go ahead. */
+  bulkMilestones(input: MilestoneBulkInput, who: AuditContext): BatchResult {
+    const ids = input.ids.map(String)
+    const label = (key: string) => this.ctx.repos.milestones.byId(key)?.name || `Milestone ${key}`
+    const work =
+      input.action === 'status'
+        ? (key: string) => void this.updateMilestone(key, { status: input.status }, who, QUIET)
+        : (key: string) => void this.deleteMilestone(key, who, QUIET)
+    return runBatch(this.ctx, ids, label, work, outcome =>
+      this.audit.record(`milestone.bulk.${input.action}`, who, {
+        requested: outcome.requested,
+        succeeded: outcome.succeeded,
+        failed: outcome.failed.length,
+        sample: ids.slice(0, 20),
+        status: input.action === 'status' ? input.status : undefined
+      })
+    )
+  }
+
+  duplicateMilestone(rawId: string, who: AuditContext) {
+    return this.ctx.transaction(() => {
+      const source = this.ctx.repos.milestones.byId(rawId)
+      if (!source) throw notFound('Milestone not found')
+      const copy: Milestone = {
+        ...source,
+        id: id('milestone'),
+        name: `Copy of ${source.name}`.slice(0, 200),
+        status: 'Upcoming',
+        sample: false
+      }
+      this.ctx.repos.milestones.insert(copy)
+      this.audit.record('milestone.duplicated', who, { from: source.id, to: copy.id })
+      return copy
     })
   }
 
@@ -159,7 +199,7 @@ export class PlanningService {
     })
   }
 
-  patchAlert(user: User, rawId: string, body: AlertPatchInput, who: AuditContext) {
+  patchAlert(user: User, rawId: string, body: AlertPatchInput, who: AuditContext, options: { audit?: boolean } = {}) {
     return this.ctx.transaction(() => {
       const { repos } = this.ctx
       if (!Object.keys(body).length) throw badRequest('Nothing to update')
@@ -174,17 +214,59 @@ export class PlanningService {
       if (body.taskId !== undefined) patch.taskId = this.alertRefs({ taskId: body.taskId }).taskId
       repos.alerts.update(current.id, patch)
       const updated = repos.alerts.byId(current.id)!
-      this.audit.record('alert.updated', who, { alertId: updated.id, resolved: updated.resolved })
+      if (options.audit !== false)
+        this.audit.record('alert.updated', who, { alertId: updated.id, resolved: updated.resolved })
       return alertPublic(this.ctx.reference(), updated)
     })
   }
 
-  deleteAlert(rawId: string, who: AuditContext) {
+  deleteAlert(rawId: string, who: AuditContext, options: { audit?: boolean } = {}) {
     this.ctx.transaction(() => {
       const current = this.ctx.repos.alerts.byId(rawId)
       if (!current) throw notFound('Alert not found')
       this.ctx.repos.alerts.delete(current.id)
-      this.audit.record('alert.deleted', who, { alertId: current.id })
+      if (options.audit !== false) this.audit.record('alert.deleted', who, { alertId: current.id })
+    })
+  }
+
+  /**
+   * Resolve, reopen or delete several alerts. Resolving needs only the baseline task permission (as for one alert); deleting
+   * needs alert management, checked here because the route only knows the baseline.
+   */
+  bulkAlerts(user: User, input: AlertBulkInput, who: AuditContext): BatchResult {
+    if (input.action === 'delete' && !can(this.ctx.settings, user, 'manageAlerts'))
+      throw forbidden('Manager or administrator access required to delete alerts')
+    const ids = input.ids.map(String)
+    const label = (key: string) => this.ctx.repos.alerts.byId(key)?.title || `Alert ${key}`
+    const work =
+      input.action === 'delete'
+        ? (key: string) => void this.deleteAlert(key, who, QUIET)
+        : (key: string) => void this.patchAlert(user, key, { resolved: input.action === 'resolve' }, who, QUIET)
+    return runBatch(this.ctx, ids, label, work, outcome =>
+      this.audit.record(`alert.bulk.${input.action}`, who, {
+        requested: outcome.requested,
+        succeeded: outcome.succeeded,
+        failed: outcome.failed.length,
+        sample: ids.slice(0, 20)
+      })
+    )
+  }
+
+  duplicateAlert(rawId: string, who: AuditContext) {
+    return this.ctx.transaction(() => {
+      const source = this.ctx.repos.alerts.byId(rawId)
+      if (!source) throw notFound('Alert not found')
+      const copy: Alert = {
+        ...source,
+        id: id('alert'),
+        title: `Copy of ${source.title}`.slice(0, 200),
+        resolved: false,
+        createdAt: todayIn(this.ctx.settings),
+        sample: false
+      }
+      this.ctx.repos.alerts.insert(copy)
+      this.audit.record('alert.duplicated', who, { from: source.id, to: copy.id })
+      return alertPublic(this.ctx.reference(), copy)
     })
   }
 }
